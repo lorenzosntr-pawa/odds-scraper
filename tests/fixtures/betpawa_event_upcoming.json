@@ -1,0 +1,12 @@
+{
+  "id": "33660318",
+  "name": "Team A vs Team B",
+  "participants": [
+    {"id": "1", "name": "Team A", "position": 1},
+    {"id": "2", "name": "Team B", "position": 2}
+  ],
+  "startTime": "2099-01-01T15:00:00Z",
+  "additionalInfo": {"live": false},
+  "results": null,
+  "markets": []
+}

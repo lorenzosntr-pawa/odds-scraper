@@ -1,0 +1,31 @@
+{
+  "id": "33660318",
+  "name": "Team A vs Team B",
+  "participants": [
+    {"id": "1", "name": "Team A", "position": 1},
+    {"id": "2", "name": "Team B", "position": 2}
+  ],
+  "startTime": "2026-05-19T15:00:00Z",
+  "additionalInfo": {"live": false},
+  "results": {
+    "display": {
+      "minute": 90,
+      "currentPeriod": {"name": "FT", "slug": "full-time"}
+    },
+    "participantPeriodResults": [
+      {
+        "participant": {"type": "HOME", "name": "Team A"},
+        "periodResults": [
+          {"period": {"slug": "FULL_TIME_EXCLUDING_OVERTIME"}, "result": 2}
+        ]
+      },
+      {
+        "participant": {"type": "AWAY", "name": "Team B"},
+        "periodResults": [
+          {"period": {"slug": "FULL_TIME_EXCLUDING_OVERTIME"}, "result": 1}
+        ]
+      }
+    ]
+  },
+  "markets": []
+}
