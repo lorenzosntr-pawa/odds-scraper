@@ -61,8 +61,11 @@ class OddsCollector:
                     markets = await self._fetchers[b](target_id)
                 return b, (FetchStatus.OK, "", markets)
             except Exception as e:  # noqa: BLE001
-                log.warning("fetch failed for %s: %s", b.value, e)
-                return b, (FetchStatus.HTTP_ERROR, f"{type(e).__name__}: {e}", [])
+                # Some bookmakers (Bet9ja behind Akamai) return multi-line
+                # HTML error pages — truncate so the log stays one line.
+                short = " ".join(str(e).split())[:120]
+                log.warning("fetch failed for %s: %s", b.value, short)
+                return b, (FetchStatus.HTTP_ERROR, f"{type(e).__name__}: {short}", [])
 
         coros = [
             run(b, resolved.get(b) if b != Bookmaker.BETPAWA else None)
