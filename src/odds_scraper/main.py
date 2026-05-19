@@ -45,6 +45,9 @@ async def _amain(config_path: Path) -> int:
         level=getattr(logging, cfg.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    # bookieskit uses httpx; its per-request INFO logs drown out our own.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     cache = ResolutionCache(Path(cfg.output.resolution_cache_path))
     cache.load()

@@ -7,7 +7,9 @@ and the (bp_detail -> (resolved, sr_id, genius_id)) resolver contract.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from contextlib import AsyncExitStack
 from typing import Any, Awaitable, Callable
 
@@ -21,6 +23,47 @@ from .resolution import ResolutionCache, ResolutionKey
 from .status import parse_status
 
 log = logging.getLogger(__name__)
+
+# Bet9ja's prematch event map walks every soccer tournament (~200 HTTP calls).
+# Build it ONCE per process and share across all event resolutions; otherwise
+# 4 concurrent watchers each trigger the full walk on startup and Bet9ja's
+# Akamai shield returns 403 for the next ~30 min.
+_BET9JA_PREMATCH_MAP_TTL_SECONDS = 1800  # 30 min — events come and go slowly
+
+
+class _Bet9jaPrematchMapCache:
+    def __init__(self) -> None:
+        self._mapping: dict[str, str] | None = None
+        self._built_at: float = 0.0
+        self._lock = asyncio.Lock()
+        self._cooldown_until: float = 0.0  # back off after a 403
+
+    async def get(self, client) -> dict[str, str]:
+        async with self._lock:
+            now = time.monotonic()
+            if self._mapping is not None and (now - self._built_at) < _BET9JA_PREMATCH_MAP_TTL_SECONDS:
+                return self._mapping
+            if now < self._cooldown_until:
+                log.warning(
+                    "bet9ja prematch map cooldown in effect (%ds left), "
+                    "returning empty map",
+                    int(self._cooldown_until - now),
+                )
+                return {}
+            try:
+                log.info("building bet9ja prematch event map (one-shot, shared)")
+                self._mapping = await client.build_prematch_event_map(sport_id="1")
+                self._built_at = now
+                log.info("bet9ja prematch map built: %d entries", len(self._mapping or {}))
+                return self._mapping or {}
+            except Exception as e:  # noqa: BLE001
+                # 30-minute cooldown after any failure to avoid hammering.
+                self._cooldown_until = now + 1800
+                log.warning("bet9ja prematch map build failed: %s — 30 min cooldown", e)
+                return {}
+
+
+_bet9ja_prematch_map = _Bet9jaPrematchMapCache()
 
 
 async def make_bookmaker_clients(
@@ -52,10 +95,6 @@ def make_fetchers(
 
     async def fetch_sportybet(sb_id: str) -> list:
         sb = clients[Bookmaker.SPORTYBET]
-        # SportyBet's get_event_detail uses live=True for in-play; we let the
-        # default (live=False) suffice since 1up/2up are prematch-only markets
-        # on SportyBet. If live coverage of these markets ever opens, this is
-        # the place to switch.
         detail = await sb.get_event_detail(event_id=sb_id)
         return parse_markets(
             detail, platform="sportybet", registry=registry, probability="true",
@@ -91,8 +130,8 @@ async def resolve_event(
       - Extract SR id and BetGenius id from BetPawa detail.
       - SportyBet & Betway: SR id direct (different prefix conventions per
         bookmaker — sb wants `sr:match:`, bw wants the raw numeric id).
-      - Bet9ja: prematch via `build_prematch_event_map(sport_id='1')`; live via
-        BetGenius id (only id format Bet9ja-live accepts in this lib).
+      - Bet9ja: prematch via shared `build_prematch_event_map` (built once
+        per process); live via BetGenius id.
 
     Cache key includes the regime because Bet9ja switches id types at kickoff.
     """
@@ -115,11 +154,8 @@ async def resolve_event(
     if regime == "live" and genius_id:
         b9j_id = genius_id
     elif regime == "prematch" and sr_id:
-        try:
-            mapping = await clients[Bookmaker.BET9JA].build_prematch_event_map(sport_id="1")
-            b9j_id = mapping.get(sr_id) or mapping.get(f"sr:match:{sr_id}")
-        except Exception as e:  # noqa: BLE001
-            log.warning("bet9ja prematch map failed: %s", e)
+        mapping = await _bet9ja_prematch_map.get(clients[Bookmaker.BET9JA])
+        b9j_id = mapping.get(sr_id) or mapping.get(f"sr:match:{sr_id}")
 
     entry = {
         "sr_id": sr_id, "genius_id": genius_id,
