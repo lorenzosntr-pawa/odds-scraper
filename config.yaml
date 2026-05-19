@@ -1,0 +1,15 @@
+country: ng
+events:
+  - 33660318
+  - 33660319
+  - 33605719
+  - 33575997
+cadence:
+  prematch_seconds: 600
+  live_seconds: 90
+  status_retry_backoff_seconds: [5, 15, 45]
+  watchdog_after_kickoff_seconds: 10800
+output:
+  csv_path: data/odds_snapshots.csv
+  resolution_cache_path: data/resolution_cache.json
+log_level: INFO
