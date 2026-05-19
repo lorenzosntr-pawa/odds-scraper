@@ -69,6 +69,7 @@ class EventWatcher:
                 resolved, sr_id, genius_id = await self._resolver(detail)
                 rows = await self._collector.collect(detail, resolved, sr_id, genius_id)
                 await self._writer.append(rows)
+                self._log_tick_summary(rows)
             except Exception:  # noqa: BLE001
                 log.exception("collector/writer crash for %s", self.event_bp_id)
                 await self._writer.append(self._sentinel_rows("collector crashed"))
@@ -105,6 +106,20 @@ class EventWatcher:
                     self.event_bp_id, attempt + 1, e,
                 )
         return None
+
+    def _log_tick_summary(self, rows: list[Snapshot]) -> None:
+        # rows are exactly 24 = 4 bookmakers x 2 markets x 3 outcomes.
+        # Summarize as one OK count per bookmaker (max 6).
+        counts: dict[str, int] = {b.value: 0 for b in Bookmaker}
+        for r in rows:
+            if r.fetch_status == FetchStatus.OK:
+                counts[r.bookmaker.value] += 1
+        log.info(
+            "tick %s status=%s bp=%d/6 sb=%d/6 b9j=%d/6 bw=%d/6",
+            self.event_bp_id, self._last_status.value,
+            counts["betpawa"], counts["sportybet"],
+            counts["bet9ja"], counts["betway"],
+        )
 
     def _sentinel_rows(self, reason: str) -> list[Snapshot]:
         ts = datetime.now(timezone.utc)

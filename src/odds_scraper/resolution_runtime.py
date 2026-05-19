@@ -69,10 +69,16 @@ _bet9ja_prematch_map = _Bet9jaPrematchMapCache()
 async def make_bookmaker_clients(
     stack: AsyncExitStack, country: str,
 ) -> dict[Bookmaker, Any]:
+    # Bet9ja's Akamai shield is aggressive. Cap concurrency to 2 and add a
+    # small per-request delay so we never look like a scraper to them. The
+    # prematch-map walk (~200 tournaments) still completes in a couple of
+    # minutes but won't get us banned.
     return {
         Bookmaker.BETPAWA: await stack.enter_async_context(BetPawa(country=country)),
         Bookmaker.SPORTYBET: await stack.enter_async_context(SportyBet(country=country)),
-        Bookmaker.BET9JA: await stack.enter_async_context(Bet9ja(country=country)),
+        Bookmaker.BET9JA: await stack.enter_async_context(
+            Bet9ja(country=country, max_concurrent=2, request_delay=0.5),
+        ),
         Bookmaker.BETWAY: await stack.enter_async_context(Betway(country=country)),
     }
 
