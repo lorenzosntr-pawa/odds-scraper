@@ -124,3 +124,35 @@ def get_latest_prices_for_event(
     """
     params: list[str | int | float] = [event_id, event_id, *market_params]
     return conn.execute(sql, params).fetchall()
+
+
+def get_price_history_for_event(
+    conn: sqlite3.Connection, event_id: str, scope: Scope = "opened",
+) -> list[sqlite3.Row]:
+    """Full odds history per (bookmaker, market_id, line, side) for one event.
+
+    Returns rows in chronological order so the caller can group by
+    outcome and feed the ordered odds list to a sparkline. Probability
+    is included alongside odds for the BP/SB cells.
+
+    scope='collapsed' restricts to the 1x2 family.
+    scope='opened' returns all markets.
+    """
+    if scope not in ("collapsed", "opened"):
+        raise ValueError(f"unknown scope {scope!r}")
+    market_filter = ""
+    market_params: tuple[str, ...] = ()
+    if scope == "collapsed":
+        placeholders = ",".join("?" * len(COLLAPSED_MARKETS))
+        market_filter = f"AND market_id IN ({placeholders})"
+        market_params = COLLAPSED_MARKETS
+    sql = f"""
+        SELECT bookmaker, market_id, line, side, ts_utc, odds, probability
+        FROM prices
+        WHERE event_id = ?
+          {market_filter}
+          AND odds IS NOT NULL
+        ORDER BY bookmaker, market_id, line, side, ts_utc
+    """
+    params: list[str | int | float] = [event_id, *market_params]
+    return conn.execute(sql, params).fetchall()

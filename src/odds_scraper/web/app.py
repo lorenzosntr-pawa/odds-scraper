@@ -41,6 +41,41 @@ _SIDE_SHORT = {
 class PriceCell:
     odds: float
     probability: Optional[float]
+    # Inline SVG `points` attribute for an odds-history sparkline. Empty
+    # string when there's nothing meaningful to draw (collapsed view, or
+    # opened-but-single-tick history). The template emits the polyline
+    # only when this is non-empty.
+    odds_sparkline: str = ""
+    prob_sparkline: str = ""
+
+
+# Sparkline drawing area (matches the SVG viewBox below)
+_SPARK_W = 60
+_SPARK_H = 14
+
+
+def _sparkline_points(values: list[float]) -> str:
+    """Return an SVG polyline `points` string for the value series.
+
+    Returns "" if fewer than two values (one point can't be a line) or
+    if the series is constant (flat lines drawn as a midline).
+    """
+    if len(values) < 2:
+        return ""
+    lo, hi = min(values), max(values)
+    if hi == lo:
+        # Constant series — flat midline so the chart isn't a single dot
+        y = _SPARK_H / 2
+        return f"0,{y:.1f} {_SPARK_W},{y:.1f}"
+    span = hi - lo
+    n = len(values)
+    pts: list[str] = []
+    for i, v in enumerate(values):
+        x = (i / (n - 1)) * _SPARK_W
+        # Invert Y so higher values draw at the top
+        y = _SPARK_H - ((v - lo) / span) * _SPARK_H
+        pts.append(f"{x:.1f},{y:.1f}")
+    return " ".join(pts)
 
 
 @dataclass
@@ -126,6 +161,27 @@ def _build_event_view(conn, row, open_ids: list[str]) -> EventView:
         bucket.setdefault(key, {})[pr["bookmaker"]] = PriceCell(
             odds=pr["odds"], probability=pr["probability"],
         )
+
+    # When opened, layer odds-history sparklines onto each PriceCell.
+    if is_open:
+        # Group history rows by (market_id, line, side, bookmaker)
+        history: dict[tuple[str, float, str, str],
+                      tuple[list[float], list[float]]] = {}
+        for hr in queries.get_price_history_for_event(
+            conn, row["id"], scope=scope,  # type: ignore[arg-type]
+        ):
+            hkey = (hr["market_id"], hr["line"], hr["side"], hr["bookmaker"])
+            entry = history.setdefault(hkey, ([], []))
+            entry[0].append(hr["odds"])
+            if hr["probability"] is not None:
+                entry[1].append(hr["probability"])
+        for (mkt, line, side, bm), (odds_series, prob_series) in history.items():
+            cells = bucket.get((mkt, line, side))
+            if not cells or bm not in cells:
+                continue
+            cells[bm].odds_sparkline = _sparkline_points(odds_series)
+            if bm in ("betpawa", "sportybet") and prob_series:
+                cells[bm].prob_sparkline = _sparkline_points(prob_series)
 
     groups: list[MarketGroup] = []
     for market_id, group_label, market_short in _COLLAPSED_ORDER:

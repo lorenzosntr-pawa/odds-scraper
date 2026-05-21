@@ -34,12 +34,22 @@
         <span class="outcome">{% if event.id in open_ids %}{{ row.side_label }}{% else %}{{ row.market_label }} · {{ row.side_short }}{% endif %}</span>
         {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
           {% set p = row.prices.get(bm) %}
-          <span data-bookmaker="{{ bm }}">
+          <span data-bookmaker="{{ bm }}" class="cell">
             {% if p %}
               <span class="odds">{{ "%.2f"|format(p.odds) }}</span>
+              {% if event.id in open_ids and p.odds_sparkline %}
+                <svg class="spark spark-odds" viewBox="0 0 60 14" preserveAspectRatio="none">
+                  <polyline points="{{ p.odds_sparkline }}"/>
+                </svg>
+              {% endif %}
               {% if event.id in open_ids and bm in ("betpawa", "sportybet") and p.probability is not none %}
                 {# Cap at 99 so probabilities like 0.995 don't render as ".100" (three digits). #}
                 <span class="prob">.{{ "%02d"|format([(p.probability * 100)|round|int, 99]|min) }}</span>
+                {% if p.prob_sparkline %}
+                  <svg class="spark spark-prob" viewBox="0 0 60 14" preserveAspectRatio="none">
+                    <polyline points="{{ p.prob_sparkline }}"/>
+                  </svg>
+                {% endif %}
               {% endif %}
             {% else %}<span class="text-gray-700">—</span>{% endif %}
           </span>

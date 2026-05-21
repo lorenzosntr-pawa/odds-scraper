@@ -102,6 +102,23 @@
 .odds    { color: #4ade80; font-weight: 600; }
 .prob    { color: #94a3b8; font-size: 9px; margin-left: 4px; }
 
+/* Inline odds-history sparkline (only rendered when event is opened) */
+.cell { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.spark {
+  width: 60px;
+  height: 14px;
+  display: inline-block;
+  vertical-align: middle;
+}
+.spark polyline {
+  fill: none;
+  stroke-width: 1;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.spark-odds polyline { stroke: #4ade80; opacity: 0.7; }
+.spark-prob polyline { stroke: #94a3b8; opacity: 0.6; }
+
 /* Bookmaker chip toggle — body class hides matching columns INSIDE the
    events list only. Scoped via #events-list so the chip itself (which
    also carries data-bookmaker=...) stays visible and clickable. */

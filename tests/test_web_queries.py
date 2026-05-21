@@ -5,7 +5,8 @@ import pytest
 
 from odds_scraper.db_schema import init_schema
 from odds_scraper.web.queries import (
-    get_events_by_status, get_latest_prices_for_event, open_ro_conn,
+    get_events_by_status, get_latest_prices_for_event,
+    get_price_history_for_event, open_ro_conn,
 )
 
 
@@ -130,3 +131,33 @@ def test_invalid_status_raises(db: Path):
     with pytest.raises(ValueError):
         get_events_by_status(conn, "bogus")
     conn.close()
+
+
+def test_get_price_history_for_event_returns_chronological_rows(db: Path):
+    # The fixture writes E_LIVE prices at a single ts, so the history
+    # is one row per outcome. Confirm ordering keys are right and the
+    # rows include the ts_utc + odds + probability columns we need.
+    conn = open_ro_conn(db)
+    rows = get_price_history_for_event(conn, "E_LIVE", scope="opened")
+    conn.close()
+    assert len(rows) > 0
+    keys = {(r["market_id"], r["line"], r["side"], r["bookmaker"]) for r in rows}
+    assert ("1x2_ft", 0.0, "home", "betpawa") in keys
+    # Ordering invariant: same outcome groups together, then ts ascending
+    seen: list[tuple] = []
+    for r in rows:
+        k = (r["bookmaker"], r["market_id"], r["line"], r["side"])
+        seen.append((k, r["ts_utc"]))
+    assert all(
+        seen[i][0] != seen[i + 1][0] or seen[i][1] <= seen[i + 1][1]
+        for i in range(len(seen) - 1)
+    )
+
+
+def test_get_price_history_for_event_collapsed_excludes_over_under(db: Path):
+    conn = open_ro_conn(db)
+    rows = get_price_history_for_event(conn, "E_LIVE", scope="collapsed")
+    conn.close()
+    market_ids = {r["market_id"] for r in rows}
+    assert "over_under_ft" not in market_ids
+    assert {"1x2_ft", "1x2_1up_ft", "1x2_2up_ft"} >= market_ids
