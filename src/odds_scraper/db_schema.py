@@ -62,7 +62,11 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Idempotent: apply base DDL, then any pending migrations."""
+    """Idempotent: apply base DDL, then any pending migrations.
+
+    Note: calls executescript(), which issues an implicit COMMIT before
+    running. Must be called outside any explicit transaction.
+    """
     conn.executescript(_BASE_DDL)
     current = _current_version(conn)
     for v in range(current + 1, SCHEMA_VERSION + 1):
