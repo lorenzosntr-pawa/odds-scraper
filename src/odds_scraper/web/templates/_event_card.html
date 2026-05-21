@@ -56,9 +56,9 @@
 
   {% if ns.extra_count > 0 %}
     <button class="expand-toggle" type="button"
-            data-collapsed-label="▼ Show {{ ns.extra_count }} Over/Under {% if ns.extra_count == 1 %}line{% else %}lines{% endif %}"
-            data-expanded-label="▲ Hide Over/Under">
-      ▼ Show {{ ns.extra_count }} Over/Under {% if ns.extra_count == 1 %}line{% else %}lines{% endif %}
+            data-collapsed-label="▼ Show {{ ns.extra_count }} more {% if ns.extra_count == 1 %}market{% else %}markets{% endif %}"
+            data-expanded-label="▲ Hide extra markets">
+      ▼ Show {{ ns.extra_count }} more {% if ns.extra_count == 1 %}market{% else %}markets{% endif %}
     </button>
   {% endif %}
 </div>

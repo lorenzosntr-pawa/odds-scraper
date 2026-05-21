@@ -208,25 +208,6 @@ body.hide-betway    .history-table [data-bookmaker="betway"]    { display: none;
   border-bottom: 1px solid #1a1a1a;
   margin-bottom: 12px;
 }
-.pill {
-  padding: 3px 10px;
-  font-size: 10px;
-  color: #888;
-  background: #0f0f0f;
-  border: 1px solid #1a1a1a;
-  border-radius: 3px;
-  text-decoration: none;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.pill:hover { background: #181818; color: #d1d5db; }
-.pill.active {
-  background: #1a2a1a;
-  color: #4ade80;
-  border-color: #2a4a2a;
-  font-weight: 600;
-}
-
 /* Detail page — history table */
 .history-wrap {
   background: #0a0a0a;
@@ -287,4 +268,58 @@ body.hide-betway    .history-table [data-bookmaker="betway"]    { display: none;
   padding: 24px;
   text-align: center;
   color: #666;
+}
+
+.filter-select {
+  background: #0f1115;
+  color: #d1d5db;
+  border: 1px solid #1f2330;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: inherit;
+}
+.filter-select:disabled {
+  opacity: 0.4;
+}
+
+.family-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  margin-right: 3px;
+  background: #161821;
+  color: #d1d5db;
+  border-radius: 4px;
+  font-size: 11px;
+  text-decoration: none;
+  border: 1px solid #1f2330;
+}
+.family-pill.active {
+  background: #233a55;
+  border-color: #2f5378;
+  color: #ffffff;
+}
+.family-pill.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.line-pill {
+  display: inline-block;
+  padding: 2px 7px;
+  margin-right: 3px;
+  background: #0f1115;
+  color: #9ca3af;
+  border-radius: 4px;
+  font-size: 11px;
+  text-decoration: none;
+  border: 1px solid #1f2330;
+}
+.line-pill.active {
+  background: #233a55;
+  color: #ffffff;
+  border-color: #2f5378;
+}
+.line-pills {
+  margin-top: 6px;
 }

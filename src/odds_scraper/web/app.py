@@ -9,6 +9,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from odds_scraper.models import MARKET_MANIFEST, MarketSpec
+
 from . import queries
 
 # Markets visible in the collapsed event-list card, in display order.
@@ -22,8 +24,42 @@ _COLLAPSED_ORDER: tuple[tuple[str, str, str], ...] = tuple(
     (m, *_MARKET_LABELS[m]) for m in queries.COLLAPSED_MARKETS
 )
 
-# OU lines available on the detail page market picker
-_OU_LINES = (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5)
+# Manifest lookup — read MarketSpec.sides without hardcoding outcome strings.
+_spec_by_id: dict[str, MarketSpec] = {s.canonical_id: s for s in MARKET_MANIFEST}
+
+
+def _sides_for(market_id: str) -> tuple[str, ...]:
+    return _spec_by_id[market_id].sides
+
+
+# Single-pill families on the detail page family-chip row. Parameterized
+# families come from _EXPANDER_MARKETS.
+_FAMILY_PILLS_1X2: tuple[tuple[str, str], ...] = (
+    ("1x2_ft",     "1x2 — Full Time"),
+    ("1x2_1up_ft", "1x2 — 1 Up"),
+    ("1x2_2up_ft", "1x2 — 2 Up"),
+)
+
+# Display order for parameterized markets in the detail-page pill bar AND
+# the home-page card expander. Sub-project 3's single source of truth.
+_EXPANDER_MARKETS: tuple[tuple[str, str], ...] = (
+    ("next_goal_ft",       "Next Goal"),
+    ("over_under_ft",      "Match O/U"),
+    ("home_over_under_ft", "Home O/U"),
+    ("away_over_under_ft", "Away O/U"),
+)
+
+# Short market-label prefixes used in the per-row outcome labels inside
+# each card expander group (e.g., "NG 1 · H", "OU 2.5 · O").
+_SHORT_PREFIX: dict[str, str] = {
+    "next_goal_ft":       "NG",
+    "over_under_ft":      "OU",
+    "home_over_under_ft": "H-OU",
+    "away_over_under_ft": "A-OU",
+}
+assert set(_SHORT_PREFIX) == {mid for mid, _ in _EXPANDER_MARKETS}, (
+    "_SHORT_PREFIX must cover every entry in _EXPANDER_MARKETS"
+)
 
 # Market picker: ordered list of (market_id, line_or_None, label, slug)
 # Slug is the URL-safe key passed via ?market=...
@@ -32,8 +68,12 @@ def _build_market_picker() -> list[tuple[str, Optional[float], str, str]]:
     for mid in queries.COLLAPSED_MARKETS:
         label = _MARKET_LABELS[mid][0]
         picker.append((mid, None, label, mid))
-    for line in _OU_LINES:
-        picker.append(("over_under_ft", line, f"OU {line}", f"ou_{line}"))
+    for market_id, label_prefix in _EXPANDER_MARKETS:
+        spec = _spec_by_id[market_id]
+        prefix = spec.column_prefix
+        for line in spec.lines or ():
+            slug = f"{prefix}_{line}"
+            picker.append((market_id, line, f"{label_prefix} {line}", slug))
     return picker
 
 
@@ -48,16 +88,14 @@ _POLL_SECONDS = {"live": 5, "upcoming": 30, "ended": 60}
 _SIDE_LABEL = {
     "home": "Home", "draw": "Draw", "away": "Away",
     "over": "Over", "under": "Under",
+    "none": "None",
 }
 
 _SIDE_SHORT = {
-    "home": "H", "draw": "D", "away": "A", "over": "O", "under": "U",
+    "home": "H", "draw": "D", "away": "A",
+    "over": "O", "under": "U",
+    "none": "N",
 }
-
-# Outcome ordering per market shape
-_SIDES_1X2 = ("home", "draw", "away")
-_SIDES_OU = ("over", "under")
-
 
 @dataclass
 class PriceCell:
@@ -77,9 +115,9 @@ class OutcomeRow:
 class MarketGroup:
     label: str              # e.g., "1x2 — Full Time"
     rows: list[OutcomeRow]
-    # is_extra=True groups (OU lines) are hidden by default in the card
-    # view; revealed via the "Show OU lines" toggle. The detail page uses
-    # the market-picker pills instead and ignores this flag.
+    # is_extra=True groups are hidden by default in the card view; revealed
+    # via the expand toggle. The detail page uses the market-picker pills
+    # instead and ignores this flag.
     is_extra: bool = False
 
 
@@ -114,12 +152,19 @@ class EventDetail:
     match_minute: Optional[int]
     score_home: Optional[int]
     score_away: Optional[int]
+    country_name: str
+    league_name: str
     # Currently selected market info
     market_label: str
     market_slug: str
     sides: tuple[str, ...]
-    # Pills: list of (slug, label, is_active)
-    pills: list[tuple[str, str, bool]]
+    sides_short: tuple[str, ...]
+    # Family-chip row — always rendered. Tuple:
+    #   (family_id, label, default_slug, is_active, is_disabled)
+    family_pills: list[tuple[str, str, str, bool, bool]]
+    # Line-chip row — only populated when active family is parameterized.
+    # Tuple: (slug, label, is_active)
+    line_pills: list[tuple[str, str, bool]]
     # History rows newest first
     history: list[HistoryRow]
 
@@ -141,16 +186,24 @@ def create_app(db_path: Path) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
-        return templates.TemplateResponse(request, "index.html", {})
+        country_league_index = queries.get_country_league_index(conn)
+        return templates.TemplateResponse(
+            request, "index.html",
+            {"country_league_index": country_league_index},
+        )
 
     @app.get("/events", response_class=HTMLResponse)
     async def events_fragment(
         request: Request,
         status: str = Query("live"),
+        country: str = Query(""),
+        league: str = Query(""),
     ):
         if status not in queries.VALID_STATUSES:
             raise HTTPException(status_code=400, detail=f"unknown status {status!r}")
-        rows = queries.get_events_by_status(conn, status)  # type: ignore[arg-type]
+        rows = queries.get_events_by_status(  # type: ignore[arg-type]
+            conn, status, country_id=country, league_id=league,
+        )
         events = [_build_event_view(conn, row) for row in rows]
         return templates.TemplateResponse(
             request,
@@ -202,7 +255,7 @@ def _build_event_view(conn, row) -> EventView:
     groups: list[MarketGroup] = []
     for market_id, group_label, market_short in _COLLAPSED_ORDER:
         rows_for_group = []
-        for side in _SIDES_1X2:
+        for side in _sides_for(market_id):
             prices = bucket.get((market_id, 0.0, side), {})
             rows_for_group.append(OutcomeRow(
                 market_label=market_short,
@@ -214,24 +267,27 @@ def _build_event_view(conn, row) -> EventView:
             label=group_label, rows=rows_for_group, is_extra=False,
         ))
 
-    # OU lines as extra (hidden-by-default) groups. Only emit groups
-    # that actually have at least one priced outcome.
-    for line in _OU_LINES:
-        rows_for_group = []
-        for side in _SIDES_OU:
-            prices = bucket.get(("over_under_ft", line, side), {})
-            rows_for_group.append(OutcomeRow(
-                market_label=f"OU {line}",
-                side_label=_SIDE_LABEL[side],
-                side_short=_SIDE_SHORT[side],
-                prices=prices,
-            ))
-        if any(r.prices for r in rows_for_group):
-            groups.append(MarketGroup(
-                label=f"Over/Under {line}",
-                rows=rows_for_group,
-                is_extra=True,
-            ))
+    # Parameterized markets as extra (hidden-by-default) groups, in the
+    # display order set by _EXPANDER_MARKETS. Only emit a group when at
+    # least one outcome is priced for that (market, line) pair.
+    for market_id, label_prefix in _EXPANDER_MARKETS:
+        spec = _spec_by_id[market_id]
+        for line in spec.lines or ():
+            rows_for_group = []
+            for side in _sides_for(market_id):
+                prices = bucket.get((market_id, line, side), {})
+                rows_for_group.append(OutcomeRow(
+                    market_label=f"{_SHORT_PREFIX[market_id]} {line}",
+                    side_label=_SIDE_LABEL[side],
+                    side_short=_SIDE_SHORT[side],
+                    prices=prices,
+                ))
+            if any(r.prices for r in rows_for_group):
+                groups.append(MarketGroup(
+                    label=f"{label_prefix} {line}",
+                    rows=rows_for_group,
+                    is_extra=True,
+                ))
 
     return EventView(
         id=row["id"], home=row["home"], away=row["away"],
@@ -245,7 +301,8 @@ def _build_event_view(conn, row) -> EventView:
 def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
     """Build the detail-page view-model for one event + one selected market."""
     market_id, line, market_label = _PICKER_BY_SLUG[market_slug]
-    sides = _SIDES_OU if market_id == "over_under_ft" else _SIDES_1X2
+    sides = _sides_for(market_id)
+    sides_short = tuple(_SIDE_SHORT[s] for s in sides)
 
     history_rows = queries.get_market_history_for_event(
         conn, ev_row["id"], market_id, line,
@@ -265,10 +322,52 @@ def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
         for ts in sorted(bucket.keys(), reverse=True)
     ]
 
-    pills = [
-        (slug, label, slug == market_slug)
-        for mid, _ln, label, slug in _MARKET_PICKER
-    ]
+    # Build the two-stage pill UI: family chips (always) + line chips (only
+    # for parameterized families with data).
+    available_lines = queries.get_available_lines(conn, ev_row["id"])
+
+    # Active family — derive from the active slug.
+    active_market_id, _active_line, _active_label = _PICKER_BY_SLUG[market_slug]
+
+    # Compute each family's default slug — the URL the family chip points
+    # to when clicked.
+    family_default_slug: dict[str, str] = {}
+    for canonical_id, _label in _FAMILY_PILLS_1X2:
+        # 1x2 family default slug equals the canonical_id itself
+        family_default_slug[canonical_id] = canonical_id
+    for canonical_id, _label in _EXPANDER_MARKETS:
+        lines = available_lines.get(canonical_id, [])
+        if lines:
+            prefix = _spec_by_id[canonical_id].column_prefix
+            family_default_slug[canonical_id] = f"{prefix}_{lines[0]}"
+
+    # Family pills: 1x2 trio (always enabled), then the four parameterized
+    # families (disabled when no lines are available).
+    family_pills: list[tuple[str, str, str, bool, bool]] = []
+    for canonical_id, label in _FAMILY_PILLS_1X2:
+        family_pills.append((
+            canonical_id, label, family_default_slug[canonical_id],
+            canonical_id == active_market_id,
+            False,
+        ))
+    for canonical_id, label in _EXPANDER_MARKETS:
+        has_lines = bool(available_lines.get(canonical_id))
+        family_pills.append((
+            canonical_id, label,
+            family_default_slug.get(canonical_id, ""),
+            canonical_id == active_market_id,
+            not has_lines,
+        ))
+
+    # Line pills: only if the active family is parameterized AND has data.
+    line_pills: list[tuple[str, str, bool]] = []
+    expander_ids = {fid for fid, _ in _EXPANDER_MARKETS}
+    if active_market_id in expander_ids:
+        spec = _spec_by_id[active_market_id]
+        prefix = spec.column_prefix
+        for line in available_lines.get(active_market_id, []):
+            slug = f"{prefix}_{line}"
+            line_pills.append((slug, str(line), slug == market_slug))
 
     return EventDetail(
         id=ev_row["id"],
@@ -279,9 +378,13 @@ def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
         match_minute=ev_row["match_minute"],
         score_home=ev_row["score_home"],
         score_away=ev_row["score_away"],
+        country_name=ev_row["country_name"] or "",
+        league_name=ev_row["league_name"] or "",
         market_label=market_label,
         market_slug=market_slug,
         sides=sides,
-        pills=pills,
+        sides_short=sides_short,
+        family_pills=family_pills,
+        line_pills=line_pills,
         history=history,
     )

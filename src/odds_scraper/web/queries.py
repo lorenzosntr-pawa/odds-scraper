@@ -33,6 +33,7 @@ def _utcnow_iso() -> str:
 
 def get_events_by_status(
     conn: sqlite3.Connection, status: Status,
+    *, country_id: str = "", league_id: str = "",
 ) -> list[sqlite3.Row]:
     """Return events whose latest snapshot is in the given status.
 
@@ -53,6 +54,9 @@ def get_events_by_status(
         "upcoming": "ORDER BY e.kickoff_utc ASC",
         "ended":    "ORDER BY s.ts_utc DESC",
     }[status]
+    country_clause = "AND e.country_id = :country_id" if country_id else ""
+    league_clause  = "AND e.league_id  = :league_id"  if league_id  else ""
+    cutoff_clause  = "AND s.ts_utc >= :cutoff"        if cutoff     else ""
     sql = f"""
         WITH latest AS (
             SELECT event_id, MAX(ts_utc) AS max_ts
@@ -69,13 +73,19 @@ def get_events_by_status(
           ON s.event_id = l.event_id
          AND s.ts_utc  = l.max_ts
         WHERE s.status = :db_status
-          {"AND s.ts_utc >= :cutoff" if cutoff else ""}
+          {cutoff_clause}
+          {country_clause}
+          {league_clause}
         GROUP BY e.id
         {order_clause}
     """
     params: dict[str, str] = {"db_status": db_status}
     if cutoff:
         params["cutoff"] = cutoff
+    if country_id:
+        params["country_id"] = country_id
+    if league_id:
+        params["league_id"] = league_id
     return conn.execute(sql, params).fetchall()
 
 
@@ -144,6 +154,7 @@ def get_event_meta(
         )
         SELECT
             e.id, e.home, e.away, e.kickoff_utc,
+            e.country_name, e.league_name,
             s.status, s.match_minute, s.score_home, s.score_away,
             s.ts_utc AS latest_ts
         FROM events e
@@ -182,3 +193,63 @@ def get_market_history_for_event(
         ORDER BY ts_utc DESC, bookmaker, side
     """
     return conn.execute(sql, (event_id, market_id, db_line)).fetchall()
+
+
+def get_country_league_index(
+    conn: sqlite3.Connection,
+) -> list[dict]:
+    """Distinct country+league pairs across all events, grouped by country.
+
+    Skips rows where country_name is NULL or empty. Country list is sorted
+    by country_name; leagues within each country sorted by league_name.
+
+    Used to populate the cascading Country → League filter on the home page.
+    """
+    sql = """
+        SELECT DISTINCT country_id, country_name, league_id, league_name
+        FROM events
+        WHERE country_name IS NOT NULL AND country_name != ''
+        ORDER BY country_name, league_name
+    """
+    out: list[dict] = []
+    last_country: tuple[str, str] | None = None
+    for r in conn.execute(sql).fetchall():
+        key = (r["country_id"] or "", r["country_name"] or "")
+        if last_country != key:
+            out.append({
+                "country_id": key[0],
+                "country_name": key[1],
+                "leagues": [],
+            })
+            last_country = key
+        out[-1]["leagues"].append({
+            "league_id":   r["league_id"]   or "",
+            "league_name": r["league_name"] or "",
+        })
+    return out
+
+
+def get_available_lines(
+    conn: sqlite3.Connection, event_id: str,
+) -> dict[str, list[float]]:
+    """Distinct (market_id, line) pairs that have priced rows for one event.
+
+    Skips the 0.0 sentinel line that SqliteWriter stores for non-parameterized
+    markets (1x2 family) so only true parameterized lines come back. Real
+    parameterized lines like 0.5 pass through because 0.5 > 0.
+
+    Used by the detail page's two-stage market picker to render only the
+    lines that this event actually has data for.
+    """
+    sql = """
+        SELECT DISTINCT market_id, line
+        FROM prices
+        WHERE event_id = ?
+          AND line > 0
+        ORDER BY market_id, line
+    """
+    rows = conn.execute(sql, (event_id,)).fetchall()
+    out: dict[str, list[float]] = {}
+    for r in rows:
+        out.setdefault(r["market_id"], []).append(r["line"])
+    return out

@@ -199,3 +199,197 @@ def test_get_market_history_for_event_returns_newest_first(db: Path):
     assert len(home_rows) == 2
     assert home_rows[0]["ts_utc"] > home_rows[1]["ts_utc"]
     assert home_rows[0]["odds"] == 1.92
+
+
+def test_get_available_lines_returns_only_lines_with_data(db: Path):
+    from odds_scraper.web.queries import get_available_lines
+    conn = open_ro_conn(db)
+    avail = get_available_lines(conn, "E_LIVE")
+    conn.close()
+    # The shared fixture writes over_under_ft at line=2.5 only, plus
+    # 1x2_ft / 1x2_1up_ft / 1x2_2up_ft at the sentinel line=0.0.
+    # Sentinel-zero rows must be filtered out.
+    assert avail == {"over_under_ft": [2.5]}
+
+
+def test_get_event_meta_returns_country_and_league(db: Path):
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    conn.execute(
+        "UPDATE events SET country_id='242', country_name='Germany', "
+        "league_id='12091', league_name='2nd Bundesliga' WHERE id='E_LIVE'"
+    )
+    conn.close()
+    conn = open_ro_conn(db)
+    row = get_event_meta(conn, "E_LIVE")
+    conn.close()
+    assert row is not None
+    assert row["country_name"] == "Germany"
+    assert row["league_name"] == "2nd Bundesliga"
+
+
+def test_get_country_league_index_groups_by_country(tmp_path: Path):
+    from odds_scraper.web.queries import get_country_league_index
+    db = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    init_schema(conn)
+    rows = [
+        ("E1", "Germany", "242", "Bundesliga",      "BL1"),
+        ("E2", "Germany", "242", "2nd Bundesliga",  "BL2"),
+        ("E3", "USA",     "USA1", "MLS",            "MLS1"),
+    ]
+    for eid, country_name, country_id, league_name, league_id in rows:
+        conn.execute(
+            "INSERT INTO events (id, home, away, kickoff_utc, country_id, "
+            "country_name, league_id, league_name) "
+            "VALUES (?, 'H', 'A', '2026-05-22T00:00:00Z', ?, ?, ?, ?)",
+            (eid, country_id, country_name, league_id, league_name),
+        )
+    conn.close()
+    conn = open_ro_conn(db)
+    index = get_country_league_index(conn)
+    conn.close()
+    assert index == [
+        {
+            "country_id": "242", "country_name": "Germany",
+            "leagues": [
+                {"league_id": "BL2", "league_name": "2nd Bundesliga"},
+                {"league_id": "BL1", "league_name": "Bundesliga"},
+            ],
+        },
+        {
+            "country_id": "USA1", "country_name": "USA",
+            "leagues": [
+                {"league_id": "MLS1", "league_name": "MLS"},
+            ],
+        },
+    ]
+
+
+def test_get_country_league_index_skips_empty_country_name(tmp_path: Path):
+    from odds_scraper.web.queries import get_country_league_index
+    db = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    init_schema(conn)
+    conn.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc, country_name, league_name) "
+        "VALUES ('E_OK',    'H', 'A', '2026-05-22T00:00:00Z', 'Spain', 'La Liga'),"
+        "       ('E_NULL',  'H', 'A', '2026-05-22T00:00:00Z', NULL,    NULL),"
+        "       ('E_EMPTY', 'H', 'A', '2026-05-22T00:00:00Z', '',      '')",
+    )
+    conn.close()
+    conn = open_ro_conn(db)
+    index = get_country_league_index(conn)
+    conn.close()
+    country_names = [c["country_name"] for c in index]
+    assert country_names == ["Spain"]
+
+
+def test_get_events_by_status_filters_by_country_id(tmp_path: Path):
+    db = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    init_schema(conn)
+    conn.executemany(
+        "INSERT INTO events (id, home, away, kickoff_utc, country_id, country_name) "
+        "VALUES (?, 'H', 'A', '2026-05-22T18:30:00Z', ?, ?)",
+        [
+            ("E_DE", "242", "Germany"),
+            ("E_US", "USA1", "USA"),
+        ],
+    )
+    for eid in ("E_DE", "E_US"):
+        conn.execute(
+            "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
+            "VALUES ('2026-05-21T10:00:00Z', ?, 'betpawa', 'UPCOMING', 'ok')",
+            (eid,),
+        )
+    conn.close()
+    conn = open_ro_conn(db)
+    rows = get_events_by_status(conn, "upcoming", country_id="242")
+    conn.close()
+    ids = [r["id"] for r in rows]
+    assert ids == ["E_DE"]
+
+
+def test_get_events_by_status_filters_by_league_id(tmp_path: Path):
+    db = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    init_schema(conn)
+    conn.executemany(
+        "INSERT INTO events (id, home, away, kickoff_utc, league_id, league_name) "
+        "VALUES (?, 'H', 'A', '2026-05-22T18:30:00Z', ?, ?)",
+        [
+            ("E_BL1", "BL1", "Bundesliga"),
+            ("E_BL2", "BL2", "2nd Bundesliga"),
+        ],
+    )
+    for eid in ("E_BL1", "E_BL2"):
+        conn.execute(
+            "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
+            "VALUES ('2026-05-21T10:00:00Z', ?, 'betpawa', 'UPCOMING', 'ok')",
+            (eid,),
+        )
+    conn.close()
+    conn = open_ro_conn(db)
+    rows = get_events_by_status(conn, "upcoming", league_id="BL2")
+    conn.close()
+    ids = [r["id"] for r in rows]
+    assert ids == ["E_BL2"]
+
+
+def test_get_events_by_status_no_filter_returns_all(tmp_path: Path):
+    """Empty country_id / league_id are no-ops."""
+    db = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    init_schema(conn)
+    conn.executemany(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES (?, 'H', 'A', '2026-05-22T18:30:00Z')",
+        [("E1",), ("E2",)],
+    )
+    for eid in ("E1", "E2"):
+        conn.execute(
+            "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
+            "VALUES ('2026-05-21T10:00:00Z', ?, 'betpawa', 'UPCOMING', 'ok')",
+            (eid,),
+        )
+    conn.close()
+    conn = open_ro_conn(db)
+    rows = get_events_by_status(conn, "upcoming", country_id="", league_id="")
+    conn.close()
+    ids = {r["id"] for r in rows}
+    assert ids == {"E1", "E2"}
+
+
+def test_get_available_lines_multi_market_multi_line(db: Path):
+    """Verify ordering and grouping when several lines and markets coexist."""
+    from odds_scraper.web.queries import get_available_lines
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    # Reuse the E_LIVE snapshot_id from the fixture. We need its id.
+    snap_id = conn.execute(
+        "SELECT id FROM snapshots WHERE event_id='E_LIVE' LIMIT 1"
+    ).fetchone()[0]
+    extra_prices = [
+        ("over_under_ft",      3.5, "over",  2.50, None),
+        ("next_goal_ft",       1.0, "home",  1.85, None),
+        ("next_goal_ft",       2.0, "away",  3.90, None),
+        ("home_over_under_ft", 0.5, "over",  1.30, None),
+        ("away_over_under_ft", 1.5, "under", 1.55, None),
+    ]
+    for market_id, line, side, odds, prob in extra_prices:
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, 'E_LIVE', '2026-05-21T11:00:00Z', 'betpawa', "
+            "?, ?, ?, ?, ?)",
+            (snap_id, market_id, line, side, odds, prob),
+        )
+    conn.close()
+    conn = open_ro_conn(db)
+    avail = get_available_lines(conn, "E_LIVE")
+    conn.close()
+    assert avail == {
+        "over_under_ft":      [2.5, 3.5],
+        "next_goal_ft":       [1.0, 2.0],
+        "home_over_under_ft": [0.5],
+        "away_over_under_ft": [1.5],
+    }

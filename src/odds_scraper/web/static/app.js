@@ -43,7 +43,13 @@ function initTabs() {
     t.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
       t.classList.add('active');
-      window.htmx.ajax('GET', `/events?status=${t.dataset.status}`,
+      const stored = LS.load('country_league_filter', {country_id: '', league_id: ''});
+      const params = new URLSearchParams({
+        status:  t.dataset.status,
+        country: stored.country_id || '',
+        league:  stored.league_id  || '',
+      });
+      window.htmx.ajax('GET', `/events?${params.toString()}`,
                        {target: '#events-list', swap: 'outerHTML'});
     });
   });
@@ -172,6 +178,92 @@ function initExpandToggles() {
 }
 
 // -----------------------------------------------------------------------------
+// Country/League cascading dropdowns
+// -----------------------------------------------------------------------------
+function initCountryLeagueFilter() {
+  const countrySel = document.getElementById('country-select');
+  const leagueSel  = document.getElementById('league-select');
+  if (!countrySel || !leagueSel) return;
+
+  const dataTag = document.getElementById('country-league-index');
+  let index = [];
+  if (dataTag && dataTag.textContent) {
+    try { index = JSON.parse(dataTag.textContent).items || []; }
+    catch { index = []; }
+  }
+
+  const stored = LS.load('country_league_filter', {country_id: '', league_id: ''});
+
+  function populateLeagues(country_id) {
+    leagueSel.innerHTML = '<option value="">All</option>';
+    if (!country_id) {
+      leagueSel.disabled = true;
+      return;
+    }
+    const country = index.find(c => c.country_id === country_id);
+    if (!country) {
+      leagueSel.disabled = true;
+      return;
+    }
+    for (const league of country.leagues) {
+      const opt = document.createElement('option');
+      opt.value = league.league_id;
+      opt.textContent = league.league_name;
+      leagueSel.appendChild(opt);
+    }
+    leagueSel.disabled = country.leagues.length === 0;
+  }
+
+  function currentStatus() {
+    const activeTab = document.querySelector('.tab[data-status].active');
+    return (activeTab && activeTab.dataset.status) || 'upcoming';
+  }
+
+  function refresh() {
+    const country_id = countrySel.value;
+    const league_id  = leagueSel.value;
+    LS.save('country_league_filter', {country_id, league_id});
+    const params = new URLSearchParams({
+      status: currentStatus(),
+      country: country_id,
+      league:  league_id,
+    });
+    window.htmx.ajax('GET', `/events?${params.toString()}`,
+                     {target: '#events-list', swap: 'outerHTML'});
+  }
+
+  countrySel.value = stored.country_id || '';
+  populateLeagues(stored.country_id || '');
+  if (stored.league_id) {
+    try {
+      if (leagueSel.querySelector(`option[value="${stored.league_id}"]`)) {
+        leagueSel.value = stored.league_id;
+      }
+    } catch { /* malformed stored value — ignore, fall through to "All" */ }
+  }
+
+  countrySel.addEventListener('change', () => {
+    populateLeagues(countrySel.value);
+    refresh();
+  });
+  leagueSel.addEventListener('change', refresh);
+
+  // On initial page load, the events-list fragment fires its hx-get on its
+  // own (hx-trigger="load"). If we have a stored filter, listen for the
+  // initial swap to complete, then re-fire with the filter applied. Using
+  // setTimeout(0) here would race the initial unfiltered fetch.
+  if (stored.country_id || stored.league_id) {
+    const onFirstSwap = (evt) => {
+      if (evt.target && evt.target.id === 'events-list') {
+        document.body.removeEventListener('htmx:afterSwap', onFirstSwap);
+        refresh();
+      }
+    };
+    document.body.addEventListener('htmx:afterSwap', onFirstSwap);
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Wire it all together. After every HTMX swap (polling refresh), re-apply
 // client-side state because the new card markup is fresh and class-free.
 // -----------------------------------------------------------------------------
@@ -196,6 +288,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initKickoffFilter();
   initSearch();
+  initCountryLeagueFilter();
   initExpandToggles();
   initEventDelegates();
   applyAllCardState();

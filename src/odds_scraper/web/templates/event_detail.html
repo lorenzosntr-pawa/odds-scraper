@@ -13,6 +13,18 @@
     </div>
   </div>
 
+{% if event.country_name or event.league_name %}
+  <div class="event-subtitle px-2 mb-2 text-xs text-gray-500">
+    {% if event.country_name and event.league_name %}
+      {{ event.country_name }} · {{ event.league_name }}
+    {% elif event.country_name %}
+      {{ event.country_name }}
+    {% else %}
+      {{ event.league_name }}
+    {% endif %}
+  </div>
+{% endif %}
+
   <div class="flex gap-2 items-center px-2 mb-3 text-xs text-gray-500">
     <span class="text-[9px] uppercase tracking-wider">Bookmakers</span>
     <button class="chip on" data-bookmaker="betpawa">BP</button>
@@ -33,12 +45,24 @@
     {% endif %}
   </div>
 
-  <div class="pills">
-    {% for slug, label, active in event.pills %}
-      <a href="/events/{{ event.id }}?market={{ slug }}"
-         class="pill{% if active %} active{% endif %}">{{ label }}</a>
+  <div class="pills family-pills">
+    {% for fid, label, default_slug, active, disabled in event.family_pills %}
+      {% if disabled %}
+        <span class="family-pill disabled" title="No data">{{ label }}</span>
+      {% else %}
+        <a href="/events/{{ event.id }}?market={{ default_slug }}"
+           class="family-pill{% if active %} active{% endif %}">{{ label }}</a>
+      {% endif %}
     {% endfor %}
   </div>
+  {% if event.line_pills %}
+    <div class="pills line-pills">
+      {% for slug, label, active in event.line_pills %}
+        <a href="/events/{{ event.id }}?market={{ slug }}"
+           class="line-pill{% if active %} active{% endif %}">{{ label }}</a>
+      {% endfor %}
+    </div>
+  {% endif %}
 
   <div class="history-wrap">
     <div class="history-title">History — {{ event.market_label }}</div>
@@ -57,9 +81,7 @@
             <th class="ts-col"></th>
             {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
               {% for side in event.sides %}
-                <th data-bookmaker="{{ bm }}" class="side-h">
-                  {{ {"home":"H","draw":"D","away":"A","over":"O","under":"U"}[side] }}
-                </th>
+                <th data-bookmaker="{{ bm }}" class="side-h">{{ event.sides_short[loop.index0] }}</th>
               {% endfor %}
             {% endfor %}
           </tr>
