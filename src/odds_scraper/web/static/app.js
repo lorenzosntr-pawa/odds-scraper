@@ -22,7 +22,8 @@ function initTabs() {
     t.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
       t.classList.add('active');
-      window.htmx.ajax('GET', `/events?status=${t.dataset.status}`, '#events-list');
+      window.htmx.ajax('GET', `/events?status=${t.dataset.status}`,
+                       {target: '#events-list', swap: 'outerHTML'});
     });
   });
 }
@@ -38,7 +39,7 @@ window.toggleEvent = function(eventId) {
   const status = list.dataset.status || 'live';
   const openParam = Array.from(ids).join(',');
   const url = `/events?status=${status}${openParam ? '&open=' + openParam : ''}`;
-  window.htmx.ajax('GET', url, '#events-list');
+  window.htmx.ajax('GET', url, {target: '#events-list', swap: 'outerHTML'});
 };
 
 document.addEventListener('DOMContentLoaded', () => {

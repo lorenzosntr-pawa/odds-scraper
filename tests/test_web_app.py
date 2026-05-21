@@ -75,8 +75,8 @@ def test_events_fragment_collapsed_no_prob_column(client: TestClient):
 def test_events_fragment_opened_shows_prob_for_bp_sb(client: TestClient):
     r = client.get("/events?status=upcoming&open=E1")
     assert "+p" in r.text  # the "+p" indicator in the column header
-    # Probability cells rendered for BP only in this fixture
-    assert "0.54" in r.text or ".54" in r.text
+    # BP probability of 0.54 → template renders as ".54" (two-digit, no leading zero)
+    assert ".54" in r.text
 
 
 def test_events_unknown_status_returns_400(client: TestClient):
