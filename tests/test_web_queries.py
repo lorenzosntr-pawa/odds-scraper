@@ -199,3 +199,49 @@ def test_get_market_history_for_event_returns_newest_first(db: Path):
     assert len(home_rows) == 2
     assert home_rows[0]["ts_utc"] > home_rows[1]["ts_utc"]
     assert home_rows[0]["odds"] == 1.92
+
+
+def test_get_available_lines_returns_only_lines_with_data(db: Path):
+    from odds_scraper.web.queries import get_available_lines
+    conn = open_ro_conn(db)
+    avail = get_available_lines(conn, "E_LIVE")
+    conn.close()
+    # The shared fixture writes over_under_ft at line=2.5 only, plus
+    # 1x2_ft / 1x2_1up_ft / 1x2_2up_ft at the sentinel line=0.0.
+    # Sentinel-zero rows must be filtered out.
+    assert avail == {"over_under_ft": [2.5]}
+
+
+def test_get_available_lines_multi_market_multi_line(db: Path):
+    """Verify ordering and grouping when several lines and markets coexist."""
+    from odds_scraper.web.queries import get_available_lines
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    # Reuse the E_LIVE snapshot_id from the fixture. We need its id.
+    snap_id = conn.execute(
+        "SELECT id FROM snapshots WHERE event_id='E_LIVE' LIMIT 1"
+    ).fetchone()[0]
+    extra_prices = [
+        ("over_under_ft",      3.5, "over",  2.50, None),
+        ("next_goal_ft",       1.0, "home",  1.85, None),
+        ("next_goal_ft",       2.0, "away",  3.90, None),
+        ("home_over_under_ft", 0.5, "over",  1.30, None),
+        ("away_over_under_ft", 1.5, "under", 1.55, None),
+    ]
+    for market_id, line, side, odds, prob in extra_prices:
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, 'E_LIVE', '2026-05-21T11:00:00Z', 'betpawa', "
+            "?, ?, ?, ?, ?)",
+            (snap_id, market_id, line, side, odds, prob),
+        )
+    conn.close()
+    conn = open_ro_conn(db)
+    avail = get_available_lines(conn, "E_LIVE")
+    conn.close()
+    assert avail == {
+        "over_under_ft":      [2.5, 3.5],
+        "next_goal_ft":       [1.0, 2.0],
+        "home_over_under_ft": [0.5],
+        "away_over_under_ft": [1.5],
+    }

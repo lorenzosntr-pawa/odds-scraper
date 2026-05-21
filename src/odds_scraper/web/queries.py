@@ -182,3 +182,29 @@ def get_market_history_for_event(
         ORDER BY ts_utc DESC, bookmaker, side
     """
     return conn.execute(sql, (event_id, market_id, db_line)).fetchall()
+
+
+def get_available_lines(
+    conn: sqlite3.Connection, event_id: str,
+) -> dict[str, list[float]]:
+    """Distinct (market_id, line) pairs that have priced rows for one event.
+
+    Skips the 0.0 sentinel line that SqliteWriter stores for non-parameterized
+    markets (1x2 family) so only true parameterized lines come back. Real
+    parameterized lines like 0.5 pass through because 0.5 > 0.
+
+    Used by the detail page's two-stage market picker to render only the
+    lines that this event actually has data for.
+    """
+    sql = """
+        SELECT DISTINCT market_id, line
+        FROM prices
+        WHERE event_id = ?
+          AND line > 0
+        ORDER BY market_id, line
+    """
+    rows = conn.execute(sql, (event_id,)).fetchall()
+    out: dict[str, list[float]] = {}
+    for r in rows:
+        out.setdefault(r["market_id"], []).append(r["line"])
+    return out
