@@ -165,3 +165,22 @@ def test_resolved_ids_matched_bookmakers():
     r = ResolvedIds(sr_id="sr:match:1", genius_id=None, sb_id="sr:match:1",
                     b9j_id=None, bw_id=None)
     assert r.matched_bookmakers() == {"sportybet"}
+
+
+def test_snapshot_default_country_league_fields_are_empty():
+    snap = Snapshot(**_meta_kwargs())
+    assert snap.country_id == ""
+    assert snap.country_name == ""
+    assert snap.league_id == ""
+    assert snap.league_name == ""
+
+
+def test_snapshot_accepts_country_league_kwargs():
+    snap = Snapshot(**_meta_kwargs(
+        country_id="242", country_name="Germany",
+        league_id="12091", league_name="2nd Bundesliga",
+    ))
+    assert snap.country_id == "242"
+    assert snap.country_name == "Germany"
+    assert snap.league_id == "12091"
+    assert snap.league_name == "2nd Bundesliga"
