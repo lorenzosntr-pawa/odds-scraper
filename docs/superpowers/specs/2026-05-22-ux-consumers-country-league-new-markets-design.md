@@ -25,7 +25,7 @@ Sub-projects 1 and 2 added country/league capture and three new markets (`next_g
 | Detail-page subtitle | `{country_name} · {league_name}`. Renders just the present field if one is empty; omitted entirely if both empty. |
 | Persistence | Country + league selections persist in the existing localStorage filter key alongside kickoff/search. |
 | Default market on detail page | Unchanged: `1x2_2up_ft`. |
-| URL slug scheme | Unchanged: `1x2_ft`, `ou_2.5`, `ng_1.0`, `ou_home_0.5`, `ou_away_0.5`. Existing bookmarks keep resolving. |
+| URL slug scheme | Same `{column_prefix}_{line}` pattern as today; new slug values added (`ng_*`, `ou_home_*`, `ou_away_*`). Existing bookmarks (`1x2_ft`, `ou_2.5`, …) keep resolving unchanged. |
 | Country/league index endpoint | None — embedded as JSON in `index.html` on initial page load. |
 | Multi-sport | Out of scope (today everything is soccer). |
 | Backfill | None — events with empty country/league appear in "All / All" only, as today. |
@@ -137,7 +137,7 @@ The client reads this on boot, populates the Country `<select>`, and updates the
 
 `_build_event_detail` consumes two new pieces of data:
 
-1. `country_name` and `league_name` from the existing `events` row join (already returned by `queries.get_event_meta`). Template renders `{{ country_name }} · {{ league_name }}` with conditional joiner logic.
+1. `country_name` and `league_name` from the `events` row join. `queries.get_event_meta` is extended to add `e.country_name, e.league_name` to its SELECT (the columns already exist in the table since sub-project 1; the query just doesn't surface them today). Template renders `{{ country_name }} · {{ league_name }}` with conditional joiner logic.
 
 2. New query `queries.get_available_lines(conn, event_id) -> dict[str, list[float]]`:
 
@@ -147,7 +147,7 @@ The client reads this on boot, populates the Country `<select>`, and updates the
    ORDER BY market_id, line
    ```
 
-   The Python wrapper groups by `market_id`. `line > 0` skips the sentinel-zero rows of non-parameterized markets. The returned dict shape is `{"over_under_ft": [2.5, 3.5], "next_goal_ft": [1.0, 2.0], …}`.
+   The Python wrapper groups by `market_id`. The `line > 0` clause filters out the `0.0` sentinel that `SqliteWriter` stores for non-parameterized markets (1x2 family); valid parameterized lines like `0.5` are kept (`0.5 > 0` is true). The returned dict shape is `{"over_under_ft": [2.5, 3.5], "next_goal_ft": [1.0, 2.0], …}`.
 
 The pill builder constructs:
 
