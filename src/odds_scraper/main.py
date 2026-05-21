@@ -103,6 +103,10 @@ async def _amain(config_path: Path) -> int:
         async def _refresh_loop():
             while True:
                 try:
+                    # Prune completed watcher tasks so `tasks` doesn't grow
+                    # unbounded over a long server run, and so the active
+                    # count below stays honest.
+                    tasks[:] = [t for t in tasks if not t.done()]
                     any_active = any(not t.done() for t in tasks)
                     sleep_sec = (
                         cfg.refresh_interval_seconds if any_active
@@ -150,11 +154,15 @@ async def _amain(config_path: Path) -> int:
         # the refresh loop keeps polling until cancelled.
         await stop_event.wait()
 
-        log.info("shutting down, cancelling refresh + %d watcher tasks", len(tasks))
+        active = [t for t in tasks if not t.done()]
+        log.info(
+            "shutting down, cancelling refresh + %d live watcher tasks",
+            len(active),
+        )
         refresh_task.cancel()
-        for t in tasks:
+        for t in active:
             t.cancel()
-        await asyncio.gather(refresh_task, *tasks, return_exceptions=True)
+        await asyncio.gather(refresh_task, *active, return_exceptions=True)
 
     return 0
 
