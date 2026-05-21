@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
+from bookieskit import extract_kickoff
+
 from .collector import OddsCollector
 from .models import (
     MARKET_MANIFEST, PROB_BOOKMAKERS, Bookmaker, EventStatus, FetchStatus,
@@ -63,13 +65,22 @@ class EventWatcher:
         self._last_status: EventStatus = EventStatus.UNKNOWN
 
     async def run(self) -> None:
-        start = datetime.now(timezone.utc)
+        # Kickoff is learned from the first successful detail tick.
+        # The watchdog is "N seconds AFTER kickoff" per its config-key name,
+        # so until we know kickoff we cannot trip it. For events whose
+        # kickoff is in the future (prematch), the elapsed-since-kickoff
+        # is negative and the watchdog cannot trip until the event has
+        # been live for `watchdog_after_kickoff_seconds`.
+        kickoff_utc: datetime | None = None
         while True:
             detail = await self._poll_status_with_retries()
             if detail is None:
                 await self._writer.append(self._sentinel_rows("status poll failed"))
                 await asyncio.sleep(self._cadence(self._last_status))
                 continue
+
+            if kickoff_utc is None:
+                kickoff_utc = extract_kickoff(detail, "betpawa")
 
             status = parse_status(detail)
             if status != self._last_status:
@@ -92,13 +103,16 @@ class EventWatcher:
                 log.info("event %s ENDED — watcher exiting", self.event_bp_id)
                 return
 
-            elapsed = (datetime.now(timezone.utc) - start).total_seconds()
-            if elapsed > self.cfg.watchdog_after_kickoff_seconds:
-                log.warning(
-                    "event %s watchdog tripped after %.0fs — exiting",
-                    self.event_bp_id, elapsed,
-                )
-                return
+            if kickoff_utc is not None:
+                elapsed_since_kickoff = (
+                    datetime.now(timezone.utc) - kickoff_utc
+                ).total_seconds()
+                if elapsed_since_kickoff > self.cfg.watchdog_after_kickoff_seconds:
+                    log.warning(
+                        "event %s watchdog tripped %.0fs after kickoff — exiting",
+                        self.event_bp_id, elapsed_since_kickoff,
+                    )
+                    return
 
             await asyncio.sleep(self._cadence(status))
 
