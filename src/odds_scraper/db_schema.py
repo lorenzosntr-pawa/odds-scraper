@@ -70,12 +70,22 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_BASE_DDL)
     current = _current_version(conn)
     for v in range(current + 1, SCHEMA_VERSION + 1):
-        _MIGRATIONS[v](conn)
-        conn.execute(
-            "INSERT OR REPLACE INTO schema_version (rowid, version) "
-            "VALUES (1, ?)",
-            (v,),
-        )
+        # Each migration step is its own transaction so a crash between
+        # the schema change (e.g. ALTER TABLE) and the version bump can't
+        # leave the DB with the new shape but the old version recorded —
+        # which would brick the next open by trying to re-run the migration.
+        conn.execute("BEGIN")
+        try:
+            _MIGRATIONS[v](conn)
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_version (rowid, version) "
+                "VALUES (1, ?)",
+                (v,),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
 
 
 def _current_version(conn: sqlite3.Connection) -> int:
