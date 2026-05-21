@@ -65,8 +65,11 @@ async def test_old_header_file_is_renamed_with_v1_suffix(tmp_path: Path):
         "status,match_minute,score_home,score_away,"
         "bookmaker,market,outcome,odds,probability,fetch_status,fetch_error\n"
     )
-    path.write_text(old_header + "2026-05-20T11:00:00Z,33,,,,A,B,UPCOMING,,,"
-                                  ",betpawa,1x2_1up_ft,home,1.85,0.54,ok,\n",
+    # 18 fields matching old_header: ts, ev, sr, genius, home, away, kickoff,
+    # status, minute, score_home, score_away, bookmaker, market, outcome,
+    # odds, prob, fetch_status, fetch_error (trailing empty).
+    path.write_text(old_header + "2026-05-20T11:00:00Z,33,,,A,B,2026-05-20T11:00:00Z"
+                                  ",UPCOMING,,,,betpawa,1x2_1up_ft,home,1.85,0.54,ok,\n",
                     encoding="utf-8")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
