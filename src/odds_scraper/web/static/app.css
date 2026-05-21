@@ -102,8 +102,15 @@
 .odds    { color: #4ade80; font-weight: 600; }
 .prob    { color: #94a3b8; font-size: 9px; margin-left: 4px; }
 
-/* Bookmaker chip toggle — body class hides matching columns */
-body.hide-betpawa   [data-bookmaker="betpawa"]   { display: none; }
-body.hide-sportybet [data-bookmaker="sportybet"] { display: none; }
-body.hide-bet9ja    [data-bookmaker="bet9ja"]    { display: none; }
-body.hide-betway    [data-bookmaker="betway"]    { display: none; }
+/* Bookmaker chip toggle — body class hides matching columns INSIDE the
+   events list only. Scoped via #events-list so the chip itself (which
+   also carries data-bookmaker=...) stays visible and clickable. */
+body.hide-betpawa   #events-list [data-bookmaker="betpawa"]   { display: none; }
+body.hide-sportybet #events-list [data-bookmaker="sportybet"] { display: none; }
+body.hide-bet9ja    #events-list [data-bookmaker="bet9ja"]    { display: none; }
+body.hide-betway    #events-list [data-bookmaker="betway"]    { display: none; }
+
+/* When a chip is in the off state, dim it so it reads as "filtered out" */
+.chip:not(.on) {
+  opacity: 0.4;
+}
