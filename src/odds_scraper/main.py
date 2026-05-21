@@ -17,6 +17,7 @@ from .resolution import ResolutionCache
 from .resolution_runtime import (
     make_bookmaker_clients, make_fetchers, resolve_event,
 )
+from .event_resolver import resolve_event_ids
 from .watcher import EventWatcher, WatcherConfig
 from .writer import CsvWriter
 
@@ -68,21 +69,68 @@ async def _amain(config_path: Path) -> int:
             status_retry_backoff_seconds=cfg.cadence.status_retry_backoff_seconds,
             watchdog_after_kickoff_seconds=cfg.cadence.watchdog_after_kickoff_seconds,
         )
-        watchers = [
-            EventWatcher(
-                event_bp_id=ev,
-                cfg=watcher_cfg,
-                bp_client=clients[Bookmaker.BETPAWA],
-                collector=collector,
-                writer=writer,
-                resolver=resolver,
+
+        bp_client = clients[Bookmaker.BETPAWA]
+        initial_ids = await resolve_event_ids(
+            standalone_events=cfg.events,
+            tournaments=cfg.tournaments,
+            bp_client=bp_client,
+        )
+        log.info(
+            "initial event set: %d (from %d standalone + %d tournaments)",
+            len(initial_ids), len(cfg.events), len(cfg.tournaments),
+        )
+
+        watched_ids: set[str] = set()
+        tasks: list[asyncio.Task] = []
+
+        def _spawn_watcher(ev_id: str) -> None:
+            if ev_id in watched_ids:
+                return
+            watched_ids.add(ev_id)
+            w = EventWatcher(
+                event_bp_id=ev_id, cfg=watcher_cfg,
+                bp_client=bp_client, collector=collector,
+                writer=writer, resolver=resolver,
             )
-            for ev in cfg.events
-        ]
-        tasks = [
-            asyncio.create_task(supervise_watcher(w, ev), name=f"watcher-{ev}")
-            for w, ev in zip(watchers, cfg.events)
-        ]
+            tasks.append(asyncio.create_task(
+                supervise_watcher(w, ev_id), name=f"watcher-{ev_id}",
+            ))
+
+        for ev_id in initial_ids:
+            _spawn_watcher(ev_id)
+
+        async def _refresh_loop():
+            while True:
+                try:
+                    any_active = any(not t.done() for t in tasks)
+                    sleep_sec = (
+                        cfg.refresh_interval_seconds if any_active
+                        else cfg.refresh_interval_when_idle_seconds
+                    )
+                    await asyncio.sleep(sleep_sec)
+                    current = await resolve_event_ids(
+                        standalone_events=cfg.events,
+                        tournaments=cfg.tournaments,
+                        bp_client=bp_client,
+                    )
+                    new_ids = [i for i in current if i not in watched_ids]
+                    if new_ids:
+                        log.info("refresh: spawning %d new watchers", len(new_ids))
+                        for ev_id in new_ids:
+                            _spawn_watcher(ev_id)
+                    else:
+                        active_count = sum(1 for t in tasks if not t.done())
+                        log.info(
+                            "refresh: no new events (active watchers: %d)",
+                            active_count,
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    log.exception("refresh loop iteration failed — continuing")
+
+        refresh_task = asyncio.create_task(_refresh_loop(), name="refresh-loop")
 
         stop_event = asyncio.Event()
 
@@ -98,18 +146,15 @@ async def _amain(config_path: Path) -> int:
                 # Ctrl-C is delivered via KeyboardInterrupt in cli() instead.
                 pass
 
-        wait_for_stop = asyncio.create_task(stop_event.wait())
-        all_watchers = asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.wait(
-            [wait_for_stop, all_watchers], return_when=asyncio.FIRST_COMPLETED,
-        )
+        # Process only exits on stop signal. Watchers come and go;
+        # the refresh loop keeps polling until cancelled.
+        await stop_event.wait()
 
-        log.info("shutting down, cancelling %d watcher tasks", len(tasks))
+        log.info("shutting down, cancelling refresh + %d watcher tasks", len(tasks))
+        refresh_task.cancel()
         for t in tasks:
             t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        if not wait_for_stop.done():
-            wait_for_stop.cancel()
+        await asyncio.gather(refresh_task, *tasks, return_exceptions=True)
 
     return 0
 
