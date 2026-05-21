@@ -60,6 +60,9 @@ class OddsCollector:
                     markets = await self._fetchers[b](target_id)
                 return b, (FetchStatus.OK, "", markets)
             except Exception as e:  # noqa: BLE001
+                # Some bookmakers (Bet9ja behind Akamai) return multi-line
+                # HTML error pages — collapse whitespace and truncate so the
+                # log stays one line.
                 short = " ".join(str(e).split())[:120]
                 log.warning("fetch failed for %s: %s", b.value, short)
                 return b, (FetchStatus.HTTP_ERROR,
@@ -104,25 +107,27 @@ class OddsCollector:
 def _extract_prices_for_manifest(
     markets: list, want_prob: bool,
 ) -> dict[PriceKey, tuple[Optional[float], Optional[float]]]:
-    by_canon = {getattr(m, "canonical_id", None): m for m in markets}
+    by_canon = {m.canonical_id: m for m in markets}
     out: dict[PriceKey, tuple[Optional[float], Optional[float]]] = {}
     for spec in MARKET_MANIFEST:
         m = by_canon.get(spec.canonical_id)
         if m is None:
             continue
         if spec.lines is None:
-            by_side = {o.canonical_name: o for o in getattr(m, "outcomes", [])}
+            by_side = {o.canonical_name: o for o in m.outcomes}
             for side in spec.sides:
                 o = by_side.get(side)
                 if o is None or o.odds is None:
                     continue
-                prob = getattr(o, "true_probability", None) if want_prob else None
+                prob = o.true_probability if want_prob else None
                 out[PriceKey(spec.canonical_id, None, side)] = (
                     float(o.odds),
                     float(prob) if prob is not None else None,
                 )
         else:
-            lines_map = getattr(m, "lines", None) or {}
+            # NormalizedMarket.lines is `dict | None` per bookieskit types,
+            # so the None coalesce is load-bearing here.
+            lines_map = m.lines or {}
             for line in spec.lines:
                 outcomes = lines_map.get(line)
                 if not outcomes:
@@ -132,8 +137,7 @@ def _extract_prices_for_manifest(
                     o = by_side.get(side)
                     if o is None or o.odds is None:
                         continue
-                    prob = (getattr(o, "true_probability", None)
-                            if want_prob else None)
+                    prob = o.true_probability if want_prob else None
                     out[PriceKey(spec.canonical_id, line, side)] = (
                         float(o.odds),
                         float(prob) if prob is not None else None,
