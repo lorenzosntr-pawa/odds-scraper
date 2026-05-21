@@ -104,9 +104,9 @@ class OutcomeRow:
 class MarketGroup:
     label: str              # e.g., "1x2 — Full Time"
     rows: list[OutcomeRow]
-    # is_extra=True groups (OU lines) are hidden by default in the card
-    # view; revealed via the "Show OU lines" toggle. The detail page uses
-    # the market-picker pills instead and ignores this flag.
+    # is_extra=True groups are hidden by default in the card view; revealed
+    # via the expand toggle. The detail page uses the market-picker pills
+    # instead and ignores this flag.
     is_extra: bool = False
 
 
