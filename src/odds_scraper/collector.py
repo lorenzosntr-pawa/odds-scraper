@@ -8,22 +8,19 @@ from typing import Any, Awaitable, Callable, Optional
 from bookieskit import extract_kickoff, extract_participants
 
 from .models import (
-    Bookmaker, FetchStatus, Market, Outcome, Snapshot,
+    MARKET_MANIFEST, PROB_BOOKMAKERS, Bookmaker, FetchStatus, PriceKey, Snapshot,
 )
 from .status import parse_clock, parse_score, parse_status
 
 log = logging.getLogger(__name__)
 
-_PROB_BOOKMAKERS = {Bookmaker.BETPAWA, Bookmaker.SPORTYBET}
-
 Fetcher = Callable[..., Awaitable[list]]
 
 
 class OddsCollector:
-    """Stateless one-tick fan-out. Always returns 24 rows per call.
-
-    Failures (lookup, HTTP, missing market, suspended outcome) are encoded
-    into the row via fetch_status; the collector itself never raises.
+    """Stateless one-tick fan-out. Always returns 4 Snapshot rows (one per
+    bookmaker). Failures are encoded into the row via fetch_status; the
+    collector itself never raises.
     """
 
     def __init__(self, fetchers: dict[Bookmaker, Fetcher]):
@@ -62,10 +59,12 @@ class OddsCollector:
                 return b, (FetchStatus.OK, "", markets)
             except Exception as e:  # noqa: BLE001
                 # Some bookmakers (Bet9ja behind Akamai) return multi-line
-                # HTML error pages — truncate so the log stays one line.
+                # HTML error pages — collapse whitespace and truncate so the
+                # log stays one line.
                 short = " ".join(str(e).split())[:120]
                 log.warning("fetch failed for %s: %s", b.value, short)
-                return b, (FetchStatus.HTTP_ERROR, f"{type(e).__name__}: {short}", [])
+                return b, (FetchStatus.HTTP_ERROR,
+                           f"{type(e).__name__}: {short}", [])
 
         coros = [
             run(b, resolved.get(b) if b != Bookmaker.BETPAWA else None)
@@ -78,65 +77,67 @@ class OddsCollector:
         rows: list[Snapshot] = []
         for b in Bookmaker:
             status_fetch, error, markets = results[b]
-            for market in (Market.ONE_UP, Market.TWO_UP):
-                outcomes_map = (
-                    _outcomes_for(market, markets)
-                    if status_fetch == FetchStatus.OK
-                    else None
-                )
-                for outcome in (Outcome.HOME, Outcome.DRAW, Outcome.AWAY):
-                    odds: Optional[float] = None
-                    prob: Optional[float] = None
-                    row_status = status_fetch
-                    row_error = error
-                    if status_fetch == FetchStatus.OK:
-                        if outcomes_map is None:
-                            row_status = FetchStatus.NOT_OFFERED
-                            row_error = f"{market.value} not in response"
-                        else:
-                            o = outcomes_map.get(outcome.value)
-                            if o is None:
-                                row_status = FetchStatus.SUSPENDED
-                                row_error = "no price for outcome"
-                            else:
-                                odds = o[0]
-                                if b in _PROB_BOOKMAKERS:
-                                    prob = o[1]
-                    rows.append(Snapshot(
-                        ts_utc=ts,
-                        event_bp_id=str(bp_detail.get("id", "")),
-                        sr_id=sr_id or "",
-                        genius_id=genius_id or "",
-                        home=home, away=away,
-                        kickoff_utc=kickoff,
-                        status=status,
-                        match_minute=minute,
-                        score_home=score[0] if score else None,
-                        score_away=score[1] if score else None,
-                        bookmaker=b,
-                        market=market,
-                        outcome=outcome,
-                        odds=odds,
-                        probability=prob,
-                        fetch_status=row_status,
-                        fetch_error=row_error,
-                    ))
+            want_prob = b in PROB_BOOKMAKERS
+            prices = (
+                _extract_prices_for_manifest(markets, want_prob)
+                if status_fetch == FetchStatus.OK
+                else {}
+            )
+            rows.append(Snapshot(
+                ts_utc=ts,
+                event_bp_id=str(bp_detail.get("id", "")),
+                sr_id=sr_id or "",
+                genius_id=genius_id or "",
+                home=home, away=away,
+                kickoff_utc=kickoff,
+                status=status,
+                match_minute=minute,
+                score_home=score[0] if score else None,
+                score_away=score[1] if score else None,
+                bookmaker=b,
+                fetch_status=status_fetch,
+                fetch_error=error,
+                prices=prices,
+            ))
         return rows
 
 
-def _outcomes_for(
-    market: Market, markets: list,
-) -> Optional[dict[str, tuple[float, Optional[float]]]]:
-    for m in markets:
-        if m.canonical_id == market.value:
-            out: dict[str, tuple[float, Optional[float]]] = {}
-            for o in m.outcomes:
-                if o.odds is None:
+def _extract_prices_for_manifest(
+    markets: list, want_prob: bool,
+) -> dict[PriceKey, tuple[Optional[float], Optional[float]]]:
+    by_canon = {m.canonical_id: m for m in markets}
+    out: dict[PriceKey, tuple[Optional[float], Optional[float]]] = {}
+    for spec in MARKET_MANIFEST:
+        m = by_canon.get(spec.canonical_id)
+        if m is None:
+            continue
+        if spec.lines is None:
+            by_side = {o.canonical_name: o for o in m.outcomes}
+            for side in spec.sides:
+                o = by_side.get(side)
+                if o is None or o.odds is None:
                     continue
-                prob = getattr(o, "true_probability", None)
-                out[o.canonical_name] = (
+                prob = o.true_probability if want_prob else None
+                out[PriceKey(spec.canonical_id, None, side)] = (
                     float(o.odds),
                     float(prob) if prob is not None else None,
                 )
-            return out
-    return None
+        else:
+            # NormalizedMarket.lines is `dict | None` per bookieskit types,
+            # so the None coalesce is load-bearing here.
+            lines_map = m.lines or {}
+            for line in spec.lines:
+                outcomes = lines_map.get(line)
+                if not outcomes:
+                    continue
+                by_side = {o.canonical_name: o for o in outcomes}
+                for side in spec.sides:
+                    o = by_side.get(side)
+                    if o is None or o.odds is None:
+                        continue
+                    prob = o.true_probability if want_prob else None
+                    out[PriceKey(spec.canonical_id, line, side)] = (
+                        float(o.odds),
+                        float(prob) if prob is not None else None,
+                    )
+    return out

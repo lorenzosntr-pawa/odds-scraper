@@ -8,9 +8,23 @@ from typing import Any, Awaitable, Callable
 
 from .collector import OddsCollector
 from .models import (
-    Bookmaker, EventStatus, FetchStatus, Market, Outcome, Snapshot,
+    MARKET_MANIFEST, PROB_BOOKMAKERS, Bookmaker, EventStatus, FetchStatus,
+    Snapshot,
 )
 from .status import parse_status
+
+
+def _price_cell_count(want_prob: bool) -> int:
+    """Total price cells per bookmaker, derived from MARKET_MANIFEST.
+
+    BP/SB emit odds AND prob per outcome (2 cells each).
+    B9J/BW emit odds only (1 cell each). Used as denominators in tick logs.
+    """
+    cells = 0
+    for spec in MARKET_MANIFEST:
+        outcomes = len(spec.lines or (None,)) * len(spec.sides)
+        cells += outcomes * (2 if want_prob else 1)
+    return cells
 
 log = logging.getLogger(__name__)
 
@@ -108,36 +122,38 @@ class EventWatcher:
         return None
 
     def _log_tick_summary(self, rows: list[Snapshot]) -> None:
-        # rows are exactly 24 = 4 bookmakers x 2 markets x 3 outcomes.
-        # Summarize as one OK count per bookmaker (max 6).
-        counts: dict[str, int] = {b.value: 0 for b in Bookmaker}
+        denom = {b: _price_cell_count(b in PROB_BOOKMAKERS) for b in Bookmaker}
+        counts: dict[Bookmaker, int] = {b: 0 for b in Bookmaker}
         for r in rows:
-            if r.fetch_status == FetchStatus.OK:
-                counts[r.bookmaker.value] += 1
+            for odds, prob in r.prices.values():
+                if odds is not None:
+                    counts[r.bookmaker] += 1
+                if prob is not None:
+                    counts[r.bookmaker] += 1
         log.info(
-            "tick %s status=%s bp=%d/6 sb=%d/6 b9j=%d/6 bw=%d/6",
+            "tick %s status=%s bp=%d/%d sb=%d/%d b9j=%d/%d bw=%d/%d",
             self.event_bp_id, self._last_status.value,
-            counts["betpawa"], counts["sportybet"],
-            counts["bet9ja"], counts["betway"],
+            counts[Bookmaker.BETPAWA],   denom[Bookmaker.BETPAWA],
+            counts[Bookmaker.SPORTYBET], denom[Bookmaker.SPORTYBET],
+            counts[Bookmaker.BET9JA],    denom[Bookmaker.BET9JA],
+            counts[Bookmaker.BETWAY],    denom[Bookmaker.BETWAY],
         )
 
     def _sentinel_rows(self, reason: str) -> list[Snapshot]:
         ts = datetime.now(timezone.utc)
         rows: list[Snapshot] = []
         for b in Bookmaker:
-            for market in (Market.ONE_UP, Market.TWO_UP):
-                for outcome in (Outcome.HOME, Outcome.DRAW, Outcome.AWAY):
-                    rows.append(Snapshot(
-                        ts_utc=ts,
-                        event_bp_id=self.event_bp_id,
-                        sr_id="", genius_id="",
-                        home="", away="",
-                        kickoff_utc=ts,
-                        status=self._last_status,
-                        match_minute=None, score_home=None, score_away=None,
-                        bookmaker=b, market=market, outcome=outcome,
-                        odds=None, probability=None,
-                        fetch_status=FetchStatus.HTTP_ERROR,
-                        fetch_error=reason,
-                    ))
+            rows.append(Snapshot(
+                ts_utc=ts,
+                event_bp_id=self.event_bp_id,
+                sr_id="", genius_id="",
+                home="", away="",
+                kickoff_utc=ts,
+                status=self._last_status,
+                match_minute=None, score_home=None, score_away=None,
+                bookmaker=b,
+                fetch_status=FetchStatus.HTTP_ERROR,
+                fetch_error=reason,
+                prices={},
+            ))
         return rows

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -16,8 +16,6 @@ class EventStatus(str, Enum):
 
 class FetchStatus(str, Enum):
     OK = "ok"
-    SUSPENDED = "suspended"
-    NOT_OFFERED = "not_offered"
     LOOKUP_FAILED = "lookup_failed"
     HTTP_ERROR = "http_error"
     PARSE_ERROR = "parse_error"
@@ -30,25 +28,60 @@ class Bookmaker(str, Enum):
     BETWAY = "betway"
 
 
-class Market(str, Enum):
-    ONE_UP = "1x2_1up_ft"
-    TWO_UP = "1x2_2up_ft"
-
-
-class Outcome(str, Enum):
-    HOME = "home"
-    DRAW = "draw"
-    AWAY = "away"
-
-
-CSV_HEADER: tuple[str, ...] = (
-    "ts_utc", "event_bp_id", "sr_id", "genius_id",
-    "home", "away", "kickoff_utc",
-    "status", "match_minute", "score_home", "score_away",
-    "bookmaker", "market", "outcome",
-    "odds", "probability",
-    "fetch_status", "fetch_error",
+# Bookmakers that expose a fair (pre-margin) probability per outcome.
+# Used by the collector to decide whether to populate the prob field,
+# and by the watcher to size the tick-log denominator.
+PROB_BOOKMAKERS: frozenset[Bookmaker] = frozenset(
+    {Bookmaker.BETPAWA, Bookmaker.SPORTYBET},
 )
+
+
+@dataclass(frozen=True)
+class MarketSpec:
+    canonical_id: str
+    column_prefix: str
+    sides: tuple[str, ...]
+    lines: Optional[tuple[float, ...]]
+
+
+MARKET_MANIFEST: tuple[MarketSpec, ...] = (
+    MarketSpec("1x2_ft",        "1x2_ft",      ("home", "draw", "away"), None),
+    MarketSpec("1x2_1up_ft",    "1x2_1up_ft",  ("home", "draw", "away"), None),
+    MarketSpec("1x2_2up_ft",    "1x2_2up_ft",  ("home", "draw", "away"), None),
+    MarketSpec(
+        # column_prefix shortened to "ou"; must remain unique across manifest
+        "over_under_ft", "ou", ("over", "under"),
+        (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5),
+    ),
+)
+
+
+@dataclass(frozen=True)
+class PriceKey:
+    market_id: str
+    line: Optional[float]
+    side: str
+
+
+def build_csv_header() -> tuple[str, ...]:
+    meta = (
+        "ts_utc", "event_bp_id", "sr_id", "genius_id",
+        "home", "away", "kickoff_utc",
+        "status", "match_minute", "score_home", "score_away",
+        "bookmaker", "fetch_status", "fetch_error",
+    )
+    price_cols: list[str] = []
+    for spec in MARKET_MANIFEST:
+        if spec.lines is None:
+            for side in spec.sides:
+                price_cols.append(f"{spec.column_prefix}_{side}_odds")
+                price_cols.append(f"{spec.column_prefix}_{side}_prob")
+        else:
+            for line in spec.lines:
+                for side in spec.sides:
+                    price_cols.append(f"{spec.column_prefix}_{line}_{side}_odds")
+                    price_cols.append(f"{spec.column_prefix}_{line}_{side}_prob")
+    return meta + tuple(price_cols)
 
 
 def _iso(dt: datetime | None) -> str:
@@ -81,15 +114,17 @@ class Snapshot:
     score_home: Optional[int]
     score_away: Optional[int]
     bookmaker: Bookmaker
-    market: Market
-    outcome: Outcome
-    odds: Optional[float]
-    probability: Optional[float]
     fetch_status: FetchStatus
     fetch_error: str
+    # NB: frozen=True does not freeze the contents of `prices` — the dict
+    # itself remains mutable. By convention, populate it at construction in
+    # the collector and never mutate afterwards.
+    prices: dict[PriceKey, tuple[Optional[float], Optional[float]]] = field(
+        default_factory=dict,
+    )
 
     def to_csv_row(self) -> tuple[str, ...]:
-        return (
+        meta = (
             _iso(self.ts_utc),
             self.event_bp_id,
             self.sr_id,
@@ -102,13 +137,27 @@ class Snapshot:
             _maybe(self.score_home),
             _maybe(self.score_away),
             self.bookmaker.value,
-            self.market.value,
-            self.outcome.value,
-            _num(self.odds, 2),
-            _num(self.probability, 5),
             self.fetch_status.value,
             self.fetch_error,
         )
+        price_cells: list[str] = []
+        for spec in MARKET_MANIFEST:
+            if spec.lines is None:
+                for side in spec.sides:
+                    odds, prob = self.prices.get(
+                        PriceKey(spec.canonical_id, None, side), (None, None),
+                    )
+                    price_cells.append(_num(odds, 2))
+                    price_cells.append(_num(prob, 5))
+            else:
+                for line in spec.lines:
+                    for side in spec.sides:
+                        odds, prob = self.prices.get(
+                            PriceKey(spec.canonical_id, line, side), (None, None),
+                        )
+                        price_cells.append(_num(odds, 2))
+                        price_cells.append(_num(prob, 5))
+        return meta + tuple(price_cells)
 
 
 @dataclass(frozen=True)
