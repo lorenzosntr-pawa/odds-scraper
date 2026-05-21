@@ -141,6 +141,8 @@ class EventDetail:
     match_minute: Optional[int]
     score_home: Optional[int]
     score_away: Optional[int]
+    country_name: str
+    league_name: str
     # Currently selected market info
     market_label: str
     market_slug: str
@@ -311,6 +313,8 @@ def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
         match_minute=ev_row["match_minute"],
         score_home=ev_row["score_home"],
         score_away=ev_row["score_away"],
+        country_name=ev_row["country_name"] or "",
+        league_name=ev_row["league_name"] or "",
         market_label=market_label,
         market_slug=market_slug,
         sides=sides,

@@ -144,6 +144,7 @@ def get_event_meta(
         )
         SELECT
             e.id, e.home, e.away, e.kickoff_utc,
+            e.country_name, e.league_name,
             s.status, s.match_minute, s.score_home, s.score_away,
             s.ts_utc AS latest_ts
         FROM events e

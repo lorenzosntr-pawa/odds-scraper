@@ -13,6 +13,18 @@
     </div>
   </div>
 
+{% if event.country_name or event.league_name %}
+  <div class="event-subtitle px-2 mb-2 text-xs text-gray-500">
+    {% if event.country_name and event.league_name %}
+      {{ event.country_name }} · {{ event.league_name }}
+    {% elif event.country_name %}
+      {{ event.country_name }}
+    {% else %}
+      {{ event.league_name }}
+    {% endif %}
+  </div>
+{% endif %}
+
   <div class="flex gap-2 items-center px-2 mb-3 text-xs text-gray-500">
     <span class="text-[9px] uppercase tracking-wider">Bookmakers</span>
     <button class="chip on" data-bookmaker="betpawa">BP</button>

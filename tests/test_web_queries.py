@@ -212,6 +212,21 @@ def test_get_available_lines_returns_only_lines_with_data(db: Path):
     assert avail == {"over_under_ft": [2.5]}
 
 
+def test_get_event_meta_returns_country_and_league(db: Path):
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    conn.execute(
+        "UPDATE events SET country_id='242', country_name='Germany', "
+        "league_id='12091', league_name='2nd Bundesliga' WHERE id='E_LIVE'"
+    )
+    conn.close()
+    conn = open_ro_conn(db)
+    row = get_event_meta(conn, "E_LIVE")
+    conn.close()
+    assert row is not None
+    assert row["country_name"] == "Germany"
+    assert row["league_name"] == "2nd Bundesliga"
+
+
 def test_get_available_lines_multi_market_multi_line(db: Path):
     """Verify ordering and grouping when several lines and markets coexist."""
     from odds_scraper.web.queries import get_available_lines

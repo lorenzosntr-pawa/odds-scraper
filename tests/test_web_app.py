@@ -321,6 +321,30 @@ def test_events_card_expander_button_label_updates(db_path: Path):
     assert "Show 1 Over/Under" not in body  # old label retired
 
 
+def test_event_detail_subtitle_renders_country_and_league(db_path: Path):
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.execute(
+        "UPDATE events SET country_id='242', country_name='Germany', "
+        "league_id='12091', league_name='2nd Bundesliga' WHERE id='E1'"
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1").text
+    assert "Germany" in body
+    assert "2nd Bundesliga" in body
+    assert "Germany · 2nd Bundesliga" in body
+
+
+def test_event_detail_subtitle_omits_when_both_empty(db_path: Path):
+    """An event without country/league info should not render a stray separator."""
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1").text
+    # The fixture leaves country/league NULL. The middle-dot separator must not
+    # appear in the subtitle position. We anchor the search on the dedicated
+    # subtitle class — its absence proves the <div> wasn't emitted.
+    assert 'class="event-subtitle' not in body
+
+
 def test_event_detail_renders_next_goal_market_with_none_side(db_path: Path):
     """next_goal_ft has a 'none' side. Detail page must render its short label
     without KeyError. Seeds one priced next_goal_ft row at line=1.0."""
