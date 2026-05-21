@@ -45,12 +45,24 @@
     {% endif %}
   </div>
 
-  <div class="pills">
-    {% for slug, label, active in event.pills %}
-      <a href="/events/{{ event.id }}?market={{ slug }}"
-         class="pill{% if active %} active{% endif %}">{{ label }}</a>
+  <div class="pills family-pills">
+    {% for fid, label, default_slug, active, disabled in event.family_pills %}
+      {% if disabled %}
+        <span class="family-pill disabled" title="No data">{{ label }}</span>
+      {% else %}
+        <a href="/events/{{ event.id }}?market={{ default_slug }}"
+           class="family-pill{% if active %} active{% endif %}">{{ label }}</a>
+      {% endif %}
     {% endfor %}
   </div>
+  {% if event.line_pills %}
+    <div class="pills line-pills">
+      {% for slug, label, active in event.line_pills %}
+        <a href="/events/{{ event.id }}?market={{ slug }}"
+           class="line-pill{% if active %} active{% endif %}">{{ label }}</a>
+      {% endfor %}
+    </div>
+  {% endif %}
 
   <div class="history-wrap">
     <div class="history-title">History — {{ event.market_label }}</div>

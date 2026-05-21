@@ -32,6 +32,14 @@ def _sides_for(market_id: str) -> tuple[str, ...]:
     return _spec_by_id[market_id].sides
 
 
+# Single-pill families on the detail page family-chip row. Parameterized
+# families come from _EXPANDER_MARKETS.
+_FAMILY_PILLS_1X2: tuple[tuple[str, str], ...] = (
+    ("1x2_ft",     "1x2 — Full Time"),
+    ("1x2_1up_ft", "1x2 — 1 Up"),
+    ("1x2_2up_ft", "1x2 — 2 Up"),
+)
+
 # Display order for parameterized markets in the detail-page pill bar AND
 # the home-page card expander. Sub-project 3's single source of truth.
 _EXPANDER_MARKETS: tuple[tuple[str, str], ...] = (
@@ -148,8 +156,12 @@ class EventDetail:
     market_slug: str
     sides: tuple[str, ...]
     sides_short: tuple[str, ...]
-    # Pills: list of (slug, label, is_active)
-    pills: list[tuple[str, str, bool]]
+    # Family-chip row — always rendered. Tuple:
+    #   (family_id, label, default_slug, is_active, is_disabled)
+    family_pills: list[tuple[str, str, str, bool, bool]]
+    # Line-chip row — only populated when active family is parameterized.
+    # Tuple: (slug, label, is_active)
+    line_pills: list[tuple[str, str, bool]]
     # History rows newest first
     history: list[HistoryRow]
 
@@ -307,10 +319,52 @@ def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
         for ts in sorted(bucket.keys(), reverse=True)
     ]
 
-    pills = [
-        (slug, label, slug == market_slug)
-        for mid, _ln, label, slug in _MARKET_PICKER
-    ]
+    # Build the two-stage pill UI: family chips (always) + line chips (only
+    # for parameterized families with data).
+    available_lines = queries.get_available_lines(conn, ev_row["id"])
+
+    # Active family — derive from the active slug.
+    active_market_id, _active_line, _active_label = _PICKER_BY_SLUG[market_slug]
+
+    # Compute each family's default slug — the URL the family chip points
+    # to when clicked.
+    family_default_slug: dict[str, str] = {}
+    for canonical_id, _label in _FAMILY_PILLS_1X2:
+        # 1x2 family default slug equals the canonical_id itself
+        family_default_slug[canonical_id] = canonical_id
+    for canonical_id, _label in _EXPANDER_MARKETS:
+        lines = available_lines.get(canonical_id, [])
+        if lines:
+            prefix = _spec_by_id[canonical_id].column_prefix
+            family_default_slug[canonical_id] = f"{prefix}_{lines[0]}"
+
+    # Family pills: 1x2 trio (always enabled), then the four parameterized
+    # families (disabled when no lines are available).
+    family_pills: list[tuple[str, str, str, bool, bool]] = []
+    for canonical_id, label in _FAMILY_PILLS_1X2:
+        family_pills.append((
+            canonical_id, label, family_default_slug[canonical_id],
+            canonical_id == active_market_id,
+            False,
+        ))
+    for canonical_id, label in _EXPANDER_MARKETS:
+        has_lines = bool(available_lines.get(canonical_id))
+        family_pills.append((
+            canonical_id, label,
+            family_default_slug.get(canonical_id, ""),
+            canonical_id == active_market_id,
+            not has_lines,
+        ))
+
+    # Line pills: only if the active family is parameterized AND has data.
+    line_pills: list[tuple[str, str, bool]] = []
+    expander_ids = {fid for fid, _ in _EXPANDER_MARKETS}
+    if active_market_id in expander_ids:
+        spec = _spec_by_id[active_market_id]
+        prefix = spec.column_prefix
+        for line in available_lines.get(active_market_id, []):
+            slug = f"{prefix}_{line}"
+            line_pills.append((slug, str(line), slug == market_slug))
 
     return EventDetail(
         id=ev_row["id"],
@@ -327,6 +381,7 @@ def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
         market_slug=market_slug,
         sides=sides,
         sides_short=sides_short,
-        pills=pills,
+        family_pills=family_pills,
+        line_pills=line_pills,
         history=history,
     )

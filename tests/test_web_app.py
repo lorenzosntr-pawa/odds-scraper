@@ -112,7 +112,7 @@ def test_event_detail_renders_default_market(client: TestClient):
     assert 'href="/"' in r.text
     # Default market is 1x2 — 2 Up; its pill is active
     assert "1x2 — 2 Up" in r.text
-    assert 'class="pill active"' in r.text
+    assert 'class="family-pill active"' in r.text
     # History table shows two snapshots for E1's 1x2_2up_ft home
     assert "1.85" in r.text  # earlier snap
     assert "1.90" in r.text  # later snap
@@ -138,10 +138,101 @@ def test_event_detail_unknown_market_returns_400(client: TestClient):
     assert r.status_code == 400
 
 
-def test_event_detail_pills_include_ou_lines(client: TestClient):
-    r = client.get("/events/E1")
-    for line in (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5):
-        assert f"Match O/U {line}" in r.text
+def test_event_detail_pills_include_ou_lines(db_path: Path):
+    """Selecting Match O/U with lines 2.5 + 3.5 in the DB exposes both as
+    line pills (two-stage family + line UI)."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    snap_id = conn.execute(
+        "SELECT id FROM snapshots WHERE event_id='E1' LIMIT 1"
+    ).fetchone()[0]
+    for line in (2.5, 3.5):
+        for side, odds in [("over", 1.7), ("under", 2.1)]:
+            conn.execute(
+                "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+                "market_id, line, side, odds, probability) "
+                "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', "
+                "'over_under_ft', ?, ?, ?, NULL)",
+                (snap_id, line, side, odds),
+            )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1?market=ou_2.5").text
+    assert "ou_2.5" in body
+    assert "ou_3.5" in body
+
+
+def test_event_detail_family_pills_includes_new_markets(db_path: Path):
+    """Family row exists with chips for all families (1x2 trio + 4 parameterized)."""
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1").text
+    for label in (
+        "1x2 — Full Time", "1x2 — 1 Up", "1x2 — 2 Up",
+        "Next Goal", "Match O/U", "Home O/U", "Away O/U",
+    ):
+        assert label in body, f"missing family pill label {label!r}"
+
+
+def test_event_detail_disables_family_pill_when_no_lines_available(db_path: Path):
+    """Fixture has no next_goal / over_under / home_OU / away_OU prices.
+    Their family chips must render with a disabled marker."""
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1").text
+    # Implementation uses class="family-pill disabled" on a <span> for
+    # disabled chips.
+    assert "family-pill disabled" in body
+
+
+def test_event_detail_line_pills_filtered_to_available_lines(db_path: Path):
+    """Insert over_under_ft prices for lines 2.5 and 3.5 only.
+    On Match O/U family active → only those two lines appear in line-pill markup."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    snap_id = conn.execute(
+        "SELECT id FROM snapshots WHERE event_id='E1' LIMIT 1"
+    ).fetchone()[0]
+    for line in (2.5, 3.5):
+        for side, odds in [("over", 1.7), ("under", 2.1)]:
+            conn.execute(
+                "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+                "market_id, line, side, odds, probability) "
+                "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', "
+                "'over_under_ft', ?, ?, ?, NULL)",
+                (snap_id, line, side, odds),
+            )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1?market=ou_2.5").text
+    # Active family = Match O/U → line chips visible:
+    assert ">2.5<" in body
+    assert ">3.5<" in body
+    # Lines without data must NOT appear as pills:
+    for missing in ("4.5", "5.5", "6.5", "7.5", "8.5", "9.5"):
+        assert f"?market=ou_{missing}" not in body
+
+
+def test_event_detail_active_line_pill_is_marked(db_path: Path):
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    snap_id = conn.execute(
+        "SELECT id FROM snapshots WHERE event_id='E1' LIMIT 1"
+    ).fetchone()[0]
+    for line in (2.5, 3.5):
+        for side, odds in [("over", 1.7), ("under", 2.1)]:
+            conn.execute(
+                "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+                "market_id, line, side, odds, probability) "
+                "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', "
+                "'over_under_ft', ?, ?, ?, NULL)",
+                (snap_id, line, side, odds),
+            )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1?market=ou_3.5").text
+    # Line-pill for 3.5 has the active class.
+    assert 'class="line-pill active"' in body
+    # Line-pill for 2.5 does NOT.
+    import re
+    m = re.search(r'href="/events/E1\?market=ou_2\.5"[^>]*class="line-pill([^"]*)"', body)
+    assert m is not None
+    assert "active" not in m.group(1)
 
 
 def test_index_filter_row_includes_search_and_kickoff(client: TestClient):

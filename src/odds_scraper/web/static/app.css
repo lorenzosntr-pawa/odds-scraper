@@ -301,3 +301,44 @@ body.hide-betway    .history-table [data-bookmaker="betway"]    { display: none;
 .filter-select:disabled {
   opacity: 0.4;
 }
+
+.family-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  margin-right: 3px;
+  background: #161821;
+  color: #d1d5db;
+  border-radius: 4px;
+  font-size: 11px;
+  text-decoration: none;
+  border: 1px solid #1f2330;
+}
+.family-pill.active {
+  background: #233a55;
+  border-color: #2f5378;
+  color: #ffffff;
+}
+.family-pill.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.line-pill {
+  display: inline-block;
+  padding: 2px 7px;
+  margin-right: 3px;
+  background: #0f1115;
+  color: #9ca3af;
+  border-radius: 4px;
+  font-size: 11px;
+  text-decoration: none;
+  border: 1px solid #1f2330;
+}
+.line-pill.active {
+  background: #233a55;
+  color: #ffffff;
+  border-color: #2f5378;
+}
+.line-pills {
+  margin-top: 6px;
+}
