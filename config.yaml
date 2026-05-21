@@ -1,15 +1,23 @@
 country: ng
 events:
-  - 33660318
-  - 33660319
-  - 33605719
-  - 33575997
+  - 35385310
+tournaments:
+  - 12329 # MLS
+  # Add tournament/competition IDs here to auto-watch their UPCOMING + LIVE events.
+  # The resolver re-polls these on a schedule and spawns watchers for new fixtures.
+  # - 11965   # example: Serie A
+  # - 11963   # example: Premier League
+# How often to re-poll tournaments while watchers are active (default 86400 = 24h)
+refresh_interval_seconds: 86400
+# How often to re-poll when no watchers are active (default 600 = 10 min) —
+# picks up next-matchday fixtures quickly without spamming the API.
+refresh_interval_when_idle_seconds: 600
 cadence:
   prematch_seconds: 600
   live_seconds: 90
   status_retry_backoff_seconds: [5, 15, 45]
   watchdog_after_kickoff_seconds: 10800
 output:
-  csv_path: data/odds_snapshots.csv
+  db_path: data/odds.db
   resolution_cache_path: data/resolution_cache.json
 log_level: INFO
