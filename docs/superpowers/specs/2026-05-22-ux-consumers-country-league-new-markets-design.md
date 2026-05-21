@@ -1,7 +1,7 @@
 # UX consumers: country/league filter + new-market expander + two-stage detail pills — design
 
 **Status:** approved 2026-05-22
-**Touches:** `src/odds_scraper/web/app.py`, `src/odds_scraper/web/queries.py`, templates under `src/odds_scraper/web/templates/`, `src/odds_scraper/web/static/main.js`, plus tests under `tests/test_web_app.py` and `tests/test_web_queries.py`.
+**Touches:** `src/odds_scraper/web/app.py`, `src/odds_scraper/web/queries.py`, templates under `src/odds_scraper/web/templates/`, `src/odds_scraper/web/static/app.js`, plus tests under `tests/test_web_app.py` and `tests/test_web_queries.py`.
 **Untouched:** `models.py`, `collector.py`, `writer.py`, `watcher.py`, `db_schema.py`, `event_resolver.py`, `registry.py`, `resolution*.py`, `status.py`, `config.py`, `main.py`. No schema migration. No new collected data.
 
 ## Motivation
@@ -162,7 +162,7 @@ Active-family default for a parameterized family in URL navigation is `min(avail
 - `templates/_events_list.html`: toggle button label changes; otherwise unchanged (it already iterates `is_extra` groups generically).
 - `templates/event_detail.html`: header gains the subtitle `<div>`. Pill row block restructured into family row + conditional line row. Family pills use `disabled` class when the family has no available lines.
 
-### Static JS (`static/main.js`)
+### Static JS (`static/app.js`)
 
 - Parse `#country-league-index` JSON on boot. Populate Country `<select>`.
 - On Country change: filter to that country's leagues, repopulate League `<select>`, reset to "All".
