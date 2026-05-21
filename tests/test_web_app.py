@@ -370,3 +370,68 @@ def test_event_detail_renders_next_goal_market_with_none_side(db_path: Path):
     assert r.status_code == 200
     # The "N" short label for the "none" outcome must appear in the table head.
     assert 'class="side-h">N<' in r.text
+
+
+def test_index_embeds_country_league_index_json(db_path: Path):
+    """The home page must include the index payload as JSON so the client
+    can render the dropdowns without a second HTTP round-trip."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.execute(
+        "UPDATE events SET country_id='242', country_name='Germany', "
+        "league_id='BL2', league_name='2nd Bundesliga' WHERE id='E1'"
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/").text
+    assert 'id="country-league-index"' in body
+    assert 'type="application/json"' in body
+    assert "Germany" in body
+    assert "2nd Bundesliga" in body
+
+
+def test_events_fragment_filters_by_country(db_path: Path):
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.executemany(
+        "INSERT INTO events (id, home, away, kickoff_utc, country_id, country_name) "
+        "VALUES (?, 'H', 'A', '2026-05-22T18:30:00Z', ?, ?)",
+        [("E_DE", "242", "Germany"), ("E_US", "USA1", "USA")],
+    )
+    for eid in ("E_DE", "E_US"):
+        conn.execute(
+            "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
+            "VALUES ('2026-05-21T10:00:00Z', ?, 'betpawa', 'UPCOMING', 'ok')",
+            (eid,),
+        )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events?status=upcoming&country=242")
+    assert r.status_code == 200
+    assert 'href="/events/E_DE"' in r.text
+    assert 'href="/events/E_US"' not in r.text
+
+
+def test_events_fragment_filters_by_league(db_path: Path):
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.executemany(
+        "INSERT INTO events (id, home, away, kickoff_utc, league_id, league_name) "
+        "VALUES (?, 'H', 'A', '2026-05-22T18:30:00Z', ?, ?)",
+        [("E_BL1", "BL1", "Bundesliga"), ("E_BL2", "BL2", "2nd Bundesliga")],
+    )
+    for eid in ("E_BL1", "E_BL2"):
+        conn.execute(
+            "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
+            "VALUES ('2026-05-21T10:00:00Z', ?, 'betpawa', 'UPCOMING', 'ok')",
+            (eid,),
+        )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events?status=upcoming&league=BL2")
+    assert 'href="/events/E_BL2"' in r.text
+    assert 'href="/events/E_BL1"' not in r.text
+
+
+def test_index_filter_row_has_country_and_league_selects(db_path: Path):
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/").text
+    assert 'id="country-select"' in body
+    assert 'id="league-select"' in body

@@ -12,6 +12,20 @@
 
   <div class="filter-row">
     <div class="filter-group">
+      <span class="filter-lbl">Country</span>
+      <select id="country-select" class="filter-select">
+        <option value="">All</option>
+        {% for c in country_league_index %}
+          <option value="{{ c.country_id }}">{{ c.country_name }}</option>
+        {% endfor %}
+      </select>
+      <span class="filter-lbl">League</span>
+      <select id="league-select" class="filter-select" disabled>
+        <option value="">All</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
       <span class="filter-lbl">Bookmakers</span>
       <button class="chip on" data-bookmaker="betpawa">BP</button>
       <button class="chip on" data-bookmaker="sportybet">SB</button>
@@ -42,6 +56,24 @@
              autocomplete="off">
     </div>
   </div>
+
+  <script type="application/json" id="country-league-index">
+  {
+    "items": [
+      {% for c in country_league_index %}
+        {
+          "country_id":   {{ c.country_id|tojson }},
+          "country_name": {{ c.country_name|tojson }},
+          "leagues": [
+            {% for l in c.leagues %}
+              {"league_id": {{ l.league_id|tojson }}, "league_name": {{ l.league_name|tojson }}}{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ]
+        }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  }
+  </script>
 
   <div id="events-list"
        hx-get="/events?status=upcoming"

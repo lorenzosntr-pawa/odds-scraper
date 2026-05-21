@@ -171,16 +171,24 @@ def create_app(db_path: Path) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
-        return templates.TemplateResponse(request, "index.html", {})
+        country_league_index = queries.get_country_league_index(conn)
+        return templates.TemplateResponse(
+            request, "index.html",
+            {"country_league_index": country_league_index},
+        )
 
     @app.get("/events", response_class=HTMLResponse)
     async def events_fragment(
         request: Request,
         status: str = Query("live"),
+        country: str = Query(""),
+        league: str = Query(""),
     ):
         if status not in queries.VALID_STATUSES:
             raise HTTPException(status_code=400, detail=f"unknown status {status!r}")
-        rows = queries.get_events_by_status(conn, status)  # type: ignore[arg-type]
+        rows = queries.get_events_by_status(  # type: ignore[arg-type]
+            conn, status, country_id=country, league_id=league,
+        )
         events = [_build_event_view(conn, row) for row in rows]
         return templates.TemplateResponse(
             request,
