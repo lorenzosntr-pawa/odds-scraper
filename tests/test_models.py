@@ -8,7 +8,10 @@ from odds_scraper.models import (
 
 def test_manifest_lists_expected_markets():
     canonical_ids = [s.canonical_id for s in MARKET_MANIFEST]
-    assert canonical_ids == ["1x2_ft", "1x2_1up_ft", "1x2_2up_ft", "over_under_ft"]
+    assert canonical_ids == [
+        "1x2_ft", "1x2_1up_ft", "1x2_2up_ft", "over_under_ft",
+        "next_goal_ft", "home_over_under_ft", "away_over_under_ft",
+    ]
 
 
 def test_manifest_over_under_lines_are_1_5_to_9_5():
@@ -24,9 +27,18 @@ def test_simple_markets_have_lines_none_and_3_sides():
         assert spec.sides == ("home", "draw", "away")
 
 
-def test_build_csv_header_has_68_columns():
+def test_build_csv_header_column_count():
+    # 14 meta columns + price columns from MARKET_MANIFEST:
+    #   1x2_ft        3 sides × 2 (odds+prob) = 6
+    #   1x2_1up_ft    3 × 2 = 6
+    #   1x2_2up_ft    3 × 2 = 6
+    #   over_under_ft 9 lines × 2 sides × 2 = 36
+    #   next_goal_ft  9 lines × 3 sides × 2 = 54
+    #   home_over_under_ft 6 lines × 2 sides × 2 = 24
+    #   away_over_under_ft 6 lines × 2 sides × 2 = 24
+    # 14 + 6+6+6+36+54+24+24 = 170
     header = build_csv_header()
-    assert len(header) == 68
+    assert len(header) == 170
 
 
 def test_build_csv_header_meta_prefix():
@@ -41,28 +53,54 @@ def test_build_csv_header_meta_prefix():
 
 def test_build_csv_header_price_section_order():
     header = build_csv_header()
+    # 1x2_ft section
     assert header[14:20] == (
         "1x2_ft_home_odds", "1x2_ft_home_prob",
         "1x2_ft_draw_odds", "1x2_ft_draw_prob",
         "1x2_ft_away_odds", "1x2_ft_away_prob",
     )
+    # 1x2_1up_ft section
     assert header[20:26] == (
         "1x2_1up_ft_home_odds", "1x2_1up_ft_home_prob",
         "1x2_1up_ft_draw_odds", "1x2_1up_ft_draw_prob",
         "1x2_1up_ft_away_odds", "1x2_1up_ft_away_prob",
     )
+    # 1x2_2up_ft section
     assert header[26:32] == (
         "1x2_2up_ft_home_odds", "1x2_2up_ft_home_prob",
         "1x2_2up_ft_draw_odds", "1x2_2up_ft_draw_prob",
         "1x2_2up_ft_away_odds", "1x2_2up_ft_away_prob",
     )
+    # over_under_ft starts at index 32 (first OU line 1.5)
     assert header[32:36] == (
         "ou_1.5_over_odds", "ou_1.5_over_prob",
         "ou_1.5_under_odds", "ou_1.5_under_prob",
     )
-    assert header[-4:] == (
+    # over_under_ft ends at index 68 (last OU line 9.5 has 4 cells)
+    assert header[64:68] == (
         "ou_9.5_over_odds", "ou_9.5_over_prob",
         "ou_9.5_under_odds", "ou_9.5_under_prob",
+    )
+    # next_goal_ft starts at index 68 (first goal-number line 1.0)
+    assert header[68:74] == (
+        "ng_1.0_home_odds", "ng_1.0_home_prob",
+        "ng_1.0_none_odds", "ng_1.0_none_prob",
+        "ng_1.0_away_odds", "ng_1.0_away_prob",
+    )
+    # home_over_under_ft starts at index 122 (first line 0.5)
+    assert header[122:126] == (
+        "ou_home_0.5_over_odds", "ou_home_0.5_over_prob",
+        "ou_home_0.5_under_odds", "ou_home_0.5_under_prob",
+    )
+    # away_over_under_ft starts at index 146 (first line 0.5)
+    assert header[146:150] == (
+        "ou_away_0.5_over_odds", "ou_away_0.5_over_prob",
+        "ou_away_0.5_under_odds", "ou_away_0.5_under_prob",
+    )
+    # Last four columns: away_over_under_ft line 5.5 (the manifest's final line)
+    assert header[-4:] == (
+        "ou_away_5.5_over_odds", "ou_away_5.5_over_prob",
+        "ou_away_5.5_under_odds", "ou_away_5.5_under_prob",
     )
 
 
@@ -94,7 +132,7 @@ def _meta_kwargs(**overrides):
 def test_snapshot_to_csv_row_meta_columns():
     snap = Snapshot(**_meta_kwargs())
     row = snap.to_csv_row()
-    assert len(row) == 68
+    assert len(row) == 170
     assert row[0] == "2026-05-19T14:32:05Z"
     assert row[1] == "33660318"
     assert row[2] == "sr:match:12345"
@@ -155,7 +193,7 @@ def test_snapshot_to_csv_row_blanks_when_failure_status():
         prices={},
     ))
     row = snap.to_csv_row()
-    assert len(row) == 68
+    assert len(row) == 170
     assert row[12] == "http_error"
     assert row[13] == "timeout after 10s"
     assert all(cell == "" for cell in row[14:])
