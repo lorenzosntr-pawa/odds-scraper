@@ -32,9 +32,6 @@ def _sides_for(market_id: str) -> tuple[str, ...]:
     return _spec_by_id[market_id].sides
 
 
-# OU lines available on the detail page market picker
-_OU_LINES = (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5)
-
 # Display order for parameterized markets in the detail-page pill bar AND
 # the home-page card expander. Sub-project 3's single source of truth.
 _EXPANDER_MARKETS: tuple[tuple[str, str], ...] = (
@@ -43,6 +40,15 @@ _EXPANDER_MARKETS: tuple[tuple[str, str], ...] = (
     ("home_over_under_ft", "Home O/U"),
     ("away_over_under_ft", "Away O/U"),
 )
+
+# Short market-label prefixes used in the per-row outcome labels inside
+# each card expander group (e.g., "NG 1 · H", "OU 2.5 · O").
+_SHORT_PREFIX: dict[str, str] = {
+    "next_goal_ft":       "NG",
+    "over_under_ft":      "OU",
+    "home_over_under_ft": "H-OU",
+    "away_over_under_ft": "A-OU",
+}
 
 # Market picker: ordered list of (market_id, line_or_None, label, slug)
 # Slug is the URL-safe key passed via ?market=...
@@ -236,24 +242,27 @@ def _build_event_view(conn, row) -> EventView:
             label=group_label, rows=rows_for_group, is_extra=False,
         ))
 
-    # OU lines as extra (hidden-by-default) groups. Only emit groups
-    # that actually have at least one priced outcome.
-    for line in _OU_LINES:
-        rows_for_group = []
-        for side in _sides_for("over_under_ft"):
-            prices = bucket.get(("over_under_ft", line, side), {})
-            rows_for_group.append(OutcomeRow(
-                market_label=f"OU {line}",
-                side_label=_SIDE_LABEL[side],
-                side_short=_SIDE_SHORT[side],
-                prices=prices,
-            ))
-        if any(r.prices for r in rows_for_group):
-            groups.append(MarketGroup(
-                label=f"Over/Under {line}",
-                rows=rows_for_group,
-                is_extra=True,
-            ))
+    # Parameterized markets as extra (hidden-by-default) groups, in the
+    # display order set by _EXPANDER_MARKETS. Only emit a group when at
+    # least one outcome is priced for that (market, line) pair.
+    for market_id, label_prefix in _EXPANDER_MARKETS:
+        spec = _spec_by_id[market_id]
+        for line in spec.lines or ():
+            rows_for_group = []
+            for side in _sides_for(market_id):
+                prices = bucket.get((market_id, line, side), {})
+                rows_for_group.append(OutcomeRow(
+                    market_label=f"{_SHORT_PREFIX[market_id]} {line}",
+                    side_label=_SIDE_LABEL[side],
+                    side_short=_SIDE_SHORT[side],
+                    prices=prices,
+                ))
+            if any(r.prices for r in rows_for_group):
+                groups.append(MarketGroup(
+                    label=f"{label_prefix} {line}",
+                    rows=rows_for_group,
+                    is_extra=True,
+                ))
 
     return EventView(
         id=row["id"], home=row["home"], away=row["away"],

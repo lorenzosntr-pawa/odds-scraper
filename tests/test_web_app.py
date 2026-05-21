@@ -213,7 +213,112 @@ def test_events_card_has_expand_toggle_when_ou_present(db_with_ou_path: Path):
     r = client.get("/events?status=upcoming")
     assert "expand-toggle" in r.text
     assert "market-extra" in r.text
-    assert "Over/Under 2.5" in r.text
+    assert "Match O/U 2.5" in r.text
+
+
+def test_events_card_shows_next_goal_group_when_priced(db_path: Path):
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    snap_id = conn.execute(
+        "SELECT id FROM snapshots WHERE event_id='E1' LIMIT 1"
+    ).fetchone()[0]
+    for side, odds, prob in [
+        ("home", 1.85, 0.54), ("none", 8.5, 0.12), ("away", 3.5, 0.29),
+    ]:
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', 'next_goal_ft', 1.0, ?, ?, ?)",
+            (snap_id, side, odds, prob),
+        )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events?status=upcoming")
+    assert "Next Goal 1" in r.text
+    assert "NG 1 · H" in r.text or "NG 1.0 · H" in r.text
+    assert "NG 1 · N" in r.text or "NG 1.0 · N" in r.text
+
+
+def test_events_card_shows_per_team_ou_groups_when_priced(db_path: Path):
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    snap_id = conn.execute(
+        "SELECT id FROM snapshots WHERE event_id='E1' LIMIT 1"
+    ).fetchone()[0]
+    rows = [
+        ("home_over_under_ft", 0.5, "over",  1.30, 0.74),
+        ("home_over_under_ft", 0.5, "under", 3.50, 0.26),
+        ("away_over_under_ft", 1.5, "over",  2.50, 0.40),
+        ("away_over_under_ft", 1.5, "under", 1.55, 0.60),
+    ]
+    for market_id, line, side, odds, prob in rows:
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', ?, ?, ?, ?, ?)",
+            (snap_id, market_id, line, side, odds, prob),
+        )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events?status=upcoming")
+    assert "Home O/U 0.5" in r.text
+    assert "Away O/U 1.5" in r.text
+
+
+def test_events_card_omits_market_group_with_no_data(db_path: Path):
+    """No next_goal_ft / home_over_under_ft / away_over_under_ft data → those
+    group labels are absent. (over_under_ft is also absent for this minimal
+    fixture; only 1x2 family appears.)"""
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events?status=upcoming")
+    for label in ("Next Goal", "Match O/U", "Home O/U", "Away O/U"):
+        assert label not in r.text, f"expected {label!r} absent in plain fixture"
+
+
+def test_events_card_expander_groups_in_fixed_order(db_path: Path):
+    """When all four parameterized markets have at least one priced line, the
+    expander groups must appear in order: next_goal → over_under → home_OU → away_OU."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    snap_id = conn.execute(
+        "SELECT id FROM snapshots WHERE event_id='E1' LIMIT 1"
+    ).fetchone()[0]
+    rows = [
+        ("over_under_ft",      2.5, "over",  1.70, 0.58),
+        ("next_goal_ft",       1.0, "home",  1.85, 0.54),
+        ("home_over_under_ft", 0.5, "over",  1.30, 0.74),
+        ("away_over_under_ft", 0.5, "over",  1.40, 0.69),
+    ]
+    for market_id, line, side, odds, prob in rows:
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', ?, ?, ?, ?, ?)",
+            (snap_id, market_id, line, side, odds, prob),
+        )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events?status=upcoming").text
+    i_ng  = body.find("Next Goal")
+    i_ou  = body.find("Match O/U")
+    i_hou = body.find("Home O/U")
+    i_aou = body.find("Away O/U")
+    assert -1 < i_ng < i_ou < i_hou < i_aou
+
+
+def test_events_card_expander_button_label_updates(db_path: Path):
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    snap_id = conn.execute(
+        "SELECT id FROM snapshots WHERE event_id='E1' LIMIT 1"
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+        "market_id, line, side, odds, probability) "
+        "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', 'next_goal_ft', 1.0, 'home', 1.85, 0.54)",
+        (snap_id,),
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events?status=upcoming").text
+    assert "more market" in body  # new label includes "more market" or "more markets"
+    assert "Show 1 Over/Under" not in body  # old label retired
 
 
 def test_event_detail_renders_next_goal_market_with_none_side(db_path: Path):
