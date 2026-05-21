@@ -14,7 +14,7 @@ _STATUS_DB_VALUES = {
     "ended": "ENDED",
 }
 
-_COLLAPSED_MARKETS = ("1x2_ft", "1x2_1up_ft", "1x2_2up_ft")
+COLLAPSED_MARKETS: tuple[str, ...] = ("1x2_ft", "1x2_1up_ft", "1x2_2up_ft")
 
 
 def open_ro_conn(db_path: Path) -> sqlite3.Connection:
@@ -88,33 +88,38 @@ def get_latest_prices_for_event(
     """
     if scope not in ("collapsed", "opened"):
         raise ValueError(f"unknown scope {scope!r}")
+    # Group by the full outcome key so the "latest" is computed per outcome,
+    # not per bookmaker. Today the writer batches all of a bookmaker's
+    # markets at the same ts_utc per tick, so the two formulations would
+    # return the same rows — but pinning each outcome to its own MAX(ts)
+    # protects against future writer changes that may emit per-market.
     market_filter = ""
+    market_params: tuple[str, ...] = ()
     if scope == "collapsed":
-        placeholders = ",".join("?" * len(_COLLAPSED_MARKETS))
+        placeholders = ",".join("?" * len(COLLAPSED_MARKETS))
         market_filter = f"AND market_id IN ({placeholders})"
+        market_params = COLLAPSED_MARKETS
     sql = f"""
-        WITH latest_per_bm AS (
-            SELECT event_id, bookmaker, MAX(ts_utc) AS max_ts
+        WITH latest_per_outcome AS (
+            SELECT event_id, bookmaker, market_id, line, side,
+                   MAX(ts_utc) AS max_ts
             FROM prices
             WHERE event_id = ?
-              {market_filter}
-            GROUP BY event_id, bookmaker
+            GROUP BY event_id, bookmaker, market_id, line, side
         )
         SELECT p.bookmaker, p.market_id, p.line, p.side,
                p.odds, p.probability
         FROM prices p
-        JOIN latest_per_bm l
-          ON l.event_id = p.event_id
+        JOIN latest_per_outcome l
+          ON l.event_id  = p.event_id
          AND l.bookmaker = p.bookmaker
-         AND l.max_ts = p.ts_utc
+         AND l.market_id = p.market_id
+         AND l.line      = p.line
+         AND l.side      = p.side
+         AND l.max_ts    = p.ts_utc
         WHERE p.event_id = ?
           {market_filter}
         ORDER BY p.market_id, p.line, p.side, p.bookmaker
     """
-    params: list[str | int | float] = [event_id]
-    if scope == "collapsed":
-        params.extend(_COLLAPSED_MARKETS)
-    params.append(event_id)
-    if scope == "collapsed":
-        params.extend(_COLLAPSED_MARKETS)
+    params: list[str | int | float] = [event_id, event_id, *market_params]
     return conn.execute(sql, params).fetchall()
