@@ -24,8 +24,7 @@ _COLLAPSED_ORDER: tuple[tuple[str, str, str], ...] = tuple(
     (m, *_MARKET_LABELS[m]) for m in queries.COLLAPSED_MARKETS
 )
 
-# Manifest lookup — must be defined before _build_market_picker and _sides_for
-# so adding markets with new sides only requires updating _SIDE_LABEL / _SIDE_SHORT.
+# Manifest lookup — read MarketSpec.sides without hardcoding outcome strings.
 _spec_by_id: dict[str, MarketSpec] = {s.canonical_id: s for s in MARKET_MANIFEST}
 
 

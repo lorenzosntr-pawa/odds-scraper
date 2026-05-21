@@ -240,4 +240,4 @@ def test_event_detail_renders_next_goal_market_with_none_side(db_path: Path):
     r = client.get("/events/E1?market=ng_1.0")
     assert r.status_code == 200
     # The "N" short label for the "none" outcome must appear in the table head.
-    assert ">N<" in r.text
+    assert 'class="side-h">N<' in r.text
