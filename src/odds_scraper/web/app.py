@@ -57,6 +57,9 @@ _SHORT_PREFIX: dict[str, str] = {
     "home_over_under_ft": "H-OU",
     "away_over_under_ft": "A-OU",
 }
+assert set(_SHORT_PREFIX) == {mid for mid, _ in _EXPANDER_MARKETS}, (
+    "_SHORT_PREFIX must cover every entry in _EXPANDER_MARKETS"
+)
 
 # Market picker: ordered list of (market_id, line_or_None, label, slug)
 # Slug is the URL-safe key passed via ?market=...
