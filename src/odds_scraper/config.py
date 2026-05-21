@@ -17,7 +17,7 @@ class CadenceConfig:
 
 @dataclass(frozen=True)
 class OutputConfig:
-    csv_path: str
+    db_path: str
     resolution_cache_path: str
 
 
@@ -54,7 +54,7 @@ def load_config(path: Path | str) -> AppConfig:
             watchdog_after_kickoff_seconds=int(cad["watchdog_after_kickoff_seconds"]),
         ),
         output=OutputConfig(
-            csv_path=str(out["csv_path"]),
+            db_path=str(out.get("db_path", "data/odds.db")),
             resolution_cache_path=str(out["resolution_cache_path"]),
         ),
         log_level=os.environ.get(

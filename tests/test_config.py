@@ -19,7 +19,7 @@ def test_load_minimal_config(tmp_path: Path):
           status_retry_backoff_seconds: [5, 15, 45]
           watchdog_after_kickoff_seconds: 10800
         output:
-          csv_path: data/x.csv
+          db_path: data/x.db
           resolution_cache_path: data/r.json
         log_level: INFO
     """)
@@ -30,7 +30,7 @@ def test_load_minimal_config(tmp_path: Path):
     assert cfg.cadence.live_seconds == 90
     assert cfg.cadence.prematch_seconds == 600
     assert cfg.cadence.status_retry_backoff_seconds == (5, 15, 45)
-    assert cfg.output.csv_path.endswith("x.csv")
+    assert cfg.output.db_path.endswith("x.db")
 
 
 def test_env_var_overrides(tmp_path: Path, monkeypatch):
@@ -166,3 +166,57 @@ def test_load_with_all_new_fields_explicit(tmp_path: Path):
     assert cfg.tournaments == ("42",)
     assert cfg.refresh_interval_seconds == 3600
     assert cfg.refresh_interval_when_idle_seconds == 120
+
+
+def test_load_with_db_path(tmp_path: Path):
+    p = _write(tmp_path / "c.yaml", """
+        country: ng
+        events: [11111]
+        cadence:
+          prematch_seconds: 600
+          live_seconds: 90
+          status_retry_backoff_seconds: [5, 15, 45]
+          watchdog_after_kickoff_seconds: 10800
+        output:
+          db_path: data/x.db
+          resolution_cache_path: data/r.json
+        log_level: INFO
+    """)
+    cfg = load_config(p)
+    assert cfg.output.db_path == "data/x.db"
+
+
+def test_db_path_default(tmp_path: Path):
+    p = _write(tmp_path / "c.yaml", """
+        country: ng
+        events: [11111]
+        cadence:
+          prematch_seconds: 600
+          live_seconds: 90
+          status_retry_backoff_seconds: [5, 15, 45]
+          watchdog_after_kickoff_seconds: 10800
+        output:
+          resolution_cache_path: data/r.json
+        log_level: INFO
+    """)
+    cfg = load_config(p)
+    assert cfg.output.db_path == "data/odds.db"
+
+
+def test_old_csv_path_key_ignored(tmp_path: Path):
+    p = _write(tmp_path / "c.yaml", """
+        country: ng
+        events: [11111]
+        cadence:
+          prematch_seconds: 600
+          live_seconds: 90
+          status_retry_backoff_seconds: [5, 15, 45]
+          watchdog_after_kickoff_seconds: 10800
+        output:
+          csv_path: data/odds_snapshots.csv
+          resolution_cache_path: data/r.json
+        log_level: INFO
+    """)
+    cfg = load_config(p)
+    assert cfg.output.db_path == "data/odds.db"
+    assert not hasattr(cfg.output, "csv_path")

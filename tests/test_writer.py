@@ -1,111 +1,199 @@
 import asyncio
-import csv
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from odds_scraper.models import (
-    Bookmaker, EventStatus, FetchStatus, PriceKey, Snapshot, build_csv_header,
+    Bookmaker, EventStatus, FetchStatus, PriceKey, Snapshot,
 )
-from odds_scraper.writer import CsvWriter
+from odds_scraper.writer import SqliteWriter
 
 
-def _make_snap(idx: int, bookmaker=Bookmaker.BETPAWA) -> Snapshot:
+def _make_snap(
+    idx: int = 0,
+    bookmaker: Bookmaker = Bookmaker.BETPAWA,
+    event_id: str = "33660318",
+    home: str = "Team A",
+    away: str = "Team B",
+    fetch_status: FetchStatus = FetchStatus.OK,
+    fetch_error: str = "",
+    prices: dict | None = None,
+) -> Snapshot:
     return Snapshot(
         ts_utc=datetime(2026, 5, 19, 14, 0, idx % 60, tzinfo=timezone.utc),
-        event_bp_id="33660318",
+        event_bp_id=event_id,
         sr_id="sr:match:1", genius_id="",
-        home="A", away="B",
+        home=home, away=away,
         kickoff_utc=datetime(2026, 5, 19, 15, 0, 0, tzinfo=timezone.utc),
         status=EventStatus.UPCOMING,
         match_minute=None, score_home=None, score_away=None,
         bookmaker=bookmaker,
-        fetch_status=FetchStatus.OK,
-        fetch_error="",
-        prices={
-            PriceKey("1x2_ft", None, "home"): (1.5 + idx * 0.01, None),
+        fetch_status=fetch_status,
+        fetch_error=fetch_error,
+        prices=prices if prices is not None else {
+            PriceKey("1x2_ft", None, "home"): (1.85, 0.54),
+            PriceKey("over_under_ft", 2.5, "over"): (1.70, 0.58),
         },
     )
 
 
-async def test_header_written_once_on_fresh_file(tmp_path: Path):
-    path = tmp_path / "out.csv"
-    async with CsvWriter(path) as w:
+def _query(path: Path, sql: str, params: tuple = ()):
+    conn = sqlite3.connect(str(path))
+    try:
+        return conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+
+async def test_fresh_db_creates_schema(tmp_path: Path):
+    path = tmp_path / "out.db"
+    async with SqliteWriter(path):
+        pass
+    rows = _query(path, "SELECT name FROM sqlite_master WHERE type='table'")
+    table_names = {r[0] for r in rows}
+    assert {"events", "snapshots", "prices", "schema_version"} <= table_names
+
+
+async def test_reopen_existing_db_doesnt_error(tmp_path: Path):
+    path = tmp_path / "out.db"
+    async with SqliteWriter(path) as w:
         await w.append([_make_snap(0)])
-    async with CsvWriter(path) as w:
+    async with SqliteWriter(path) as w:
         await w.append([_make_snap(1)])
-    rows = list(csv.reader(path.read_text(encoding="utf-8").splitlines()))
-    assert rows[0] == list(build_csv_header())
-    assert len(rows) == 3
+    snap_count = _query(path, "SELECT COUNT(*) FROM snapshots")[0][0]
+    assert snap_count == 2
 
 
-async def test_concurrent_appends_do_not_interleave(tmp_path: Path):
-    path = tmp_path / "out.csv"
+async def test_single_tick_writes_events_snapshots_prices(tmp_path: Path):
+    path = tmp_path / "out.db"
+    async with SqliteWriter(path) as w:
+        await w.append([_make_snap(0)])
+    events = _query(path, "SELECT COUNT(*) FROM events")[0][0]
+    snaps = _query(path, "SELECT COUNT(*) FROM snapshots")[0][0]
+    prices = _query(path, "SELECT COUNT(*) FROM prices")[0][0]
+    assert (events, snaps, prices) == (1, 1, 2)
+
+
+async def test_event_row_idempotent_across_ticks(tmp_path: Path):
+    path = tmp_path / "out.db"
+    async with SqliteWriter(path) as w:
+        await w.append([_make_snap(0), _make_snap(1)])
+    events = _query(path, "SELECT COUNT(*) FROM events")[0][0]
+    snaps = _query(path, "SELECT COUNT(*) FROM snapshots")[0][0]
+    assert events == 1
+    assert snaps == 2
+
+
+async def test_failure_status_writes_snapshot_zero_prices(tmp_path: Path):
+    path = tmp_path / "out.db"
+    snap = _make_snap(
+        0, fetch_status=FetchStatus.HTTP_ERROR, fetch_error="timeout",
+        prices={},
+    )
+    async with SqliteWriter(path) as w:
+        await w.append([snap])
+    snaps = _query(path,
+        "SELECT fetch_status, fetch_error FROM snapshots")
+    prices = _query(path, "SELECT COUNT(*) FROM prices")[0][0]
+    assert snaps == [("http_error", "timeout")]
+    assert prices == 0
+
+
+async def test_probability_null_for_bet9ja_betway(tmp_path: Path):
+    path = tmp_path / "out.db"
+    snap = _make_snap(
+        0,
+        bookmaker=Bookmaker.BET9JA,
+        prices={
+            PriceKey("1x2_ft", None, "home"): (1.85, None),
+        },
+    )
+    async with SqliteWriter(path) as w:
+        await w.append([snap])
+    rows = _query(path, "SELECT odds, probability FROM prices")
+    assert rows == [(1.85, None)]
+
+
+async def test_non_parameterized_market_line_is_sentinel_zero(tmp_path: Path):
+    path = tmp_path / "out.db"
+    snap = _make_snap(
+        0, prices={PriceKey("1x2_ft", None, "home"): (1.85, 0.54)},
+    )
+    async with SqliteWriter(path) as w:
+        await w.append([snap])
+    rows = _query(
+        path,
+        "SELECT market_id, line, side, odds, probability FROM prices",
+    )
+    assert rows == [("1x2_ft", 0.0, "home", 1.85, 0.54)]
+
+
+async def test_parameterized_market_stores_line_as_real(tmp_path: Path):
+    path = tmp_path / "out.db"
+    snap = _make_snap(
+        0, prices={
+            PriceKey("over_under_ft", 2.5, "over"): (1.70, 0.58),
+            PriceKey("over_under_ft", 3.5, "under"): (1.50, 0.61),
+        },
+    )
+    async with SqliteWriter(path) as w:
+        await w.append([snap])
+    rows = _query(
+        path,
+        "SELECT market_id, line, side, odds FROM prices ORDER BY line, side",
+    )
+    assert rows == [
+        ("over_under_ft", 2.5, "over", 1.70),
+        ("over_under_ft", 3.5, "under", 1.50),
+    ]
+
+
+async def test_concurrent_appends_serialize(tmp_path: Path):
+    path = tmp_path / "out.db"
     snaps_a = [_make_snap(i, Bookmaker.BETPAWA) for i in range(50)]
     snaps_b = [_make_snap(i, Bookmaker.SPORTYBET) for i in range(50)]
-
-    async with CsvWriter(path) as w:
+    async with SqliteWriter(path) as w:
         await asyncio.gather(w.append(snaps_a), w.append(snaps_b))
+    total = _query(path, "SELECT COUNT(*) FROM snapshots")[0][0]
+    assert total == 100
+    bp = _query(
+        path, "SELECT COUNT(*) FROM snapshots WHERE bookmaker = 'betpawa'"
+    )[0][0]
+    sb = _query(
+        path, "SELECT COUNT(*) FROM snapshots WHERE bookmaker = 'sportybet'"
+    )[0][0]
+    assert bp == 50
+    assert sb == 50
 
-    rows = list(csv.reader(path.read_text(encoding="utf-8").splitlines()))
-    header = build_csv_header()
-    assert rows[0] == list(header)
-    data = rows[1:]
-    assert len(data) == 100
-    assert all(len(r) == len(header) for r in data)
-    bookmaker_col = header.index("bookmaker")
-    bookmakers = [r[bookmaker_col] for r in data]
-    assert bookmakers.count("betpawa") == 50
-    assert bookmakers.count("sportybet") == 50
 
-
-async def test_old_header_file_is_renamed_with_v1_suffix(tmp_path: Path):
-    path = tmp_path / "odds_snapshots.csv"
-    old_header = (
-        "ts_utc,event_bp_id,sr_id,genius_id,home,away,kickoff_utc,"
-        "status,match_minute,score_home,score_away,"
-        "bookmaker,market,outcome,odds,probability,fetch_status,fetch_error\n"
+async def test_placeholder_event_row_patched_on_next_good_tick(tmp_path: Path):
+    path = tmp_path / "out.db"
+    sentinel = _make_snap(
+        0,
+        home="", away="",
+        fetch_status=FetchStatus.HTTP_ERROR,
+        fetch_error="status poll failed",
+        prices={},
     )
-    # 18 fields matching old_header: ts, ev, sr, genius, home, away, kickoff,
-    # status, minute, score_home, score_away, bookmaker, market, outcome,
-    # odds, prob, fetch_status, fetch_error (trailing empty).
-    path.write_text(old_header + "2026-05-20T11:00:00Z,33,,,A,B,2026-05-20T11:00:00Z"
-                                  ",UPCOMING,,,,betpawa,1x2_1up_ft,home,1.85,0.54,ok,\n",
-                    encoding="utf-8")
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    good = _make_snap(
+        1,
+        home="Real Team A", away="Real Team B",
+        fetch_status=FetchStatus.OK,
+    )
+    async with SqliteWriter(path) as w:
+        await w.append([sentinel])
+        await w.append([good])
+    rows = _query(path, "SELECT home, away FROM events")
+    assert rows == [("Real Team A", "Real Team B")]
 
-    async with CsvWriter(path) as w:
+
+async def test_transaction_rollback_on_partial_failure(tmp_path: Path):
+    path = tmp_path / "out.db"
+    async with SqliteWriter(path) as w:
         await w.append([_make_snap(0)])
-
-    renamed = tmp_path / f"odds_snapshots_v1_{today}.csv"
-    assert renamed.exists(), "old file must be renamed with v1 suffix"
-    assert "1x2_1up_ft,home,1.85" in renamed.read_text(encoding="utf-8")
-    rows = list(csv.reader(path.read_text(encoding="utf-8").splitlines()))
-    assert rows[0] == list(build_csv_header())
-    assert len(rows) == 2
-
-
-async def test_existing_new_header_file_is_appended_not_renamed(tmp_path: Path):
-    path = tmp_path / "odds_snapshots.csv"
-    new_header_line = ",".join(build_csv_header()) + "\n"
-    path.write_text(new_header_line, encoding="utf-8")
-
-    async with CsvWriter(path) as w:
-        await w.append([_make_snap(0)])
-
-    siblings = list(tmp_path.glob("odds_snapshots_v1_*.csv"))
-    assert siblings == []
-    rows = list(csv.reader(path.read_text(encoding="utf-8").splitlines()))
-    assert rows[0] == list(build_csv_header())
-    assert len(rows) == 2
-
-
-async def test_to_csv_row_value_round_trips_to_correct_column(tmp_path: Path):
-    path = tmp_path / "out.csv"
-    snap = _make_snap(0, Bookmaker.BETPAWA)
-    async with CsvWriter(path) as w:
-        await w.append([snap])
-    rows = list(csv.reader(path.read_text(encoding="utf-8").splitlines()))
-    header = build_csv_header()
-    data = rows[1]
-    home_odds_col = header.index("1x2_ft_home_odds")
-    assert data[home_odds_col] == "1.50"
+        first_count = _query(
+            path, "SELECT COUNT(*) FROM snapshots"
+        )[0][0]
+    assert first_count == 1

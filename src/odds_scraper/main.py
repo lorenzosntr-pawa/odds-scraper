@@ -19,7 +19,7 @@ from .resolution_runtime import (
     make_bookmaker_clients, make_fetchers, resolve_event,
 )
 from .watcher import EventWatcher, WatcherConfig
-from .writer import CsvWriter
+from .writer import SqliteWriter
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ async def _amain(config_path: Path) -> int:
         clients = await make_bookmaker_clients(stack, country=cfg.country)
         fetchers = make_fetchers(clients, registry=registry)
         collector = OddsCollector(fetchers=fetchers)
-        writer = await stack.enter_async_context(CsvWriter(Path(cfg.output.csv_path)))
+        writer = await stack.enter_async_context(SqliteWriter(Path(cfg.output.db_path)))
 
         async def resolver(detail: dict[str, Any]):
             return await resolve_event(detail, clients=clients, cache=cache)
