@@ -234,8 +234,12 @@ function initCountryLeagueFilter() {
 
   countrySel.value = stored.country_id || '';
   populateLeagues(stored.country_id || '');
-  if (stored.league_id && leagueSel.querySelector(`option[value="${stored.league_id}"]`)) {
-    leagueSel.value = stored.league_id;
+  if (stored.league_id) {
+    try {
+      if (leagueSel.querySelector(`option[value="${stored.league_id}"]`)) {
+        leagueSel.value = stored.league_id;
+      }
+    } catch { /* malformed stored value — ignore, fall through to "All" */ }
   }
 
   countrySel.addEventListener('change', () => {
@@ -245,12 +249,17 @@ function initCountryLeagueFilter() {
   leagueSel.addEventListener('change', refresh);
 
   // On initial page load, the events-list fragment fires its hx-get on its
-  // own (hx-trigger="load"). We only need to fire when the user changes the
-  // filter — but on first load we want the stored filter to be honoured
-  // immediately, so if either is non-empty, kick off a refresh after the
-  // initial fragment loads.
+  // own (hx-trigger="load"). If we have a stored filter, listen for the
+  // initial swap to complete, then re-fire with the filter applied. Using
+  // setTimeout(0) here would race the initial unfiltered fetch.
   if (stored.country_id || stored.league_id) {
-    setTimeout(refresh, 0);
+    const onFirstSwap = (evt) => {
+      if (evt.target && evt.target.id === 'events-list') {
+        document.body.removeEventListener('htmx:afterSwap', onFirstSwap);
+        refresh();
+      }
+    };
+    document.body.addEventListener('htmx:afterSwap', onFirstSwap);
   }
 }
 
