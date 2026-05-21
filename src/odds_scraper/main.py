@@ -11,13 +11,13 @@ from typing import Any
 
 from .collector import OddsCollector
 from .config import load_config
+from .event_resolver import resolve_event_ids
 from .models import Bookmaker
 from .registry import build_registry
 from .resolution import ResolutionCache
 from .resolution_runtime import (
     make_bookmaker_clients, make_fetchers, resolve_event,
 )
-from .event_resolver import resolve_event_ids
 from .watcher import EventWatcher, WatcherConfig
 from .writer import CsvWriter
 
@@ -105,9 +105,11 @@ async def _amain(config_path: Path) -> int:
                 try:
                     # Prune completed watcher tasks so `tasks` doesn't grow
                     # unbounded over a long server run, and so the active
-                    # count below stays honest.
+                    # count below stays honest. After this prune, every
+                    # entry in `tasks` is by definition not-done, so
+                    # `bool(tasks)` is the active-watchers predicate.
                     tasks[:] = [t for t in tasks if not t.done()]
-                    any_active = any(not t.done() for t in tasks)
+                    any_active = bool(tasks)
                     sleep_sec = (
                         cfg.refresh_interval_seconds if any_active
                         else cfg.refresh_interval_when_idle_seconds
@@ -124,10 +126,9 @@ async def _amain(config_path: Path) -> int:
                         for ev_id in new_ids:
                             _spawn_watcher(ev_id)
                     else:
-                        active_count = sum(1 for t in tasks if not t.done())
                         log.info(
                             "refresh: no new events (active watchers: %d)",
-                            active_count,
+                            len(tasks),
                         )
                 except asyncio.CancelledError:
                     raise

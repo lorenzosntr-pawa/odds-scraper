@@ -89,6 +89,26 @@ def test_load_without_tournaments_defaults_to_empty(tmp_path: Path):
     assert cfg.tournaments == ()
 
 
+def test_load_without_events_defaults_to_empty(tmp_path: Path):
+    # tournaments-only config should be valid (spec: either may be empty)
+    p = _write(tmp_path / "c.yaml", """
+        country: ng
+        tournaments: [11965]
+        cadence:
+          prematch_seconds: 600
+          live_seconds: 90
+          status_retry_backoff_seconds: [5, 15, 45]
+          watchdog_after_kickoff_seconds: 10800
+        output:
+          csv_path: data/x.csv
+          resolution_cache_path: data/r.json
+        log_level: INFO
+    """)
+    cfg = load_config(p)
+    assert cfg.events == ()
+    assert cfg.tournaments == ("11965",)
+
+
 def test_refresh_interval_seconds_default_is_86400(tmp_path: Path):
     p = _write(tmp_path / "c.yaml", """
         country: ng

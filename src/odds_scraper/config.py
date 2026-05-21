@@ -39,7 +39,7 @@ def load_config(path: Path | str) -> AppConfig:
     out = raw["output"]
     return AppConfig(
         country=str(raw["country"]),
-        events=tuple(str(e) for e in raw["events"]),
+        events=tuple(str(e) for e in (raw.get("events") or [])),
         tournaments=tuple(str(t) for t in (raw.get("tournaments") or [])),
         refresh_interval_seconds=int(raw.get("refresh_interval_seconds", 86400)),
         refresh_interval_when_idle_seconds=int(
