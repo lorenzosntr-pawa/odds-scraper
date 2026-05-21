@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="p-3 max-w-screen-2xl mx-auto">
+  <div class="flex justify-between border-b border-gray-900 pb-3 mb-3">
+    <div class="text-white font-semibold tracking-wider">ODDS · LIVE COMPARISON</div>
+    <div class="flex gap-1" id="tabs">
+      <button class="tab" data-status="live">LIVE</button>
+      <button class="tab active" data-status="upcoming">UPCOMING</button>
+      <button class="tab" data-status="ended">ENDED</button>
+    </div>
+  </div>
+
+  <div class="flex gap-2 items-center px-2 mb-2 text-xs text-gray-500">
+    <span class="text-[9px] uppercase tracking-wider">Bookmakers</span>
+    <button class="chip on" data-bookmaker="betpawa">BP</button>
+    <button class="chip on" data-bookmaker="sportybet">SB</button>
+    <button class="chip on" data-bookmaker="bet9ja">B9J</button>
+    <button class="chip on" data-bookmaker="betway">BW</button>
+  </div>
+
+  <div id="events-list"
+       hx-get="/events?status=upcoming"
+       hx-trigger="load"
+       hx-swap="outerHTML">
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js"></script>
+{% endblock %}
