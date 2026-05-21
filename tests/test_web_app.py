@@ -134,3 +134,74 @@ def test_event_detail_pills_include_ou_lines(client: TestClient):
     r = client.get("/events/E1")
     for line in (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5):
         assert f"OU {line}" in r.text
+
+
+def test_index_filter_row_includes_search_and_kickoff(client: TestClient):
+    r = client.get("/")
+    # Filter row labels
+    assert "Bookmakers" in r.text and "Kickoff" in r.text and "Search" in r.text
+    # Kickoff window pills
+    for win in ("3600", "10800", "21600", "86400"):
+        assert f'data-window="{win}"' in r.text
+    assert 'data-window="all"' in r.text
+    # Search input
+    assert 'id="search-input"' in r.text
+
+
+def test_events_card_carries_filter_data_attributes(client: TestClient):
+    r = client.get("/events?status=upcoming")
+    # Lower-cased "home + ' ' + away" attribute for client-side substring match
+    assert 'data-event-name="liverpool arsenal"' in r.text
+    assert 'data-kickoff-utc="2026-05-22T18:30:00Z"' in r.text
+
+
+def test_events_card_skips_ou_groups_when_no_data(client: TestClient):
+    # Fixture only has 1x2 family data — no OU rows in DB → no expand
+    # toggle should be rendered.
+    r = client.get("/events?status=upcoming")
+    assert "expand-toggle" not in r.text
+
+
+@pytest.fixture
+def db_with_ou_path(tmp_path: Path) -> Path:
+    """A DB where event E1 also has OU prices, so the card can expand."""
+    path = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    init_schema(conn)
+    conn.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES ('E1', 'Liverpool', 'Arsenal', '2026-05-22T18:30:00Z')",
+    )
+    cur = conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
+        "VALUES ('2026-05-21T10:00:00Z', 'E1', 'betpawa', 'UPCOMING', 'ok')",
+    )
+    snap_id = cur.lastrowid
+    for market_id in ("1x2_ft", "1x2_1up_ft", "1x2_2up_ft"):
+        for side in ("home", "draw", "away"):
+            conn.execute(
+                "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+                "market_id, line, side, odds, probability) "
+                "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', ?, 0.0, ?, 1.85, 0.54)",
+                (snap_id, market_id, side),
+            )
+    # OU 2.5 prices so an extra group becomes visible
+    for side in ("over", "under"):
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', "
+            "'over_under_ft', 2.5, ?, 1.85, 0.54)",
+            (snap_id, side),
+        )
+    conn.close()
+    return path
+
+
+def test_events_card_has_expand_toggle_when_ou_present(db_with_ou_path: Path):
+    app = create_app(db_path=db_with_ou_path)
+    client = TestClient(app)
+    r = client.get("/events?status=upcoming")
+    assert "expand-toggle" in r.text
+    assert "market-extra" in r.text
+    assert "Over/Under 2.5" in r.text

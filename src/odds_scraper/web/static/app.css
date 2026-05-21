@@ -106,6 +106,69 @@
 a.ev { text-decoration: none; color: inherit; }
 a.ev:hover { background: #181818; }
 
+/* Filter row: bookmaker chips + kickoff window + search */
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  padding: 6px 8px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #1a1a1a;
+}
+.filter-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.filter-group.filter-search {
+  flex: 1;
+  min-width: 200px;
+  max-width: 320px;
+}
+.filter-lbl {
+  color: #888;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.search-input {
+  flex: 1;
+  background: #0f0f0f;
+  border: 1px solid #1a1a1a;
+  border-radius: 3px;
+  color: #d1d5db;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  outline: none;
+}
+.search-input:focus { border-color: #2a4a2a; }
+
+/* Per-card OU expand toggle + hidden extras */
+.market-extra { display: none; }
+.card.expanded .market-extra { display: block; }
+.expand-toggle {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  background: #0f0f0f;
+  color: #888;
+  border: 0;
+  border-top: 1px solid #1a1a1a;
+  font-family: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.expand-toggle:hover { background: #181818; color: #d1d5db; }
+.card.expanded .expand-toggle { color: #4ade80; }
+
+/* Card filtered-out states */
+.card.hidden-by-search { display: none; }
+.card.hidden-by-time   { display: none; }
+
 /* Bookmaker chip toggle — body class hides matching columns INSIDE the
    events list AND the detail history table. Scoped via id/class to keep
    the chips themselves clickable. */

@@ -1,4 +1,7 @@
-<div class="card" data-event-id="{{ event.id }}">
+<div class="card"
+     data-event-id="{{ event.id }}"
+     data-event-name="{{ (event.home + ' ' + event.away)|lower }}"
+     data-kickoff-utc="{{ event.kickoff_utc }}">
   <a class="ev" href="/events/{{ event.id }}">
     <div>
       <div class="ev-name">{{ event.home }} — {{ event.away }}
@@ -26,20 +29,32 @@
     <span class="lbl" data-bookmaker="betway">BW</span>
   </div>
 
+  {% set ns = namespace(extra_count=0) %}
   {% for group in event.market_groups %}
-    <div class="group-label">▾ {{ group.label }}</div>
-    {% for row in group.rows %}
-      <div class="row">
-        <span class="outcome">{{ row.market_label }} · {{ row.side_short }}</span>
-        {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
-          {% set p = row.prices.get(bm) %}
-          <span data-bookmaker="{{ bm }}">
-            {% if p %}
-              <span class="odds">{{ "%.2f"|format(p.odds) }}</span>
-            {% else %}<span class="text-gray-700">—</span>{% endif %}
-          </span>
-        {% endfor %}
-      </div>
-    {% endfor %}
+    {% if group.is_extra %}{% set ns.extra_count = ns.extra_count + 1 %}{% endif %}
+    <div class="market-block{% if group.is_extra %} market-extra{% endif %}">
+      <div class="group-label">▾ {{ group.label }}</div>
+      {% for row in group.rows %}
+        <div class="row">
+          <span class="outcome">{{ row.market_label }} · {{ row.side_short }}</span>
+          {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
+            {% set p = row.prices.get(bm) %}
+            <span data-bookmaker="{{ bm }}">
+              {% if p %}
+                <span class="odds">{{ "%.2f"|format(p.odds) }}</span>
+              {% else %}<span class="text-gray-700">—</span>{% endif %}
+            </span>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
   {% endfor %}
+
+  {% if ns.extra_count > 0 %}
+    <button class="expand-toggle" type="button"
+            data-collapsed-label="▼ Show {{ ns.extra_count }} Over/Under {% if ns.extra_count == 1 %}line{% else %}lines{% endif %}"
+            data-expanded-label="▲ Hide Over/Under">
+      ▼ Show {{ ns.extra_count }} Over/Under {% if ns.extra_count == 1 %}line{% else %}lines{% endif %}
+    </button>
+  {% endif %}
 </div>

@@ -77,6 +77,10 @@ class OutcomeRow:
 class MarketGroup:
     label: str              # e.g., "1x2 — Full Time"
     rows: list[OutcomeRow]
+    # is_extra=True groups (OU lines) are hidden by default in the card
+    # view; revealed via the "Show OU lines" toggle. The detail page uses
+    # the market-picker pills instead and ignores this flag.
+    is_extra: bool = False
 
 
 @dataclass
@@ -180,13 +184,13 @@ def create_app(db_path: Path) -> FastAPI:
 
 
 def _build_event_view(conn, row) -> EventView:
-    """Always returns the collapsed (1x2 family) card view.
+    """Card view: 1x2 family always; OU groups also included (marked as
+    is_extra) so the template can render them in a collapsible region.
 
-    The detail page (per-event route) handles deep dives; the card list
-    only ever shows the quick-scan summary.
+    The detail page (per-event route) handles deep dives.
     """
     price_rows = queries.get_latest_prices_for_event(
-        conn, row["id"], scope="collapsed",
+        conn, row["id"], scope="opened",
     )
     bucket: dict[tuple[str, float, str], dict[str, PriceCell]] = {}
     for pr in price_rows:
@@ -206,7 +210,28 @@ def _build_event_view(conn, row) -> EventView:
                 side_short=_SIDE_SHORT[side],
                 prices=prices,
             ))
-        groups.append(MarketGroup(label=group_label, rows=rows_for_group))
+        groups.append(MarketGroup(
+            label=group_label, rows=rows_for_group, is_extra=False,
+        ))
+
+    # OU lines as extra (hidden-by-default) groups. Only emit groups
+    # that actually have at least one priced outcome.
+    for line in _OU_LINES:
+        rows_for_group = []
+        for side in _SIDES_OU:
+            prices = bucket.get(("over_under_ft", line, side), {})
+            rows_for_group.append(OutcomeRow(
+                market_label=f"OU {line}",
+                side_label=_SIDE_LABEL[side],
+                side_short=_SIDE_SHORT[side],
+                prices=prices,
+            ))
+        if any(r.prices for r in rows_for_group):
+            groups.append(MarketGroup(
+                label=f"Over/Under {line}",
+                rows=rows_for_group,
+                is_extra=True,
+            ))
 
     return EventView(
         id=row["id"], home=row["home"], away=row["away"],

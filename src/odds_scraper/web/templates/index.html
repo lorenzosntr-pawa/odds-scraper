@@ -10,12 +10,32 @@
     </div>
   </div>
 
-  <div class="flex gap-2 items-center px-2 mb-2 text-xs text-gray-500">
-    <span class="text-[9px] uppercase tracking-wider">Bookmakers</span>
-    <button class="chip on" data-bookmaker="betpawa">BP</button>
-    <button class="chip on" data-bookmaker="sportybet">SB</button>
-    <button class="chip on" data-bookmaker="bet9ja">B9J</button>
-    <button class="chip on" data-bookmaker="betway">BW</button>
+  <div class="filter-row">
+    <div class="filter-group">
+      <span class="filter-lbl">Bookmakers</span>
+      <button class="chip on" data-bookmaker="betpawa">BP</button>
+      <button class="chip on" data-bookmaker="sportybet">SB</button>
+      <button class="chip on" data-bookmaker="bet9ja">B9J</button>
+      <button class="chip on" data-bookmaker="betway">BW</button>
+    </div>
+
+    <div class="filter-group">
+      <span class="filter-lbl">Kickoff</span>
+      <button class="chip kick on" data-window="all">All</button>
+      <button class="chip kick"    data-window="3600">1h</button>
+      <button class="chip kick"    data-window="10800">3h</button>
+      <button class="chip kick"    data-window="21600">6h</button>
+      <button class="chip kick"    data-window="86400">24h</button>
+    </div>
+
+    <div class="filter-group filter-search">
+      <span class="filter-lbl">Search</span>
+      <input type="search"
+             id="search-input"
+             class="search-input"
+             placeholder="team name..."
+             autocomplete="off">
+    </div>
   </div>
 
   <div id="events-list"

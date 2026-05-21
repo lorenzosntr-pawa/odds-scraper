@@ -1,12 +1,28 @@
-// Bookmaker chip toggle + localStorage persistence.
-// The chip's `on` class drives a body class which CSS uses to hide
-// matching [data-bookmaker="..."] columns inside #events-list and the
-// detail-page history table.
-function initChips() {
-  const stored = JSON.parse(localStorage.getItem('bookmakers') || '{}');
+// =============================================================================
+// State (all client-side, persisted via localStorage)
+// =============================================================================
+//   bookmakers      : {bm: bool}        — chip on/off, hides table columns
+//   expanded_events : {id: true}        — cards with OU lines revealed
+//   search          : string            — substring filter on home/away
+//   kickoff_window  : "all" | seconds   — hide events kicking off > now+window
+// =============================================================================
+
+const LS = {
+  load(key, fallback) {
+    try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
+    catch { return fallback; }
+  },
+  save(key, value) { localStorage.setItem(key, JSON.stringify(value)); },
+};
+
+// -----------------------------------------------------------------------------
+// Bookmaker chips
+// -----------------------------------------------------------------------------
+function initBookmakerChips() {
+  const stored = LS.load('bookmakers', {});
   document.querySelectorAll('.chip[data-bookmaker]').forEach(c => {
     const bm = c.dataset.bookmaker;
-    const on = stored[bm] !== false;  // default on
+    const on = stored[bm] !== false;
     c.classList.toggle('on', on);
     document.body.classList.toggle(`hide-${bm}`, !on);
     c.addEventListener('click', () => {
@@ -14,13 +30,14 @@ function initChips() {
       c.classList.toggle('on', nowOn);
       document.body.classList.toggle(`hide-${bm}`, !nowOn);
       stored[bm] = nowOn;
-      localStorage.setItem('bookmakers', JSON.stringify(stored));
+      LS.save('bookmakers', stored);
     });
   });
 }
 
-// Tab switching via HTMX programmatic request (only present on the
-// events-list page, not the detail page).
+// -----------------------------------------------------------------------------
+// Tabs (events-list page only)
+// -----------------------------------------------------------------------------
 function initTabs() {
   document.querySelectorAll('.tab[data-status]').forEach(t => {
     t.addEventListener('click', () => {
@@ -32,7 +49,126 @@ function initTabs() {
   });
 }
 
+// -----------------------------------------------------------------------------
+// Kickoff timing filter
+// -----------------------------------------------------------------------------
+function applyKickoffFilter() {
+  const win = LS.load('kickoff_window', 'all');
+  const cutoffSec = (win === 'all') ? null
+                                    : (Date.now() / 1000) + Number(win);
+  document.querySelectorAll('.card[data-kickoff-utc]').forEach(card => {
+    if (cutoffSec === null) {
+      card.classList.remove('hidden-by-time');
+      return;
+    }
+    const t = Date.parse(card.dataset.kickoffUtc);
+    if (isNaN(t)) {
+      // No parseable kickoff (shouldn't happen) — always show
+      card.classList.remove('hidden-by-time');
+      return;
+    }
+    const ks = t / 1000;
+    // Hide only events that kick off AFTER the window. Live/ended events
+    // (kickoff in the past) always pass.
+    card.classList.toggle('hidden-by-time', ks > cutoffSec);
+  });
+}
+
+function initKickoffFilter() {
+  const current = LS.load('kickoff_window', 'all');
+  document.querySelectorAll('.chip.kick[data-window]').forEach(c => {
+    c.classList.toggle('on', c.dataset.window === current);
+    c.addEventListener('click', () => {
+      document.querySelectorAll('.chip.kick').forEach(x => x.classList.remove('on'));
+      c.classList.add('on');
+      LS.save('kickoff_window', c.dataset.window);
+      applyKickoffFilter();
+    });
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Search bar
+// -----------------------------------------------------------------------------
+function applySearchFilter() {
+  const q = (LS.load('search', '') || '').trim().toLowerCase();
+  document.querySelectorAll('.card[data-event-name]').forEach(card => {
+    if (!q) {
+      card.classList.remove('hidden-by-search');
+      return;
+    }
+    card.classList.toggle('hidden-by-search',
+                          !card.dataset.eventName.includes(q));
+  });
+}
+
+function initSearch() {
+  const input = document.getElementById('search-input');
+  if (!input) return;
+  input.value = LS.load('search', '') || '';
+  input.addEventListener('input', () => {
+    LS.save('search', input.value);
+    applySearchFilter();
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Per-card "Show OU lines" expand toggle
+// -----------------------------------------------------------------------------
+function applyExpandedState() {
+  const expanded = LS.load('expanded_events', {});
+  document.querySelectorAll('.card[data-event-id]').forEach(card => {
+    const open = !!expanded[card.dataset.eventId];
+    card.classList.toggle('expanded', open);
+    const btn = card.querySelector('.expand-toggle');
+    if (btn) {
+      btn.textContent = open ? btn.dataset.expandedLabel
+                             : btn.dataset.collapsedLabel;
+    }
+  });
+}
+
+function initExpandToggles() {
+  document.querySelectorAll('.expand-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.card');
+      if (!card) return;
+      const id = card.dataset.eventId;
+      const stored = LS.load('expanded_events', {});
+      if (stored[id]) delete stored[id];
+      else stored[id] = true;
+      LS.save('expanded_events', stored);
+      applyExpandedState();
+    });
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Wire it all together. After every HTMX swap (polling refresh), re-apply
+// client-side state because the new card markup is fresh and class-free.
+// -----------------------------------------------------------------------------
+function applyAllCardState() {
+  applyExpandedState();
+  applyKickoffFilter();
+  applySearchFilter();
+}
+
+function initEventDelegates() {
+  document.body.addEventListener('htmx:afterSwap', evt => {
+    if (evt.target && evt.target.id === 'events-list') {
+      // Wire up newly-inserted toggle buttons + reapply chip/time/search state
+      initExpandToggles();
+      applyAllCardState();
+    }
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-  initChips();
+  initBookmakerChips();
   initTabs();
+  initKickoffFilter();
+  initSearch();
+  initExpandToggles();
+  initEventDelegates();
+  applyAllCardState();
 });
