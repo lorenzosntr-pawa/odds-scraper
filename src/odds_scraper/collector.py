@@ -47,6 +47,17 @@ class OddsCollector:
 
         kickoff = extract_kickoff(bp_detail, "betpawa") or ts
 
+        # Country and league come straight from BetPawa's structured
+        # top-level keys. or {} defends against missing keys; or "" makes
+        # individual missing names empty strings so the writer's upsert
+        # treats them the same as a sentinel-row update (no-op patching).
+        region = bp_detail.get("region") or {}
+        competition = bp_detail.get("competition") or {}
+        country_id = str(region.get("id") or "")
+        country_name = str(region.get("name") or "")
+        league_id = str(competition.get("id") or "")
+        league_name = str(competition.get("name") or "")
+
         async def run(b: Bookmaker, target_id: Optional[str]):
             if b != Bookmaker.BETPAWA and not target_id:
                 return b, (FetchStatus.LOOKUP_FAILED,
@@ -98,6 +109,10 @@ class OddsCollector:
                 fetch_status=status_fetch,
                 fetch_error=error,
                 prices=prices,
+                country_id=country_id,
+                country_name=country_name,
+                league_id=league_id,
+                league_name=league_name,
             ))
         return rows
 

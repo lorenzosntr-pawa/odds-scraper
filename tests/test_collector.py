@@ -291,3 +291,52 @@ async def test_outcome_missing_odds_is_skipped(collector):
     assert PriceKey("1x2_ft", None, "home") in bp.prices
     assert PriceKey("1x2_ft", None, "draw") not in bp.prices
     assert PriceKey("1x2_ft", None, "away") in bp.prices
+
+
+def _bp_detail_with_country_league() -> dict:
+    """Same shape as _bp_detail() but with region/competition populated."""
+    return {
+        "id": "33660318",
+        "participants": [
+            {"id": "1", "name": "Team A", "position": 1},
+            {"id": "2", "name": "Team B", "position": 2},
+        ],
+        "startTime": "2026-05-19T15:00:00Z",
+        "additionalInfo": {"live": False},
+        "results": None,
+        "region":      {"id": "242",   "name": "Germany"},
+        "competition": {"id": "12091", "name": "2nd Bundesliga"},
+    }
+
+
+async def test_collector_extracts_country_and_league(collector):
+    rows = await collector.collect(
+        _bp_detail_with_country_league(),
+        resolved={Bookmaker.SPORTYBET: "sr:match:1",
+                  Bookmaker.BET9JA: "b9j-7",
+                  Bookmaker.BETWAY: "sr:match:1"},
+        sr_id="sr:match:1", genius_id="",
+    )
+    # All four bookmaker rows get identical event-level metadata
+    for r in rows:
+        assert r.country_id == "242"
+        assert r.country_name == "Germany"
+        assert r.league_id == "12091"
+        assert r.league_name == "2nd Bundesliga"
+
+
+async def test_collector_handles_missing_region_competition(collector):
+    # When the detail has no region/competition keys, all four fields
+    # collapse to "" rather than raising.
+    rows = await collector.collect(
+        _bp_detail(),  # existing helper, no region/competition keys
+        resolved={Bookmaker.SPORTYBET: "sr:match:1",
+                  Bookmaker.BET9JA: "b9j-7",
+                  Bookmaker.BETWAY: "sr:match:1"},
+        sr_id="sr:match:1", genius_id="",
+    )
+    for r in rows:
+        assert r.country_id == ""
+        assert r.country_name == ""
+        assert r.league_id == ""
+        assert r.league_name == ""
