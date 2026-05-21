@@ -203,3 +203,97 @@ async def test_single_snap_round_trip(tmp_path: Path):
             path, "SELECT COUNT(*) FROM snapshots"
         )[0][0]
     assert first_count == 1
+
+
+async def test_writer_stores_country_and_league(tmp_path: Path):
+    path = tmp_path / "out.db"
+    base = _make_snap(0)
+    snap = Snapshot(
+        ts_utc=base.ts_utc,
+        event_bp_id=base.event_bp_id,
+        sr_id=base.sr_id, genius_id=base.genius_id,
+        home=base.home, away=base.away, kickoff_utc=base.kickoff_utc,
+        status=base.status, match_minute=base.match_minute,
+        score_home=base.score_home, score_away=base.score_away,
+        bookmaker=base.bookmaker, fetch_status=base.fetch_status,
+        fetch_error=base.fetch_error, prices=base.prices,
+        country_id="242", country_name="Germany",
+        league_id="12091", league_name="2nd Bundesliga",
+    )
+    async with SqliteWriter(path) as w:
+        await w.append([snap])
+    rows = _query(
+        path,
+        "SELECT country_id, country_name, league_id, league_name "
+        "FROM events WHERE id = ?",
+        (snap.event_bp_id,),
+    )
+    assert rows == [("242", "Germany", "12091", "2nd Bundesliga")]
+
+
+async def test_writer_patches_null_country_league_on_next_tick(tmp_path: Path):
+    # First tick lacks country/league (e.g., a sentinel snapshot when the
+    # detail poll failed); writer stores NULLs. Second tick has real values;
+    # the upsert patches them in.
+    path = tmp_path / "out.db"
+    first = _make_snap(0)
+    second = Snapshot(
+        ts_utc=first.ts_utc,
+        event_bp_id=first.event_bp_id,
+        sr_id=first.sr_id, genius_id=first.genius_id,
+        home=first.home, away=first.away, kickoff_utc=first.kickoff_utc,
+        status=first.status, match_minute=first.match_minute,
+        score_home=first.score_home, score_away=first.score_away,
+        bookmaker=first.bookmaker, fetch_status=first.fetch_status,
+        fetch_error=first.fetch_error, prices=first.prices,
+        country_id="242", country_name="Germany",
+        league_id="12091", league_name="2nd Bundesliga",
+    )
+    async with SqliteWriter(path) as w:
+        await w.append([first])
+        before = _query(
+            path,
+            "SELECT country_id, country_name, league_id, league_name "
+            "FROM events WHERE id = ?",
+            (first.event_bp_id,),
+        )
+        assert before == [(None, None, None, None)]
+        await w.append([second])
+    after = _query(
+        path,
+        "SELECT country_id, country_name, league_id, league_name "
+        "FROM events WHERE id = ?",
+        (first.event_bp_id,),
+    )
+    assert after == [("242", "Germany", "12091", "2nd Bundesliga")]
+
+
+async def test_writer_keeps_country_league_when_later_tick_is_empty(tmp_path: Path):
+    # Real values written first; a later sentinel tick (empty country/league)
+    # must NOT overwrite the good values.
+    path = tmp_path / "out.db"
+    first = _make_snap(0)
+    first_good = Snapshot(
+        ts_utc=first.ts_utc,
+        event_bp_id=first.event_bp_id,
+        sr_id=first.sr_id, genius_id=first.genius_id,
+        home=first.home, away=first.away, kickoff_utc=first.kickoff_utc,
+        status=first.status, match_minute=first.match_minute,
+        score_home=first.score_home, score_away=first.score_away,
+        bookmaker=first.bookmaker, fetch_status=first.fetch_status,
+        fetch_error=first.fetch_error, prices=first.prices,
+        country_id="242", country_name="Germany",
+        league_id="12091", league_name="2nd Bundesliga",
+    )
+    sentinel = _make_snap(1, fetch_status=FetchStatus.HTTP_ERROR,
+                          fetch_error="timeout", prices={})
+    async with SqliteWriter(path) as w:
+        await w.append([first_good])
+        await w.append([sentinel])  # empty country/league
+    rows = _query(
+        path,
+        "SELECT country_id, country_name, league_id, league_name "
+        "FROM events WHERE id = ?",
+        (first.event_bp_id,),
+    )
+    assert rows == [("242", "Germany", "12091", "2nd Bundesliga")]

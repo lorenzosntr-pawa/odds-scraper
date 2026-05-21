@@ -72,15 +72,26 @@ class SqliteWriter:
                 # so good data is never overwritten by later sentinels.
                 conn.execute(
                     "INSERT INTO events "
-                    "(id, sr_id, genius_id, home, away, kickoff_utc) "
-                    "VALUES (?, ?, ?, ?, ?, ?) "
+                    "(id, sr_id, genius_id, home, away, kickoff_utc, "
+                    " country_id, country_name, league_id, league_name) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(id) DO UPDATE SET "
                     "  sr_id = COALESCE(NULLIF(events.sr_id, ''), excluded.sr_id), "
                     "  genius_id = COALESCE(NULLIF(events.genius_id, ''), excluded.genius_id), "
                     "  home = CASE WHEN events.home = '' THEN excluded.home ELSE events.home END, "
-                    "  away = CASE WHEN events.away = '' THEN excluded.away ELSE events.away END",
+                    "  away = CASE WHEN events.away = '' THEN excluded.away ELSE events.away END, "
+                    "  country_id = COALESCE(NULLIF(events.country_id, ''), excluded.country_id), "
+                    "  country_name = CASE "
+                    "      WHEN events.country_name IS NULL OR events.country_name = '' "
+                    "      THEN excluded.country_name ELSE events.country_name END, "
+                    "  league_id = COALESCE(NULLIF(events.league_id, ''), excluded.league_id), "
+                    "  league_name = CASE "
+                    "      WHEN events.league_name IS NULL OR events.league_name = '' "
+                    "      THEN excluded.league_name ELSE events.league_name END",
                     (s.event_bp_id, s.sr_id or None, s.genius_id or None,
-                     s.home, s.away, _iso(s.kickoff_utc)),
+                     s.home, s.away, _iso(s.kickoff_utc),
+                     s.country_id or None, s.country_name or None,
+                     s.league_id or None, s.league_name or None),
                 )
                 cur = conn.execute(
                     "INSERT INTO snapshots "

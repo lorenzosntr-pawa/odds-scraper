@@ -122,6 +122,13 @@ class Snapshot:
     prices: dict[PriceKey, tuple[Optional[float], Optional[float]]] = field(
         default_factory=dict,
     )
+    # Event-level metadata captured from BetPawa's region/competition keys.
+    # Default "" so existing constructors (sentinel rows, older tests) keep
+    # working unchanged.
+    country_id: str = ""
+    country_name: str = ""
+    league_id: str = ""
+    league_name: str = ""
 
     def to_csv_row(self) -> tuple[str, ...]:
         meta = (
