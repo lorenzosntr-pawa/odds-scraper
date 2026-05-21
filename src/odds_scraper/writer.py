@@ -32,6 +32,11 @@ class SqliteWriter:
         return self
 
     def _open(self) -> sqlite3.Connection:
+        # check_same_thread=False is safe here: the asyncio.Lock in append()
+        # serialises all run_in_executor dispatches, so only one thread ever
+        # holds the connection at a time. The lock is the synchronisation
+        # primitive — sqlite3's own thread-check would refuse to let the
+        # default executor thread pool re-bind the connection across calls.
         conn = sqlite3.connect(str(self._path), isolation_level=None, check_same_thread=False)
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
@@ -110,4 +115,10 @@ class SqliteWriter:
 
 
 def _iso(dt: datetime) -> str:
+    """Format a non-None UTC datetime as ISO-8601.
+
+    Snapshot.ts_utc and Snapshot.kickoff_utc are both non-Optional, so None
+    is never passed here. models._iso accepts Optional[datetime] — keep
+    that distinction in mind if you ever copy this helper.
+    """
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
