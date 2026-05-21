@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Callable
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _BASE_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -17,7 +17,11 @@ CREATE TABLE IF NOT EXISTS events (
     genius_id    TEXT,
     home         TEXT NOT NULL,
     away         TEXT NOT NULL,
-    kickoff_utc  TEXT NOT NULL
+    kickoff_utc  TEXT NOT NULL,
+    country_id   TEXT,
+    country_name TEXT,
+    league_id    TEXT,
+    league_name  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -56,8 +60,36 @@ CREATE INDEX IF NOT EXISTS idx_prices_ts
     ON prices(ts_utc);
 """
 
+def _add_columns_if_missing(
+    conn: sqlite3.Connection, table: str, columns: list[tuple[str, str]],
+) -> None:
+    """Idempotently ALTER TABLE to add columns that don't already exist.
+
+    columns is a list of (col_name, col_type) pairs, e.g.,
+    [("country_id", "TEXT"), ("country_name", "TEXT")].
+
+    SQLite's `ALTER TABLE ADD COLUMN` has no IF NOT EXISTS form, so we
+    inspect PRAGMA table_info and only emit the ALTER for missing names.
+    Makes migrations safe against partial-completion crashes where the
+    ALTER succeeded but the schema_version bump didn't.
+    """
+    existing = {
+        row[1]  # PRAGMA table_info columns: cid, name, type, notnull, dflt, pk
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    for col_name, col_type in columns:
+        if col_name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: lambda conn: None,
+    2: lambda conn: _add_columns_if_missing(conn, "events", [
+        ("country_id",   "TEXT"),
+        ("country_name", "TEXT"),
+        ("league_id",    "TEXT"),
+        ("league_name",  "TEXT"),
+    ]),
 }
 
 
