@@ -8,9 +8,24 @@ from typing import Any, Awaitable, Callable
 
 from .collector import OddsCollector
 from .models import (
-    Bookmaker, EventStatus, FetchStatus, Snapshot,
+    MARKET_MANIFEST, Bookmaker, EventStatus, FetchStatus, Snapshot,
 )
 from .status import parse_status
+
+_PROB_BOOKMAKERS = {Bookmaker.BETPAWA, Bookmaker.SPORTYBET}
+
+
+def _price_cell_count(want_prob: bool) -> int:
+    """Total price cells per bookmaker, derived from MARKET_MANIFEST.
+
+    BP/SB emit odds AND prob per outcome (2 cells each).
+    B9J/BW emit odds only (1 cell each). Used as denominators in tick logs.
+    """
+    cells = 0
+    for spec in MARKET_MANIFEST:
+        outcomes = len(spec.lines or (None,)) * len(spec.sides)
+        cells += outcomes * (2 if want_prob else 1)
+    return cells
 
 log = logging.getLogger(__name__)
 
@@ -108,13 +123,10 @@ class EventWatcher:
         return None
 
     def _log_tick_summary(self, rows: list[Snapshot]) -> None:
-        denom = {
-            Bookmaker.BETPAWA: 54, Bookmaker.SPORTYBET: 54,
-            Bookmaker.BET9JA: 27, Bookmaker.BETWAY: 27,
-        }
+        denom = {b: _price_cell_count(b in _PROB_BOOKMAKERS) for b in Bookmaker}
         counts: dict[Bookmaker, int] = {b: 0 for b in Bookmaker}
         for r in rows:
-            for _key, (odds, prob) in r.prices.items():
+            for odds, prob in r.prices.values():
                 if odds is not None:
                     counts[r.bookmaker] += 1
                 if prob is not None:
