@@ -132,8 +132,8 @@ a.ev:hover { background: #181818; }
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
-.search-input {
-  flex: 1;
+.search-input,
+.custom-hours {
   background: #0f0f0f;
   border: 1px solid #1a1a1a;
   border-radius: 3px;
@@ -143,7 +143,14 @@ a.ev:hover { background: #181818; }
   padding: 3px 8px;
   outline: none;
 }
-.search-input:focus { border-color: #2a4a2a; }
+.search-input { flex: 1; }
+.custom-hours {
+  width: 80px;
+  text-align: right;
+  margin-left: 4px;
+}
+.search-input:focus,
+.custom-hours:focus { border-color: #2a4a2a; }
 
 /* Per-card OU expand toggle + hidden extras */
 .market-extra { display: none; }

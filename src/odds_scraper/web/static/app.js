@@ -76,15 +76,43 @@ function applyKickoffFilter() {
 
 function initKickoffFilter() {
   const current = LS.load('kickoff_window', 'all');
+  const customInput = document.getElementById('kickoff-custom-hours');
+
+  // If the stored window is a number that doesn't match any pill,
+  // it's a custom hours window — populate the input and clear pills.
+  const pillValues = new Set(
+    Array.from(document.querySelectorAll('.chip.kick[data-window]'))
+         .map(c => c.dataset.window)
+  );
+  const isCustom = current !== 'all' && !pillValues.has(String(current));
+
   document.querySelectorAll('.chip.kick[data-window]').forEach(c => {
-    c.classList.toggle('on', c.dataset.window === current);
+    c.classList.toggle('on', !isCustom && c.dataset.window === current);
     c.addEventListener('click', () => {
       document.querySelectorAll('.chip.kick').forEach(x => x.classList.remove('on'));
       c.classList.add('on');
+      if (customInput) customInput.value = '';
       LS.save('kickoff_window', c.dataset.window);
       applyKickoffFilter();
     });
   });
+
+  if (customInput) {
+    if (isCustom) customInput.value = String(Number(current) / 3600);
+    customInput.addEventListener('input', () => {
+      const hours = parseFloat(customInput.value);
+      if (!isFinite(hours) || hours <= 0) {
+        // Empty / invalid → revert to "All"
+        document.querySelectorAll('.chip.kick').forEach(x => x.classList.remove('on'));
+        document.querySelector('.chip.kick[data-window="all"]')?.classList.add('on');
+        LS.save('kickoff_window', 'all');
+      } else {
+        document.querySelectorAll('.chip.kick').forEach(x => x.classList.remove('on'));
+        LS.save('kickoff_window', Math.round(hours * 3600));
+      }
+      applyKickoffFilter();
+    });
+  }
 }
 
 // -----------------------------------------------------------------------------

@@ -148,11 +148,12 @@ def test_index_filter_row_includes_search_and_kickoff(client: TestClient):
     r = client.get("/")
     # Filter row labels
     assert "Bookmakers" in r.text and "Kickoff" in r.text and "Search" in r.text
-    # Kickoff window pills
-    for win in ("3600", "10800", "21600", "86400"):
+    # Kickoff window pills (1h / 3h / 6h / 24h / 48h)
+    for win in ("3600", "10800", "21600", "86400", "172800"):
         assert f'data-window="{win}"' in r.text
     assert 'data-window="all"' in r.text
-    # Search input
+    # Custom hours input and search input
+    assert 'id="kickoff-custom-hours"' in r.text
     assert 'id="search-input"' in r.text
 
 
