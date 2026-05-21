@@ -9,6 +9,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from odds_scraper.models import MARKET_MANIFEST, MarketSpec
+
 from . import queries
 
 # Markets visible in the collapsed event-list card, in display order.
@@ -22,8 +24,26 @@ _COLLAPSED_ORDER: tuple[tuple[str, str, str], ...] = tuple(
     (m, *_MARKET_LABELS[m]) for m in queries.COLLAPSED_MARKETS
 )
 
+# Manifest lookup — must be defined before _build_market_picker and _sides_for
+# so adding markets with new sides only requires updating _SIDE_LABEL / _SIDE_SHORT.
+_spec_by_id: dict[str, MarketSpec] = {s.canonical_id: s for s in MARKET_MANIFEST}
+
+
+def _sides_for(market_id: str) -> tuple[str, ...]:
+    return _spec_by_id[market_id].sides
+
+
 # OU lines available on the detail page market picker
 _OU_LINES = (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5)
+
+# Display order for parameterized markets in the detail-page pill bar AND
+# the home-page card expander. Sub-project 3's single source of truth.
+_EXPANDER_MARKETS: tuple[tuple[str, str], ...] = (
+    ("next_goal_ft",       "Next Goal"),
+    ("over_under_ft",      "Match O/U"),
+    ("home_over_under_ft", "Home O/U"),
+    ("away_over_under_ft", "Away O/U"),
+)
 
 # Market picker: ordered list of (market_id, line_or_None, label, slug)
 # Slug is the URL-safe key passed via ?market=...
@@ -32,8 +52,12 @@ def _build_market_picker() -> list[tuple[str, Optional[float], str, str]]:
     for mid in queries.COLLAPSED_MARKETS:
         label = _MARKET_LABELS[mid][0]
         picker.append((mid, None, label, mid))
-    for line in _OU_LINES:
-        picker.append(("over_under_ft", line, f"OU {line}", f"ou_{line}"))
+    for market_id, label_prefix in _EXPANDER_MARKETS:
+        spec = _spec_by_id[market_id]
+        prefix = spec.column_prefix
+        for line in spec.lines or ():
+            slug = f"{prefix}_{line}"
+            picker.append((market_id, line, f"{label_prefix} {line}", slug))
     return picker
 
 
@@ -48,16 +72,14 @@ _POLL_SECONDS = {"live": 5, "upcoming": 30, "ended": 60}
 _SIDE_LABEL = {
     "home": "Home", "draw": "Draw", "away": "Away",
     "over": "Over", "under": "Under",
+    "none": "None",
 }
 
 _SIDE_SHORT = {
-    "home": "H", "draw": "D", "away": "A", "over": "O", "under": "U",
+    "home": "H", "draw": "D", "away": "A",
+    "over": "O", "under": "U",
+    "none": "N",
 }
-
-# Outcome ordering per market shape
-_SIDES_1X2 = ("home", "draw", "away")
-_SIDES_OU = ("over", "under")
-
 
 @dataclass
 class PriceCell:
@@ -118,6 +140,7 @@ class EventDetail:
     market_label: str
     market_slug: str
     sides: tuple[str, ...]
+    sides_short: tuple[str, ...]
     # Pills: list of (slug, label, is_active)
     pills: list[tuple[str, str, bool]]
     # History rows newest first
@@ -202,7 +225,7 @@ def _build_event_view(conn, row) -> EventView:
     groups: list[MarketGroup] = []
     for market_id, group_label, market_short in _COLLAPSED_ORDER:
         rows_for_group = []
-        for side in _SIDES_1X2:
+        for side in _sides_for(market_id):
             prices = bucket.get((market_id, 0.0, side), {})
             rows_for_group.append(OutcomeRow(
                 market_label=market_short,
@@ -218,7 +241,7 @@ def _build_event_view(conn, row) -> EventView:
     # that actually have at least one priced outcome.
     for line in _OU_LINES:
         rows_for_group = []
-        for side in _SIDES_OU:
+        for side in _sides_for("over_under_ft"):
             prices = bucket.get(("over_under_ft", line, side), {})
             rows_for_group.append(OutcomeRow(
                 market_label=f"OU {line}",
@@ -245,7 +268,8 @@ def _build_event_view(conn, row) -> EventView:
 def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
     """Build the detail-page view-model for one event + one selected market."""
     market_id, line, market_label = _PICKER_BY_SLUG[market_slug]
-    sides = _SIDES_OU if market_id == "over_under_ft" else _SIDES_1X2
+    sides = _sides_for(market_id)
+    sides_short = tuple(_SIDE_SHORT[s] for s in sides)
 
     history_rows = queries.get_market_history_for_event(
         conn, ev_row["id"], market_id, line,
@@ -282,6 +306,7 @@ def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
         market_label=market_label,
         market_slug=market_slug,
         sides=sides,
+        sides_short=sides_short,
         pills=pills,
         history=history,
     )

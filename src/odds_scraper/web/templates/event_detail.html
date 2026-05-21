@@ -57,9 +57,7 @@
             <th class="ts-col"></th>
             {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
               {% for side in event.sides %}
-                <th data-bookmaker="{{ bm }}" class="side-h">
-                  {{ {"home":"H","draw":"D","away":"A","over":"O","under":"U"}[side] }}
-                </th>
+                <th data-bookmaker="{{ bm }}" class="side-h">{{ event.sides_short[loop.index0] }}</th>
               {% endfor %}
             {% endfor %}
           </tr>

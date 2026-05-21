@@ -141,7 +141,7 @@ def test_event_detail_unknown_market_returns_400(client: TestClient):
 def test_event_detail_pills_include_ou_lines(client: TestClient):
     r = client.get("/events/E1")
     for line in (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5):
-        assert f"OU {line}" in r.text
+        assert f"Match O/U {line}" in r.text
 
 
 def test_index_filter_row_includes_search_and_kickoff(client: TestClient):
@@ -214,3 +214,30 @@ def test_events_card_has_expand_toggle_when_ou_present(db_with_ou_path: Path):
     assert "expand-toggle" in r.text
     assert "market-extra" in r.text
     assert "Over/Under 2.5" in r.text
+
+
+def test_event_detail_renders_next_goal_market_with_none_side(db_path: Path):
+    """next_goal_ft has a 'none' side. Detail page must render its short label
+    without KeyError. Seeds one priced next_goal_ft row at line=1.0."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    cur = conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
+        "VALUES ('2026-05-21T10:02:00Z', 'E1', 'betpawa', 'UPCOMING', 'ok')",
+    )
+    snap_id = cur.lastrowid
+    for side, odds, prob in [
+        ("home", 1.85, 0.54), ("none", 8.50, 0.12), ("away", 3.50, 0.29),
+    ]:
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, 'E1', '2026-05-21T10:02:00Z', 'betpawa', 'next_goal_ft', 1.0, ?, ?, ?)",
+            (snap_id, side, odds, prob),
+        )
+    conn.close()
+    app = create_app(db_path=db_path)
+    client = TestClient(app)
+    r = client.get("/events/E1?market=ng_1.0")
+    assert r.status_code == 200
+    # The "N" short label for the "none" outcome must appear in the table head.
+    assert ">N<" in r.text
