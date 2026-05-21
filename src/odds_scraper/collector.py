@@ -8,13 +8,11 @@ from typing import Any, Awaitable, Callable, Optional
 from bookieskit import extract_kickoff, extract_participants
 
 from .models import (
-    MARKET_MANIFEST, Bookmaker, FetchStatus, PriceKey, Snapshot,
+    MARKET_MANIFEST, PROB_BOOKMAKERS, Bookmaker, FetchStatus, PriceKey, Snapshot,
 )
 from .status import parse_clock, parse_score, parse_status
 
 log = logging.getLogger(__name__)
-
-_PROB_BOOKMAKERS = {Bookmaker.BETPAWA, Bookmaker.SPORTYBET}
 
 Fetcher = Callable[..., Awaitable[list]]
 
@@ -79,7 +77,7 @@ class OddsCollector:
         rows: list[Snapshot] = []
         for b in Bookmaker:
             status_fetch, error, markets = results[b]
-            want_prob = b in _PROB_BOOKMAKERS
+            want_prob = b in PROB_BOOKMAKERS
             prices = (
                 _extract_prices_for_manifest(markets, want_prob)
                 if status_fetch == FetchStatus.OK

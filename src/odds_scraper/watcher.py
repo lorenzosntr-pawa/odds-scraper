@@ -8,11 +8,10 @@ from typing import Any, Awaitable, Callable
 
 from .collector import OddsCollector
 from .models import (
-    MARKET_MANIFEST, Bookmaker, EventStatus, FetchStatus, Snapshot,
+    MARKET_MANIFEST, PROB_BOOKMAKERS, Bookmaker, EventStatus, FetchStatus,
+    Snapshot,
 )
 from .status import parse_status
-
-_PROB_BOOKMAKERS = {Bookmaker.BETPAWA, Bookmaker.SPORTYBET}
 
 
 def _price_cell_count(want_prob: bool) -> int:
@@ -123,7 +122,7 @@ class EventWatcher:
         return None
 
     def _log_tick_summary(self, rows: list[Snapshot]) -> None:
-        denom = {b: _price_cell_count(b in _PROB_BOOKMAKERS) for b in Bookmaker}
+        denom = {b: _price_cell_count(b in PROB_BOOKMAKERS) for b in Bookmaker}
         counts: dict[Bookmaker, int] = {b: 0 for b in Bookmaker}
         for r in rows:
             for odds, prob in r.prices.values():

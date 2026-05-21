@@ -28,6 +28,14 @@ class Bookmaker(str, Enum):
     BETWAY = "betway"
 
 
+# Bookmakers that expose a fair (pre-margin) probability per outcome.
+# Used by the collector to decide whether to populate the prob field,
+# and by the watcher to size the tick-log denominator.
+PROB_BOOKMAKERS: frozenset[Bookmaker] = frozenset(
+    {Bookmaker.BETPAWA, Bookmaker.SPORTYBET},
+)
+
+
 @dataclass(frozen=True)
 class MarketSpec:
     canonical_id: str
