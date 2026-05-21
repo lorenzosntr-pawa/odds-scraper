@@ -26,6 +26,9 @@ class OutputConfig:
 class AppConfig:
     country: str
     events: Sequence[str]
+    tournaments: Sequence[str]
+    refresh_interval_seconds: int
+    refresh_interval_when_idle_seconds: int
     cadence: CadenceConfig
     output: OutputConfig
     log_level: str
@@ -38,6 +41,11 @@ def load_config(path: Path | str) -> AppConfig:
     return AppConfig(
         country=str(raw["country"]),
         events=[str(e) for e in raw["events"]],
+        tournaments=[str(t) for t in (raw.get("tournaments") or [])],
+        refresh_interval_seconds=int(raw.get("refresh_interval_seconds", 86400)),
+        refresh_interval_when_idle_seconds=int(
+            raw.get("refresh_interval_when_idle_seconds", 600),
+        ),
         cadence=CadenceConfig(
             prematch_seconds=int(cad["prematch_seconds"]),
             live_seconds=int(cad["live_seconds"]),

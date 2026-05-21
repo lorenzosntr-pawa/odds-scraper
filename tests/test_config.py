@@ -50,3 +50,99 @@ def test_env_var_overrides(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("ODDS_SCRAPER_LOG_LEVEL", "DEBUG")
     cfg = load_config(p)
     assert cfg.log_level == "DEBUG"
+
+
+def test_load_with_tournaments(tmp_path: Path):
+    p = _write(tmp_path / "c.yaml", """
+        country: ng
+        events: [11111]
+        tournaments: [11965, 11963]
+        cadence:
+          prematch_seconds: 600
+          live_seconds: 90
+          status_retry_backoff_seconds: [5, 15, 45]
+          watchdog_after_kickoff_seconds: 10800
+        output:
+          csv_path: data/x.csv
+          resolution_cache_path: data/r.json
+        log_level: INFO
+    """)
+    cfg = load_config(p)
+    assert cfg.tournaments == ["11965", "11963"]
+
+
+def test_load_without_tournaments_defaults_to_empty(tmp_path: Path):
+    p = _write(tmp_path / "c.yaml", """
+        country: ng
+        events: [11111]
+        cadence:
+          prematch_seconds: 600
+          live_seconds: 90
+          status_retry_backoff_seconds: [5, 15, 45]
+          watchdog_after_kickoff_seconds: 10800
+        output:
+          csv_path: data/x.csv
+          resolution_cache_path: data/r.json
+        log_level: INFO
+    """)
+    cfg = load_config(p)
+    assert cfg.tournaments == []
+
+
+def test_refresh_interval_seconds_default_is_86400(tmp_path: Path):
+    p = _write(tmp_path / "c.yaml", """
+        country: ng
+        events: [1]
+        cadence:
+          prematch_seconds: 600
+          live_seconds: 90
+          status_retry_backoff_seconds: [5, 15, 45]
+          watchdog_after_kickoff_seconds: 10800
+        output:
+          csv_path: a.csv
+          resolution_cache_path: b.json
+        log_level: INFO
+    """)
+    cfg = load_config(p)
+    assert cfg.refresh_interval_seconds == 86400
+
+
+def test_refresh_interval_when_idle_seconds_default_is_600(tmp_path: Path):
+    p = _write(tmp_path / "c.yaml", """
+        country: ng
+        events: [1]
+        cadence:
+          prematch_seconds: 600
+          live_seconds: 90
+          status_retry_backoff_seconds: [5, 15, 45]
+          watchdog_after_kickoff_seconds: 10800
+        output:
+          csv_path: a.csv
+          resolution_cache_path: b.json
+        log_level: INFO
+    """)
+    cfg = load_config(p)
+    assert cfg.refresh_interval_when_idle_seconds == 600
+
+
+def test_load_with_all_new_fields_explicit(tmp_path: Path):
+    p = _write(tmp_path / "c.yaml", """
+        country: ng
+        events: [11111]
+        tournaments: [42]
+        refresh_interval_seconds: 3600
+        refresh_interval_when_idle_seconds: 120
+        cadence:
+          prematch_seconds: 600
+          live_seconds: 90
+          status_retry_backoff_seconds: [5, 15, 45]
+          watchdog_after_kickoff_seconds: 10800
+        output:
+          csv_path: a.csv
+          resolution_cache_path: b.json
+        log_level: INFO
+    """)
+    cfg = load_config(p)
+    assert cfg.tournaments == ["42"]
+    assert cfg.refresh_interval_seconds == 3600
+    assert cfg.refresh_interval_when_idle_seconds == 120
