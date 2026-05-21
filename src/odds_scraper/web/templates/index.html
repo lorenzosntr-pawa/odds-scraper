@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="p-3 max-w-screen-2xl mx-auto">
+  <div class="flex justify-between border-b border-gray-900 pb-3 mb-3">
+    <div class="text-white font-semibold tracking-wider">ODDS · LIVE COMPARISON</div>
+    <div class="flex gap-1" id="tabs">
+      <button class="tab" data-status="live">LIVE</button>
+      <button class="tab active" data-status="upcoming">UPCOMING</button>
+      <button class="tab" data-status="ended">ENDED</button>
+    </div>
+  </div>
+
+  <div class="filter-row">
+    <div class="filter-group">
+      <span class="filter-lbl">Bookmakers</span>
+      <button class="chip on" data-bookmaker="betpawa">BP</button>
+      <button class="chip on" data-bookmaker="sportybet">SB</button>
+      <button class="chip on" data-bookmaker="bet9ja">B9J</button>
+      <button class="chip on" data-bookmaker="betway">BW</button>
+    </div>
+
+    <div class="filter-group">
+      <span class="filter-lbl">Kickoff</span>
+      <button class="chip kick on" data-window="all">All</button>
+      <button class="chip kick"    data-window="3600">1h</button>
+      <button class="chip kick"    data-window="10800">3h</button>
+      <button class="chip kick"    data-window="21600">6h</button>
+      <button class="chip kick"    data-window="86400">24h</button>
+      <button class="chip kick"    data-window="172800">48h</button>
+      <input type="number" id="kickoff-custom-hours"
+             class="custom-hours" placeholder="custom h"
+             min="0" step="0.5"
+             title="Custom window in hours — overrides the pills">
+    </div>
+
+    <div class="filter-group filter-search">
+      <span class="filter-lbl">Search</span>
+      <input type="search"
+             id="search-input"
+             class="search-input"
+             placeholder="team name..."
+             autocomplete="off">
+    </div>
+  </div>
+
+  <div id="events-list"
+       hx-get="/events?status=upcoming"
+       hx-trigger="load"
+       hx-swap="outerHTML">
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js"></script>
+{% endblock %}

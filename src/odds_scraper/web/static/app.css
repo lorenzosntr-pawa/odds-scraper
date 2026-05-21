@@ -1,0 +1,290 @@
+/* Top bar tabs */
+.tab {
+  padding: 4px 12px;
+  font-size: 11px;
+  color: #888;
+  background: #0f0f0f;
+  border: 1px solid #1a1a1a;
+  border-radius: 3px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.tab.active {
+  background: #1a2a1a;
+  color: #4ade80;
+  border-color: #2a4a2a;
+}
+
+/* Bookmaker chips */
+.chip {
+  padding: 2px 10px;
+  border-radius: 3px;
+  background: #1a1a1a;
+  color: #d1d5db;
+  font-size: 10px;
+  cursor: pointer;
+}
+.chip.on {
+  background: #4ade80;
+  color: #000;
+  font-weight: 600;
+}
+
+/* Event card */
+.card {
+  background: #0a0a0a;
+  border: 1px solid #1a1a1a;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  font-size: 11px;
+}
+.ev {
+  padding: 8px 12px;
+  background: #141414;
+  border-bottom: 1px solid #1f1f1f;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ev:hover { background: #181818; }
+.ev.open {
+  background: #1a1f2e;
+  border-bottom-color: #2a3a55;
+}
+.ev-name { color: #fff; font-weight: 600; }
+.ev-meta { color: #888; font-size: 10px; margin-top: 2px; }
+.caret { color: #60a5fa; font-size: 9px; }
+
+.status-live     { color: #fbbf24; font-weight: 600; }
+.status-upcoming { color: #60a5fa; }
+.status-ended    { color: #888; }
+
+/* Tables */
+.lbl {
+  color: #888;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.prob-mark { color: #4ade80; font-size: 9px; }
+.col-header {
+  background: #0f0f0f;
+  padding: 6px 12px;
+  display: grid;
+  grid-template-columns: 110px repeat(4, 1fr);
+  gap: 4px;
+}
+.group-label {
+  padding: 5px 12px;
+  background: #1a1f2e;
+  color: #93c5fd;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-top: 1px solid #2a3a55;
+  border-bottom: 1px solid #1a1a1a;
+  cursor: pointer;
+}
+.group-label:first-of-type { border-top: 0; }
+.row {
+  display: grid;
+  grid-template-columns: 110px repeat(4, 1fr);
+  gap: 4px;
+  padding: 5px 12px;
+  align-items: center;
+  border-bottom: 1px solid #111;
+}
+.row:last-child { border-bottom: 0; }
+.outcome { color: #d1d5db; }
+.odds    { color: #4ade80; font-weight: 600; }
+.prob    { color: #94a3b8; font-size: 9px; margin-left: 4px; }
+
+/* Event card header is now an anchor; reset link styles */
+a.ev { text-decoration: none; color: inherit; }
+a.ev:hover { background: #181818; }
+
+/* Filter row: bookmaker chips + kickoff window + search */
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  padding: 6px 8px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #1a1a1a;
+}
+.filter-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.filter-group.filter-search {
+  flex: 1;
+  min-width: 200px;
+  max-width: 320px;
+}
+.filter-lbl {
+  color: #888;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.search-input,
+.custom-hours {
+  background: #0f0f0f;
+  border: 1px solid #1a1a1a;
+  border-radius: 3px;
+  color: #d1d5db;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  outline: none;
+}
+.search-input { flex: 1; }
+.custom-hours {
+  width: 80px;
+  text-align: right;
+  margin-left: 4px;
+}
+.search-input:focus,
+.custom-hours:focus { border-color: #2a4a2a; }
+
+/* Per-card OU expand toggle + hidden extras */
+.market-extra { display: none; }
+.card.expanded .market-extra { display: block; }
+.expand-toggle {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  background: #0f0f0f;
+  color: #888;
+  border: 0;
+  border-top: 1px solid #1a1a1a;
+  font-family: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.expand-toggle:hover { background: #181818; color: #d1d5db; }
+.card.expanded .expand-toggle { color: #4ade80; }
+
+/* Card filtered-out states */
+.card.hidden-by-search { display: none; }
+.card.hidden-by-time   { display: none; }
+
+/* Bookmaker chip toggle — body class hides matching columns INSIDE the
+   events list AND the detail history table. Scoped via id/class to keep
+   the chips themselves clickable. */
+body.hide-betpawa   #events-list [data-bookmaker="betpawa"],
+body.hide-betpawa   .history-table [data-bookmaker="betpawa"]   { display: none; }
+body.hide-sportybet #events-list [data-bookmaker="sportybet"],
+body.hide-sportybet .history-table [data-bookmaker="sportybet"] { display: none; }
+body.hide-bet9ja    #events-list [data-bookmaker="bet9ja"],
+body.hide-bet9ja    .history-table [data-bookmaker="bet9ja"]    { display: none; }
+body.hide-betway    #events-list [data-bookmaker="betway"],
+body.hide-betway    .history-table [data-bookmaker="betway"]    { display: none; }
+
+/* When a chip is in the off state, dim it so it reads as "filtered out" */
+.chip:not(.on) {
+  opacity: 0.4;
+}
+
+/* Detail page — event meta line */
+.event-meta {
+  color: #888;
+  font-size: 11px;
+}
+
+/* Detail page — market picker pills */
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 6px 12px;
+  border-bottom: 1px solid #1a1a1a;
+  margin-bottom: 12px;
+}
+.pill {
+  padding: 3px 10px;
+  font-size: 10px;
+  color: #888;
+  background: #0f0f0f;
+  border: 1px solid #1a1a1a;
+  border-radius: 3px;
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.pill:hover { background: #181818; color: #d1d5db; }
+.pill.active {
+  background: #1a2a1a;
+  color: #4ade80;
+  border-color: #2a4a2a;
+  font-weight: 600;
+}
+
+/* Detail page — history table */
+.history-wrap {
+  background: #0a0a0a;
+  border: 1px solid #1a1a1a;
+  border-radius: 4px;
+  overflow: hidden;
+  font-size: 11px;
+}
+.history-title {
+  padding: 8px 12px;
+  background: #141414;
+  border-bottom: 1px solid #1f1f1f;
+  color: #fff;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.history-table th, .history-table td {
+  padding: 5px 8px;
+  text-align: right;
+  border-bottom: 1px solid #111;
+  white-space: nowrap;
+}
+.history-table th {
+  background: #0f0f0f;
+  color: #888;
+  font-weight: 600;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.history-table th.ts-col, .history-table td.ts-col {
+  text-align: left;
+  color: #d1d5db;
+  font-family: ui-monospace, monospace;
+}
+.history-table thead tr:first-child th {
+  border-bottom: 1px solid #1a1a1a;
+}
+.history-table thead .sub-head th {
+  background: #0a0a0a;
+  font-size: 9px;
+  padding: 3px 8px;
+}
+.history-table .side-h { color: #4ade80; }
+.history-table td.num { font-family: ui-monospace, monospace; }
+.history-table tbody tr:nth-child(odd)  { background: #0a0a0a; }
+.history-table tbody tr:nth-child(even) { background: #0d0d0d; }
+.history-table tbody tr:hover           { background: #1a1a1a; }
+.history-table td:not(:first-child) { border-left: 1px solid #111; }
+
+.empty {
+  padding: 24px;
+  text-align: center;
+  color: #666;
+}

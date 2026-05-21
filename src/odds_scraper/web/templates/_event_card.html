@@ -1,0 +1,64 @@
+<div class="card"
+     data-event-id="{{ event.id }}"
+     data-event-name="{{ (event.home + ' ' + event.away)|lower }}"
+     data-kickoff-utc="{{ event.kickoff_utc }}">
+  <a class="ev" href="/events/{{ event.id }}">
+    <div>
+      <div class="ev-name">{{ event.home }} — {{ event.away }}
+        <span class="caret">→</span>
+      </div>
+      <div class="ev-meta">
+        {% if event.status == 'STARTED' %}
+          <span class="status-live">LIVE {{ event.match_minute or '' }}'</span>
+          {% if event.score_home is not none %} · {{ event.score_home }} – {{ event.score_away }}{% endif %}
+        {% elif event.status == 'UPCOMING' %}
+          <span class="status-upcoming">UPCOMING</span> · kickoff {{ event.kickoff_utc }}
+        {% elif event.status == 'ENDED' %}
+          <span class="status-ended">ENDED</span>
+          {% if event.score_home is not none %} · {{ event.score_home }} – {{ event.score_away }}{% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </a>
+
+  <div class="col-header">
+    <span class="lbl">MARKET · OUTCOME</span>
+    <span class="lbl" data-bookmaker="betpawa">BP <span class="prob-mark">+p</span></span>
+    <span class="lbl" data-bookmaker="sportybet">SB <span class="prob-mark">+p</span></span>
+    <span class="lbl" data-bookmaker="bet9ja">B9J</span>
+    <span class="lbl" data-bookmaker="betway">BW</span>
+  </div>
+
+  {% set ns = namespace(extra_count=0) %}
+  {% for group in event.market_groups %}
+    {% if group.is_extra %}{% set ns.extra_count = ns.extra_count + 1 %}{% endif %}
+    <div class="market-block{% if group.is_extra %} market-extra{% endif %}">
+      <div class="group-label">▾ {{ group.label }}</div>
+      {% for row in group.rows %}
+        <div class="row">
+          <span class="outcome">{{ row.market_label }} · {{ row.side_short }}</span>
+          {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
+            {% set p = row.prices.get(bm) %}
+            <span data-bookmaker="{{ bm }}">
+              {% if p %}
+                <span class="odds">{{ "%.2f"|format(p.odds) }}</span>
+                {% if bm in ("betpawa", "sportybet") and p.probability is not none %}
+                  {# Cap at 99 so 0.995 doesn't render as ".100" #}
+                  <span class="prob">.{{ "%02d"|format([(p.probability * 100)|round|int, 99]|min) }}</span>
+                {% endif %}
+              {% else %}<span class="text-gray-700">—</span>{% endif %}
+            </span>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+  {% endfor %}
+
+  {% if ns.extra_count > 0 %}
+    <button class="expand-toggle" type="button"
+            data-collapsed-label="▼ Show {{ ns.extra_count }} Over/Under {% if ns.extra_count == 1 %}line{% else %}lines{% endif %}"
+            data-expanded-label="▲ Hide Over/Under">
+      ▼ Show {{ ns.extra_count }} Over/Under {% if ns.extra_count == 1 %}line{% else %}lines{% endif %}
+    </button>
+  {% endif %}
+</div>
