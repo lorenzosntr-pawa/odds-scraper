@@ -97,7 +97,7 @@ def get_latest_prices_for_event(
     market_params: tuple[str, ...] = ()
     if scope == "collapsed":
         placeholders = ",".join("?" * len(COLLAPSED_MARKETS))
-        market_filter = f"AND market_id IN ({placeholders})"
+        market_filter = f"AND p.market_id IN ({placeholders})"
         market_params = COLLAPSED_MARKETS
     sql = f"""
         WITH latest_per_outcome AS (
