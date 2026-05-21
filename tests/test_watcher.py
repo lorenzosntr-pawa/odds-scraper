@@ -200,11 +200,16 @@ def test_log_tick_summary_format(cfg, caplog):
         watcher._log_tick_summary(rows)
     msgs = [r.getMessage() for r in caplog.records]
     # Denominators come from MARKET_MANIFEST via _price_cell_count:
-    #   27 outcomes (3 simple × 3 sides + 9 O/U lines × 2 sides);
+    #   78 outcomes:
+    #     3 simple × 3 sides            = 9
+    #     9 over_under_ft × 2 sides     = 18
+    #     9 next_goal_ft × 3 sides      = 27
+    #     6 home_over_under_ft × 2      = 12
+    #     6 away_over_under_ft × 2      = 12
     #   ×2 cells for BP/SB (odds+prob), ×1 for B9J/BW (odds only).
     # If MARKET_MANIFEST changes, update both this test and the watcher's
     # _price_cell_count consumers together.
-    expected = "tick 33660318 status=STARTED bp=4/54 sb=2/54 b9j=1/27 bw=3/27"
+    expected = "tick 33660318 status=STARTED bp=4/156 sb=2/156 b9j=1/78 bw=3/78"
     assert any(expected in m for m in msgs), f"didn't find expected log: {msgs}"
 
 

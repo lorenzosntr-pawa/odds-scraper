@@ -340,3 +340,93 @@ async def test_collector_handles_missing_region_competition(collector):
         assert r.country_name == ""
         assert r.league_id == ""
         assert r.league_name == ""
+
+
+async def test_collector_extracts_next_goal_prices():
+    next_goal_markets = [
+        _PM("next_goal_ft", {
+            1.0: {"home": (1.85, 0.54), "none": (8.5, 0.12), "away": (3.50, 0.29)},
+            2.0: {"home": (2.20, 0.45), "none": (3.0, 0.33), "away": (3.90, 0.26)},
+        }),
+    ]
+    coll = OddsCollector(
+        fetchers={
+            Bookmaker.BETPAWA: AsyncMock(return_value=next_goal_markets),
+            Bookmaker.SPORTYBET: AsyncMock(return_value=next_goal_markets),
+            Bookmaker.BET9JA: AsyncMock(return_value=next_goal_markets),
+            Bookmaker.BETWAY: AsyncMock(return_value=next_goal_markets),
+        },
+    )
+    rows = await coll.collect(
+        _bp_detail(),
+        resolved={Bookmaker.SPORTYBET: "sr:match:1",
+                  Bookmaker.BET9JA: "b9j-7",
+                  Bookmaker.BETWAY: "sr:match:1"},
+        sr_id="sr:match:1", genius_id="",
+    )
+    bp = next(r for r in rows if r.bookmaker == Bookmaker.BETPAWA)
+    assert bp.prices[PriceKey("next_goal_ft", 1.0, "home")] == (1.85, 0.54)
+    assert bp.prices[PriceKey("next_goal_ft", 1.0, "none")] == (8.5, 0.12)
+    assert bp.prices[PriceKey("next_goal_ft", 2.0, "away")] == (3.90, 0.26)
+
+
+async def test_collector_extracts_per_team_over_under_prices():
+    team_ou_markets = [
+        _PM("home_over_under_ft", {
+            0.5: {"over": (1.30, 0.74), "under": (3.50, 0.26)},
+            1.5: {"over": (2.10, 0.46), "under": (1.70, 0.54)},
+        }),
+        _PM("away_over_under_ft", {
+            0.5: {"over": (1.40, 0.69), "under": (3.00, 0.31)},
+            1.5: {"over": (2.50, 0.40), "under": (1.55, 0.60)},
+        }),
+    ]
+    coll = OddsCollector(
+        fetchers={
+            Bookmaker.BETPAWA: AsyncMock(return_value=team_ou_markets),
+            Bookmaker.SPORTYBET: AsyncMock(return_value=team_ou_markets),
+            Bookmaker.BET9JA: AsyncMock(return_value=team_ou_markets),
+            Bookmaker.BETWAY: AsyncMock(return_value=team_ou_markets),
+        },
+    )
+    rows = await coll.collect(
+        _bp_detail(),
+        resolved={Bookmaker.SPORTYBET: "sr:match:1",
+                  Bookmaker.BET9JA: "b9j-7",
+                  Bookmaker.BETWAY: "sr:match:1"},
+        sr_id="sr:match:1", genius_id="",
+    )
+    bp = next(r for r in rows if r.bookmaker == Bookmaker.BETPAWA)
+    assert bp.prices[PriceKey("home_over_under_ft", 0.5, "over")] == (1.30, 0.74)
+    assert bp.prices[PriceKey("home_over_under_ft", 1.5, "under")] == (1.70, 0.54)
+    assert bp.prices[PriceKey("away_over_under_ft", 0.5, "over")] == (1.40, 0.69)
+    assert bp.prices[PriceKey("away_over_under_ft", 1.5, "under")] == (1.55, 0.60)
+
+
+async def test_collector_ignores_next_goal_lines_above_manifest_cap():
+    # next_goal_ft manifest covers (1..9). Lines beyond that should be
+    # silently dropped, same behaviour as over_under_ft.
+    out_of_range_markets = [
+        _PM("next_goal_ft", {
+            5.0: {"home": (1.85, 0.54), "none": (8.5, 0.12), "away": (3.50, 0.29)},
+            10.0: {"home": (50.0, 0.02), "none": (100.0, 0.01), "away": (50.0, 0.02)},
+        }),
+    ]
+    coll = OddsCollector(
+        fetchers={
+            Bookmaker.BETPAWA: AsyncMock(return_value=out_of_range_markets),
+            Bookmaker.SPORTYBET: AsyncMock(return_value=out_of_range_markets),
+            Bookmaker.BET9JA: AsyncMock(return_value=out_of_range_markets),
+            Bookmaker.BETWAY: AsyncMock(return_value=out_of_range_markets),
+        },
+    )
+    rows = await coll.collect(
+        _bp_detail(),
+        resolved={Bookmaker.SPORTYBET: "sr:match:1",
+                  Bookmaker.BET9JA: "b9j-7",
+                  Bookmaker.BETWAY: "sr:match:1"},
+        sr_id="sr:match:1", genius_id="",
+    )
+    bp = next(r for r in rows if r.bookmaker == Bookmaker.BETPAWA)
+    lines_seen = {k.line for k in bp.prices if k.market_id == "next_goal_ft"}
+    assert lines_seen == {5.0}  # 10.0 dropped

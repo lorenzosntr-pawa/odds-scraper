@@ -53,6 +53,19 @@ MARKET_MANIFEST: tuple[MarketSpec, ...] = (
         "over_under_ft", "ou", ("over", "under"),
         (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5),
     ),
+    # Bookieskit uses "none" (not "draw") for the no-more-goals outcome.
+    MarketSpec(
+        "next_goal_ft", "ng", ("home", "none", "away"),
+        (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0),
+    ),
+    MarketSpec(
+        "home_over_under_ft", "ou_home", ("over", "under"),
+        (0.5, 1.5, 2.5, 3.5, 4.5, 5.5),
+    ),
+    MarketSpec(
+        "away_over_under_ft", "ou_away", ("over", "under"),
+        (0.5, 1.5, 2.5, 3.5, 4.5, 5.5),
+    ),
 )
 
 
