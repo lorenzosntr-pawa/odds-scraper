@@ -11,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import queries
 
-# Markets visible by default in collapsed view, in display order.
+# Markets visible in the collapsed event-list card, in display order.
 # Derived from queries.COLLAPSED_MARKETS for a single source of truth.
 _MARKET_LABELS = {
     "1x2_ft":     ("1x2 — Full Time", "1x2 ft"),
@@ -22,8 +22,26 @@ _COLLAPSED_ORDER: tuple[tuple[str, str, str], ...] = tuple(
     (m, *_MARKET_LABELS[m]) for m in queries.COLLAPSED_MARKETS
 )
 
-# Order in which OU lines render once an event is opened
+# OU lines available on the detail page market picker
 _OU_LINES = (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5)
+
+# Market picker: ordered list of (market_id, line_or_None, label, slug)
+# Slug is the URL-safe key passed via ?market=...
+def _build_market_picker() -> list[tuple[str, Optional[float], str, str]]:
+    picker: list[tuple[str, Optional[float], str, str]] = []
+    for mid in queries.COLLAPSED_MARKETS:
+        label = _MARKET_LABELS[mid][0]
+        picker.append((mid, None, label, mid))
+    for line in _OU_LINES:
+        picker.append(("over_under_ft", line, f"OU {line}", f"ou_{line}"))
+    return picker
+
+
+_MARKET_PICKER = _build_market_picker()
+_PICKER_BY_SLUG = {slug: (mid, line, label) for mid, line, label, slug in _MARKET_PICKER}
+
+# Default market for the detail page when none specified — focus is 2up
+_DEFAULT_MARKET_SLUG = "1x2_2up_ft"
 
 _POLL_SECONDS = {"live": 5, "upcoming": 30, "ended": 60}
 
@@ -36,52 +54,21 @@ _SIDE_SHORT = {
     "home": "H", "draw": "D", "away": "A", "over": "O", "under": "U",
 }
 
+# Outcome ordering per market shape
+_SIDES_1X2 = ("home", "draw", "away")
+_SIDES_OU = ("over", "under")
+
 
 @dataclass
 class PriceCell:
     odds: float
     probability: Optional[float]
-    # Inline SVG `points` attribute for an odds-history sparkline. Empty
-    # string when there's nothing meaningful to draw (collapsed view, or
-    # opened-but-single-tick history). The template emits the polyline
-    # only when this is non-empty.
-    odds_sparkline: str = ""
-    prob_sparkline: str = ""
-
-
-# Sparkline drawing area (matches the SVG viewBox below)
-_SPARK_W = 60
-_SPARK_H = 14
-
-
-def _sparkline_points(values: list[float]) -> str:
-    """Return an SVG polyline `points` string for the value series.
-
-    Returns "" if fewer than two values (one point can't be a line) or
-    if the series is constant (flat lines drawn as a midline).
-    """
-    if len(values) < 2:
-        return ""
-    lo, hi = min(values), max(values)
-    if hi == lo:
-        # Constant series — flat midline so the chart isn't a single dot
-        y = _SPARK_H / 2
-        return f"0,{y:.1f} {_SPARK_W},{y:.1f}"
-    span = hi - lo
-    n = len(values)
-    pts: list[str] = []
-    for i, v in enumerate(values):
-        x = (i / (n - 1)) * _SPARK_W
-        # Invert Y so higher values draw at the top
-        y = _SPARK_H - ((v - lo) / span) * _SPARK_H
-        pts.append(f"{x:.1f},{y:.1f}")
-    return " ".join(pts)
 
 
 @dataclass
 class OutcomeRow:
-    market_label: str       # e.g., "1x2 ft" (used in collapsed view)
-    side_label: str         # e.g., "Home" (used in opened view)
+    market_label: str       # e.g., "1x2 ft" (used in card view)
+    side_label: str         # e.g., "Home"
     side_short: str         # e.g., "H"
     prices: dict[str, PriceCell]
 
@@ -103,6 +90,34 @@ class EventView:
     score_home: Optional[int]
     score_away: Optional[int]
     market_groups: list[MarketGroup]
+
+
+@dataclass
+class HistoryRow:
+    """One snapshot's prices for a single market, all bookmakers/sides."""
+    ts_utc: str
+    # cells: {bookmaker: {side: PriceCell}}
+    cells: dict[str, dict[str, PriceCell]]
+
+
+@dataclass
+class EventDetail:
+    id: str
+    home: str
+    away: str
+    kickoff_utc: str
+    status: str
+    match_minute: Optional[int]
+    score_home: Optional[int]
+    score_away: Optional[int]
+    # Currently selected market info
+    market_label: str
+    market_slug: str
+    sides: tuple[str, ...]
+    # Pills: list of (slug, label, is_active)
+    pills: list[tuple[str, str, bool]]
+    # History rows newest first
+    history: list[HistoryRow]
 
 
 def create_app(db_path: Path) -> FastAPI:
@@ -128,32 +143,50 @@ def create_app(db_path: Path) -> FastAPI:
     async def events_fragment(
         request: Request,
         status: str = Query("live"),
-        open_param: str = Query("", alias="open"),
     ):
         if status not in queries.VALID_STATUSES:
             raise HTTPException(status_code=400, detail=f"unknown status {status!r}")
-        open_ids = [s for s in open_param.split(",") if s]
         rows = queries.get_events_by_status(conn, status)  # type: ignore[arg-type]
-        events = [_build_event_view(conn, row, open_ids) for row in rows]
+        events = [_build_event_view(conn, row) for row in rows]
         return templates.TemplateResponse(
             request,
             "_events_list.html",
             {
                 "status": status,
                 "events": events,
-                "open_ids": open_ids,
                 "poll_seconds": _POLL_SECONDS[status],
             },
+        )
+
+    @app.get("/events/{event_id}", response_class=HTMLResponse)
+    async def event_detail(
+        request: Request,
+        event_id: str,
+        market: str = Query(_DEFAULT_MARKET_SLUG),
+    ):
+        if market not in _PICKER_BY_SLUG:
+            raise HTTPException(status_code=400,
+                                detail=f"unknown market {market!r}")
+        ev_row = queries.get_event_meta(conn, event_id)
+        if ev_row is None:
+            raise HTTPException(status_code=404,
+                                detail=f"event {event_id!r} not found")
+        detail = _build_event_detail(conn, ev_row, market)
+        return templates.TemplateResponse(
+            request, "event_detail.html", {"event": detail},
         )
 
     return app
 
 
-def _build_event_view(conn, row, open_ids: list[str]) -> EventView:
-    is_open = row["id"] in open_ids
-    scope = "opened" if is_open else "collapsed"
+def _build_event_view(conn, row) -> EventView:
+    """Always returns the collapsed (1x2 family) card view.
+
+    The detail page (per-event route) handles deep dives; the card list
+    only ever shows the quick-scan summary.
+    """
     price_rows = queries.get_latest_prices_for_event(
-        conn, row["id"], scope=scope,  # type: ignore[arg-type]
+        conn, row["id"], scope="collapsed",
     )
     bucket: dict[tuple[str, float, str], dict[str, PriceCell]] = {}
     for pr in price_rows:
@@ -162,31 +195,10 @@ def _build_event_view(conn, row, open_ids: list[str]) -> EventView:
             odds=pr["odds"], probability=pr["probability"],
         )
 
-    # When opened, layer odds-history sparklines onto each PriceCell.
-    if is_open:
-        # Group history rows by (market_id, line, side, bookmaker)
-        history: dict[tuple[str, float, str, str],
-                      tuple[list[float], list[float]]] = {}
-        for hr in queries.get_price_history_for_event(
-            conn, row["id"], scope=scope,  # type: ignore[arg-type]
-        ):
-            hkey = (hr["market_id"], hr["line"], hr["side"], hr["bookmaker"])
-            entry = history.setdefault(hkey, ([], []))
-            entry[0].append(hr["odds"])
-            if hr["probability"] is not None:
-                entry[1].append(hr["probability"])
-        for (mkt, line, side, bm), (odds_series, prob_series) in history.items():
-            cells = bucket.get((mkt, line, side))
-            if not cells or bm not in cells:
-                continue
-            cells[bm].odds_sparkline = _sparkline_points(odds_series)
-            if bm in ("betpawa", "sportybet") and prob_series:
-                cells[bm].prob_sparkline = _sparkline_points(prob_series)
-
     groups: list[MarketGroup] = []
     for market_id, group_label, market_short in _COLLAPSED_ORDER:
         rows_for_group = []
-        for side in ("home", "draw", "away"):
+        for side in _SIDES_1X2:
             prices = bucket.get((market_id, 0.0, side), {})
             rows_for_group.append(OutcomeRow(
                 market_label=market_short,
@@ -196,26 +208,55 @@ def _build_event_view(conn, row, open_ids: list[str]) -> EventView:
             ))
         groups.append(MarketGroup(label=group_label, rows=rows_for_group))
 
-    if is_open:
-        for line in _OU_LINES:
-            rows_for_group = []
-            for side in ("over", "under"):
-                prices = bucket.get(("over_under_ft", line, side), {})
-                rows_for_group.append(OutcomeRow(
-                    market_label=f"OU {line}",
-                    side_label=_SIDE_LABEL[side],
-                    side_short=_SIDE_SHORT[side],
-                    prices=prices,
-                ))
-            if any(r.prices for r in rows_for_group):
-                groups.append(MarketGroup(
-                    label=f"Over/Under {line}", rows=rows_for_group,
-                ))
-
     return EventView(
         id=row["id"], home=row["home"], away=row["away"],
         kickoff_utc=row["kickoff_utc"], status=row["status"],
         match_minute=row["match_minute"],
         score_home=row["score_home"], score_away=row["score_away"],
         market_groups=groups,
+    )
+
+
+def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
+    """Build the detail-page view-model for one event + one selected market."""
+    market_id, line, market_label = _PICKER_BY_SLUG[market_slug]
+    sides = _SIDES_OU if market_id == "over_under_ft" else _SIDES_1X2
+
+    history_rows = queries.get_market_history_for_event(
+        conn, ev_row["id"], market_id, line,
+    )
+    # Bucket by ts: {ts_utc: {bookmaker: {side: PriceCell}}}
+    bucket: dict[str, dict[str, dict[str, PriceCell]]] = {}
+    for hr in history_rows:
+        ts = hr["ts_utc"]
+        bm_cells = bucket.setdefault(ts, {})
+        bm_cells.setdefault(hr["bookmaker"], {})[hr["side"]] = PriceCell(
+            odds=hr["odds"], probability=hr["probability"],
+        )
+
+    # Newest first
+    history = [
+        HistoryRow(ts_utc=ts, cells=bucket[ts])
+        for ts in sorted(bucket.keys(), reverse=True)
+    ]
+
+    pills = [
+        (slug, label, slug == market_slug)
+        for mid, _ln, label, slug in _MARKET_PICKER
+    ]
+
+    return EventDetail(
+        id=ev_row["id"],
+        home=ev_row["home"],
+        away=ev_row["away"],
+        kickoff_utc=ev_row["kickoff_utc"],
+        status=ev_row["status"],
+        match_minute=ev_row["match_minute"],
+        score_home=ev_row["score_home"],
+        score_away=ev_row["score_away"],
+        market_label=market_label,
+        market_slug=market_slug,
+        sides=sides,
+        pills=pills,
+        history=history,
     )

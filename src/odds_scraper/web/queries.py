@@ -126,33 +126,59 @@ def get_latest_prices_for_event(
     return conn.execute(sql, params).fetchall()
 
 
-def get_price_history_for_event(
-    conn: sqlite3.Connection, event_id: str, scope: Scope = "opened",
-) -> list[sqlite3.Row]:
-    """Full odds history per (bookmaker, market_id, line, side) for one event.
+def get_event_meta(
+    conn: sqlite3.Connection, event_id: str,
+) -> sqlite3.Row | None:
+    """Return one Row joining event metadata with its latest snapshot state.
 
-    Returns rows in chronological order so the caller can group by
-    outcome and feed the ordered odds list to a sparkline. Probability
-    is included alongside odds for the BP/SB cells.
-
-    scope='collapsed' restricts to the 1x2 family.
-    scope='opened' returns all markets.
+    Used by the detail page to render the header (teams, kickoff,
+    current status, minute, score). Returns None if the event doesn't
+    exist (e.g., bookmarked link to a deleted event).
     """
-    if scope not in ("collapsed", "opened"):
-        raise ValueError(f"unknown scope {scope!r}")
-    market_filter = ""
-    market_params: tuple[str, ...] = ()
-    if scope == "collapsed":
-        placeholders = ",".join("?" * len(COLLAPSED_MARKETS))
-        market_filter = f"AND market_id IN ({placeholders})"
-        market_params = COLLAPSED_MARKETS
-    sql = f"""
-        SELECT bookmaker, market_id, line, side, ts_utc, odds, probability
+    sql = """
+        WITH latest AS (
+            SELECT event_id, MAX(ts_utc) AS max_ts
+            FROM snapshots
+            WHERE event_id = ?
+            GROUP BY event_id
+        )
+        SELECT
+            e.id, e.home, e.away, e.kickoff_utc,
+            s.status, s.match_minute, s.score_home, s.score_away,
+            s.ts_utc AS latest_ts
+        FROM events e
+        LEFT JOIN latest l ON l.event_id = e.id
+        LEFT JOIN snapshots s
+          ON s.event_id = l.event_id
+         AND s.ts_utc  = l.max_ts
+        WHERE e.id = ?
+        LIMIT 1
+    """
+    return conn.execute(sql, (event_id, event_id)).fetchone()
+
+
+def get_market_history_for_event(
+    conn: sqlite3.Connection,
+    event_id: str,
+    market_id: str,
+    line: float | None = None,
+) -> list[sqlite3.Row]:
+    """All snapshots' prices for one (event, market) — for the detail page.
+
+    For non-parameterized markets pass line=None (the helper translates
+    that to the 0.0 sentinel that the DB stores).
+
+    Returns rows ordered (ts_utc, bookmaker, side) so the caller can
+    bucket by ts then by bookmaker then by side.
+    """
+    db_line = 0.0 if line is None else float(line)
+    sql = """
+        SELECT ts_utc, bookmaker, side, odds, probability
         FROM prices
         WHERE event_id = ?
-          {market_filter}
+          AND market_id = ?
+          AND line      = ?
           AND odds IS NOT NULL
-        ORDER BY bookmaker, market_id, line, side, ts_utc
+        ORDER BY ts_utc DESC, bookmaker, side
     """
-    params: list[str | int | float] = [event_id, *market_params]
-    return conn.execute(sql, params).fetchall()
+    return conn.execute(sql, (event_id, market_id, db_line)).fetchall()

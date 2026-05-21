@@ -1,9 +1,8 @@
 <div id="events-list"
-     hx-get="/events?status={{ status }}{% if open_ids %}&open={{ open_ids|join(',') }}{% endif %}"
+     hx-get="/events?status={{ status }}"
      hx-trigger="every {{ poll_seconds }}s"
      hx-swap="outerHTML"
-     data-status="{{ status }}"
-     data-open="{{ open_ids|join(',') }}">
+     data-status="{{ status }}">
   {% for event in events %}
     {% include "_event_card.html" %}
   {% endfor %}

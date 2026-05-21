@@ -102,32 +102,119 @@
 .odds    { color: #4ade80; font-weight: 600; }
 .prob    { color: #94a3b8; font-size: 9px; margin-left: 4px; }
 
-/* Inline odds-history sparkline (only rendered when event is opened) */
-.cell { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.spark {
-  width: 60px;
-  height: 14px;
-  display: inline-block;
-  vertical-align: middle;
-}
-.spark polyline {
-  fill: none;
-  stroke-width: 1;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-}
-.spark-odds polyline { stroke: #4ade80; opacity: 0.7; }
-.spark-prob polyline { stroke: #94a3b8; opacity: 0.6; }
+/* Event card header is now an anchor; reset link styles */
+a.ev { text-decoration: none; color: inherit; }
+a.ev:hover { background: #181818; }
 
 /* Bookmaker chip toggle — body class hides matching columns INSIDE the
-   events list only. Scoped via #events-list so the chip itself (which
-   also carries data-bookmaker=...) stays visible and clickable. */
-body.hide-betpawa   #events-list [data-bookmaker="betpawa"]   { display: none; }
-body.hide-sportybet #events-list [data-bookmaker="sportybet"] { display: none; }
-body.hide-bet9ja    #events-list [data-bookmaker="bet9ja"]    { display: none; }
-body.hide-betway    #events-list [data-bookmaker="betway"]    { display: none; }
+   events list AND the detail history table. Scoped via id/class to keep
+   the chips themselves clickable. */
+body.hide-betpawa   #events-list [data-bookmaker="betpawa"],
+body.hide-betpawa   .history-table [data-bookmaker="betpawa"]   { display: none; }
+body.hide-sportybet #events-list [data-bookmaker="sportybet"],
+body.hide-sportybet .history-table [data-bookmaker="sportybet"] { display: none; }
+body.hide-bet9ja    #events-list [data-bookmaker="bet9ja"],
+body.hide-bet9ja    .history-table [data-bookmaker="bet9ja"]    { display: none; }
+body.hide-betway    #events-list [data-bookmaker="betway"],
+body.hide-betway    .history-table [data-bookmaker="betway"]    { display: none; }
 
 /* When a chip is in the off state, dim it so it reads as "filtered out" */
 .chip:not(.on) {
   opacity: 0.4;
+}
+
+/* Detail page — event meta line */
+.event-meta {
+  color: #888;
+  font-size: 11px;
+}
+
+/* Detail page — market picker pills */
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 6px 12px;
+  border-bottom: 1px solid #1a1a1a;
+  margin-bottom: 12px;
+}
+.pill {
+  padding: 3px 10px;
+  font-size: 10px;
+  color: #888;
+  background: #0f0f0f;
+  border: 1px solid #1a1a1a;
+  border-radius: 3px;
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.pill:hover { background: #181818; color: #d1d5db; }
+.pill.active {
+  background: #1a2a1a;
+  color: #4ade80;
+  border-color: #2a4a2a;
+  font-weight: 600;
+}
+
+/* Detail page — history table */
+.history-wrap {
+  background: #0a0a0a;
+  border: 1px solid #1a1a1a;
+  border-radius: 4px;
+  overflow: hidden;
+  font-size: 11px;
+}
+.history-title {
+  padding: 8px 12px;
+  background: #141414;
+  border-bottom: 1px solid #1f1f1f;
+  color: #fff;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.history-table th, .history-table td {
+  padding: 5px 8px;
+  text-align: right;
+  border-bottom: 1px solid #111;
+  white-space: nowrap;
+}
+.history-table th {
+  background: #0f0f0f;
+  color: #888;
+  font-weight: 600;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.history-table th.ts-col, .history-table td.ts-col {
+  text-align: left;
+  color: #d1d5db;
+  font-family: ui-monospace, monospace;
+}
+.history-table thead tr:first-child th {
+  border-bottom: 1px solid #1a1a1a;
+}
+.history-table thead .sub-head th {
+  background: #0a0a0a;
+  font-size: 9px;
+  padding: 3px 8px;
+}
+.history-table .side-h { color: #4ade80; }
+.history-table td.num { font-family: ui-monospace, monospace; }
+.history-table tbody tr:nth-child(odd)  { background: #0a0a0a; }
+.history-table tbody tr:nth-child(even) { background: #0d0d0d; }
+.history-table tbody tr:hover           { background: #1a1a1a; }
+.history-table td:not(:first-child) { border-left: 1px solid #111; }
+
+.empty {
+  padding: 24px;
+  text-align: center;
+  color: #666;
 }

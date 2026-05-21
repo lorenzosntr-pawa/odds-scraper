@@ -1,9 +1,8 @@
 <div class="card" data-event-id="{{ event.id }}">
-  <div class="ev{% if event.id in open_ids %} open{% endif %}"
-       onclick="toggleEvent('{{ event.id }}')">
+  <a class="ev" href="/events/{{ event.id }}">
     <div>
       <div class="ev-name">{{ event.home }} — {{ event.away }}
-        <span class="caret">{% if event.id in open_ids %}▼{% else %}▶{% endif %}</span>
+        <span class="caret">→</span>
       </div>
       <div class="ev-meta">
         {% if event.status == 'STARTED' %}
@@ -17,12 +16,12 @@
         {% endif %}
       </div>
     </div>
-  </div>
+  </a>
 
   <div class="col-header">
-    <span class="lbl">{% if event.id in open_ids %}OUTCOME{% else %}MARKET · OUTCOME{% endif %}</span>
-    <span class="lbl" data-bookmaker="betpawa">BP{% if event.id in open_ids %} <span class="prob-mark">+p</span>{% endif %}</span>
-    <span class="lbl" data-bookmaker="sportybet">SB{% if event.id in open_ids %} <span class="prob-mark">+p</span>{% endif %}</span>
+    <span class="lbl">MARKET · OUTCOME</span>
+    <span class="lbl" data-bookmaker="betpawa">BP</span>
+    <span class="lbl" data-bookmaker="sportybet">SB</span>
     <span class="lbl" data-bookmaker="bet9ja">B9J</span>
     <span class="lbl" data-bookmaker="betway">BW</span>
   </div>
@@ -31,26 +30,12 @@
     <div class="group-label">▾ {{ group.label }}</div>
     {% for row in group.rows %}
       <div class="row">
-        <span class="outcome">{% if event.id in open_ids %}{{ row.side_label }}{% else %}{{ row.market_label }} · {{ row.side_short }}{% endif %}</span>
+        <span class="outcome">{{ row.market_label }} · {{ row.side_short }}</span>
         {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
           {% set p = row.prices.get(bm) %}
-          <span data-bookmaker="{{ bm }}" class="cell">
+          <span data-bookmaker="{{ bm }}">
             {% if p %}
               <span class="odds">{{ "%.2f"|format(p.odds) }}</span>
-              {% if event.id in open_ids and p.odds_sparkline %}
-                <svg class="spark spark-odds" viewBox="0 0 60 14" preserveAspectRatio="none">
-                  <polyline points="{{ p.odds_sparkline }}"/>
-                </svg>
-              {% endif %}
-              {% if event.id in open_ids and bm in ("betpawa", "sportybet") and p.probability is not none %}
-                {# Cap at 99 so probabilities like 0.995 don't render as ".100" (three digits). #}
-                <span class="prob">.{{ "%02d"|format([(p.probability * 100)|round|int, 99]|min) }}</span>
-                {% if p.prob_sparkline %}
-                  <svg class="spark spark-prob" viewBox="0 0 60 14" preserveAspectRatio="none">
-                    <polyline points="{{ p.prob_sparkline }}"/>
-                  </svg>
-                {% endif %}
-              {% endif %}
             {% else %}<span class="text-gray-700">—</span>{% endif %}
           </span>
         {% endfor %}

@@ -1,4 +1,7 @@
 // Bookmaker chip toggle + localStorage persistence.
+// The chip's `on` class drives a body class which CSS uses to hide
+// matching [data-bookmaker="..."] columns inside #events-list and the
+// detail-page history table.
 function initChips() {
   const stored = JSON.parse(localStorage.getItem('bookmakers') || '{}');
   document.querySelectorAll('.chip[data-bookmaker]').forEach(c => {
@@ -16,7 +19,8 @@ function initChips() {
   });
 }
 
-// Tab switching via HTMX programmatic request.
+// Tab switching via HTMX programmatic request (only present on the
+// events-list page, not the detail page).
 function initTabs() {
   document.querySelectorAll('.tab[data-status]').forEach(t => {
     t.addEventListener('click', () => {
@@ -27,20 +31,6 @@ function initTabs() {
     });
   });
 }
-
-// Card open/close — update the list's ?open= URL param then re-request.
-window.toggleEvent = function(eventId) {
-  const list = document.getElementById('events-list');
-  if (!list) return;
-  const current = list.dataset.open || '';
-  const ids = new Set(current.split(',').filter(Boolean));
-  if (ids.has(eventId)) ids.delete(eventId);
-  else ids.add(eventId);
-  const status = list.dataset.status || 'live';
-  const openParam = Array.from(ids).join(',');
-  const url = `/events?status=${status}${openParam ? '&open=' + openParam : ''}`;
-  window.htmx.ajax('GET', url, {target: '#events-list', swap: 'outerHTML'});
-};
 
 document.addEventListener('DOMContentLoaded', () => {
   initChips();

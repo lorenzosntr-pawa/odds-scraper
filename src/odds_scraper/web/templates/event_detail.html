@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="p-3 max-w-screen-2xl mx-auto">
+  <div class="flex justify-between border-b border-gray-900 pb-3 mb-3">
+    <div class="text-white font-semibold tracking-wider">
+      <a href="/" class="text-gray-400 hover:text-gray-200">← EVENTS</a>
+      <span class="ml-3">{{ event.home }} — {{ event.away }}</span>
+    </div>
+    <div class="flex gap-1" id="tabs">
+      <a href="/" class="tab">LIVE</a>
+      <a href="/" class="tab">UPCOMING</a>
+      <a href="/" class="tab">ENDED</a>
+    </div>
+  </div>
+
+  <div class="flex gap-2 items-center px-2 mb-3 text-xs text-gray-500">
+    <span class="text-[9px] uppercase tracking-wider">Bookmakers</span>
+    <button class="chip on" data-bookmaker="betpawa">BP</button>
+    <button class="chip on" data-bookmaker="sportybet">SB</button>
+    <button class="chip on" data-bookmaker="bet9ja">B9J</button>
+    <button class="chip on" data-bookmaker="betway">BW</button>
+  </div>
+
+  <div class="event-meta px-2 mb-3">
+    {% if event.status == 'STARTED' %}
+      <span class="status-live">LIVE {{ event.match_minute or '' }}'</span>
+      {% if event.score_home is not none %} · {{ event.score_home }} – {{ event.score_away }}{% endif %}
+    {% elif event.status == 'UPCOMING' %}
+      <span class="status-upcoming">UPCOMING</span> · kickoff {{ event.kickoff_utc }}
+    {% elif event.status == 'ENDED' %}
+      <span class="status-ended">ENDED</span>
+      {% if event.score_home is not none %} · {{ event.score_home }} – {{ event.score_away }}{% endif %}
+    {% endif %}
+  </div>
+
+  <div class="pills">
+    {% for slug, label, active in event.pills %}
+      <a href="/events/{{ event.id }}?market={{ slug }}"
+         class="pill{% if active %} active{% endif %}">{{ label }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="history-wrap">
+    <div class="history-title">History — {{ event.market_label }}</div>
+    {% if event.history %}
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th class="ts-col">TIME (UTC)</th>
+            {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
+              <th data-bookmaker="{{ bm }}" colspan="{{ event.sides|length }}">
+                {{ {"betpawa":"BetPawa","sportybet":"SportyBet","bet9ja":"Bet9ja","betway":"Betway"}[bm] }}
+              </th>
+            {% endfor %}
+          </tr>
+          <tr class="sub-head">
+            <th class="ts-col"></th>
+            {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
+              {% for side in event.sides %}
+                <th data-bookmaker="{{ bm }}" class="side-h">
+                  {{ {"home":"H","draw":"D","away":"A","over":"O","under":"U"}[side] }}
+                </th>
+              {% endfor %}
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in event.history %}
+            <tr>
+              <td class="ts-col">{{ row.ts_utc }}</td>
+              {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
+                {% for side in event.sides %}
+                  {% set p = row.cells.get(bm, {}).get(side) %}
+                  <td data-bookmaker="{{ bm }}" class="num">
+                    {% if p %}
+                      <span class="odds">{{ "%.2f"|format(p.odds) }}</span>
+                      {% if bm in ("betpawa", "sportybet") and p.probability is not none %}
+                        <span class="prob">.{{ "%02d"|format([(p.probability * 100)|round|int, 99]|min) }}</span>
+                      {% endif %}
+                    {% else %}<span class="text-gray-700">—</span>{% endif %}
+                  </td>
+                {% endfor %}
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty">No history yet for this market.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js"></script>
+{% endblock %}

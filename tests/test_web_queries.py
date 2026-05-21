@@ -5,8 +5,8 @@ import pytest
 
 from odds_scraper.db_schema import init_schema
 from odds_scraper.web.queries import (
-    get_events_by_status, get_latest_prices_for_event,
-    get_price_history_for_event, open_ro_conn,
+    get_event_meta, get_events_by_status, get_latest_prices_for_event,
+    get_market_history_for_event, open_ro_conn,
 )
 
 
@@ -133,31 +133,69 @@ def test_invalid_status_raises(db: Path):
     conn.close()
 
 
-def test_get_price_history_for_event_returns_chronological_rows(db: Path):
-    # The fixture writes E_LIVE prices at a single ts, so the history
-    # is one row per outcome. Confirm ordering keys are right and the
-    # rows include the ts_utc + odds + probability columns we need.
+def test_get_event_meta_returns_event_joined_with_latest_snapshot(db: Path):
     conn = open_ro_conn(db)
-    rows = get_price_history_for_event(conn, "E_LIVE", scope="opened")
+    row = get_event_meta(conn, "E_LIVE")
     conn.close()
-    assert len(rows) > 0
-    keys = {(r["market_id"], r["line"], r["side"], r["bookmaker"]) for r in rows}
-    assert ("1x2_ft", 0.0, "home", "betpawa") in keys
-    # Ordering invariant: same outcome groups together, then ts ascending
-    seen: list[tuple] = []
-    for r in rows:
-        k = (r["bookmaker"], r["market_id"], r["line"], r["side"])
-        seen.append((k, r["ts_utc"]))
-    assert all(
-        seen[i][0] != seen[i + 1][0] or seen[i][1] <= seen[i + 1][1]
-        for i in range(len(seen) - 1)
+    assert row is not None
+    assert row["id"] == "E_LIVE"
+    assert row["home"] == "Live Home"
+    assert row["away"] == "Live Away"
+    # E_LIVE's latest snapshot has status STARTED, minute 34, score 1-0
+    assert row["status"] == "STARTED"
+    assert row["match_minute"] == 34
+
+
+def test_get_event_meta_unknown_returns_none(db: Path):
+    conn = open_ro_conn(db)
+    assert get_event_meta(conn, "NO_SUCH_EVENT") is None
+    conn.close()
+
+
+def test_get_market_history_for_event_1x2_ft(db: Path):
+    conn = open_ro_conn(db)
+    rows = get_market_history_for_event(conn, "E_LIVE", "1x2_ft", line=None)
+    conn.close()
+    # Three sides (H/D/A) × one bookmaker in the fixture
+    assert len(rows) == 3
+    sides = {r["side"] for r in rows}
+    assert sides == {"home", "draw", "away"}
+    # Odds correctly populated from the fixture seeds
+    home = next(r for r in rows if r["side"] == "home")
+    assert home["odds"] == 1.85
+    assert home["probability"] == 0.54
+
+
+def test_get_market_history_for_event_over_under_line_filter(db: Path):
+    conn = open_ro_conn(db)
+    rows = get_market_history_for_event(conn, "E_LIVE", "over_under_ft", line=2.5)
+    conn.close()
+    sides = {r["side"] for r in rows}
+    assert sides == {"over", "under"}
+
+
+def test_get_market_history_for_event_returns_newest_first(db: Path):
+    # Add a second snapshot for E_LIVE 1x2_ft home with a different ts
+    import sqlite3 as s
+    conn = s.connect(str(db), isolation_level=None)
+    cur = conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
+        "VALUES ('2026-05-21T11:05:00Z', 'E_LIVE', 'betpawa', 'STARTED', 'ok')",
     )
-
-
-def test_get_price_history_for_event_collapsed_excludes_over_under(db: Path):
-    conn = open_ro_conn(db)
-    rows = get_price_history_for_event(conn, "E_LIVE", scope="collapsed")
+    snap_id = cur.lastrowid
+    conn.execute(
+        "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+        "market_id, line, side, odds, probability) "
+        "VALUES (?, 'E_LIVE', '2026-05-21T11:05:00Z', 'betpawa', '1x2_ft', 0.0, 'home', 1.92, 0.52)",
+        (snap_id,),
+    )
     conn.close()
-    market_ids = {r["market_id"] for r in rows}
-    assert "over_under_ft" not in market_ids
-    assert {"1x2_ft", "1x2_1up_ft", "1x2_2up_ft"} >= market_ids
+
+    conn = open_ro_conn(db)
+    rows = get_market_history_for_event(conn, "E_LIVE", "1x2_ft", line=None)
+    conn.close()
+    # We have two snapshots for home; ordering must put the newer ts first.
+    home_rows = [r for r in rows if r["side"] == "home"]
+    assert len(home_rows) == 2
+    assert home_rows[0]["ts_utc"] > home_rows[1]["ts_utc"]
+    assert home_rows[0]["odds"] == 1.92
