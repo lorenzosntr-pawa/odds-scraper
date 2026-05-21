@@ -155,6 +155,7 @@ def test_snapshot_to_csv_row_blanks_when_failure_status():
         prices={},
     ))
     row = snap.to_csv_row()
+    assert len(row) == 68
     assert row[12] == "http_error"
     assert row[13] == "timeout after 10s"
     assert all(cell == "" for cell in row[14:])

@@ -41,6 +41,7 @@ MARKET_MANIFEST: tuple[MarketSpec, ...] = (
     MarketSpec("1x2_1up_ft",    "1x2_1up_ft",  ("home", "draw", "away"), None),
     MarketSpec("1x2_2up_ft",    "1x2_2up_ft",  ("home", "draw", "away"), None),
     MarketSpec(
+        # column_prefix shortened to "ou"; must remain unique across manifest
         "over_under_ft", "ou", ("over", "under"),
         (1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5),
     ),
@@ -107,6 +108,9 @@ class Snapshot:
     bookmaker: Bookmaker
     fetch_status: FetchStatus
     fetch_error: str
+    # NB: frozen=True does not freeze the contents of `prices` — the dict
+    # itself remains mutable. By convention, populate it at construction in
+    # the collector and never mutate afterwards.
     prices: dict[PriceKey, tuple[Optional[float], Optional[float]]] = field(
         default_factory=dict,
     )
