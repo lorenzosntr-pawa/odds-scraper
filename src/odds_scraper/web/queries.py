@@ -13,6 +13,7 @@ _STATUS_DB_VALUES = {
     "upcoming": "UPCOMING",
     "ended": "ENDED",
 }
+VALID_STATUSES: frozenset[str] = frozenset(_STATUS_DB_VALUES)
 
 COLLAPSED_MARKETS: tuple[str, ...] = ("1x2_ft", "1x2_1up_ft", "1x2_2up_ft")
 

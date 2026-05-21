@@ -38,7 +38,8 @@
             {% if p %}
               <span class="odds">{{ "%.2f"|format(p.odds) }}</span>
               {% if event.id in open_ids and bm in ("betpawa", "sportybet") and p.probability is not none %}
-                <span class="prob">.{{ "%02d"|format((p.probability * 100)|round|int) }}</span>
+                {# Cap at 99 so probabilities like 0.995 don't render as ".100" (three digits). #}
+                <span class="prob">.{{ "%02d"|format([(p.probability * 100)|round|int, 99]|min) }}</span>
               {% endif %}
             {% else %}<span class="text-gray-700">—</span>{% endif %}
           </span>

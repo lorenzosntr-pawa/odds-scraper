@@ -93,11 +93,11 @@ def create_app(db_path: Path) -> FastAPI:
     async def events_fragment(
         request: Request,
         status: str = Query("live"),
-        open: str = Query(""),
+        open_param: str = Query("", alias="open"),
     ):
-        if status not in queries._STATUS_DB_VALUES:
+        if status not in queries.VALID_STATUSES:
             raise HTTPException(status_code=400, detail=f"unknown status {status!r}")
-        open_ids = [s for s in open.split(",") if s]
+        open_ids = [s for s in open_param.split(",") if s]
         rows = queries.get_events_by_status(conn, status)  # type: ignore[arg-type]
         events = [_build_event_view(conn, row, open_ids) for row in rows]
         return templates.TemplateResponse(
