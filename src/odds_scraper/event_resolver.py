@@ -70,7 +70,10 @@ async def _fetch_tournament_event_ids(t_id: str, bp_client) -> list[str]:
             if len(ids) < _TOURNAMENT_PAGE_SIZE:
                 break
             skip += _TOURNAMENT_PAGE_SIZE
-    return list(found)
+    # Sort so the helper's contract is deterministic in isolation. Caller
+    # already re-sorts at the end, but a future maintainer could drop that
+    # without noticing.
+    return sorted(found)
 
 
 def _ids_from_events_response(resp: dict[str, Any]) -> list[str]:

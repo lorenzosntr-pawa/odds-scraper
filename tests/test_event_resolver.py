@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
@@ -110,7 +111,6 @@ async def test_pagination_exactly_100_followed_by_empty():
 
 @pytest.mark.asyncio
 async def test_one_tournament_failure_isolated_others_succeed(caplog):
-    import logging
     client = AsyncMock()
 
     async def get_events(tournament_id, event_type, skip, take):
