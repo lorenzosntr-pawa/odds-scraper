@@ -23,8 +23,8 @@
 
   <div class="col-header">
     <span class="lbl">MARKET · OUTCOME</span>
-    <span class="lbl" data-bookmaker="betpawa">BP</span>
-    <span class="lbl" data-bookmaker="sportybet">SB</span>
+    <span class="lbl" data-bookmaker="betpawa">BP <span class="prob-mark">+p</span></span>
+    <span class="lbl" data-bookmaker="sportybet">SB <span class="prob-mark">+p</span></span>
     <span class="lbl" data-bookmaker="bet9ja">B9J</span>
     <span class="lbl" data-bookmaker="betway">BW</span>
   </div>
@@ -42,6 +42,10 @@
             <span data-bookmaker="{{ bm }}">
               {% if p %}
                 <span class="odds">{{ "%.2f"|format(p.odds) }}</span>
+                {% if bm in ("betpawa", "sportybet") and p.probability is not none %}
+                  {# Cap at 99 so 0.995 doesn't render as ".100" #}
+                  <span class="prob">.{{ "%02d"|format([(p.probability * 100)|round|int, 99]|min) }}</span>
+                {% endif %}
               {% else %}<span class="text-gray-700">—</span>{% endif %}
             </span>
           {% endfor %}

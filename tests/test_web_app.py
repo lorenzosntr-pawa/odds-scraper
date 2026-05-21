@@ -84,6 +84,14 @@ def test_events_card_links_to_detail_page(client: TestClient):
     assert 'href="/events/E1"' in r.text
 
 
+def test_events_card_shows_probability_for_bp_sb(client: TestClient):
+    r = client.get("/events?status=upcoming")
+    # Column header marker
+    assert "+p" in r.text
+    # Fixture writes prob=0.54 for BP — should render as ".54"
+    assert ".54" in r.text
+
+
 def test_events_unknown_status_returns_400(client: TestClient):
     r = client.get("/events?status=bogus")
     assert r.status_code == 400
