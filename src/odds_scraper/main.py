@@ -99,8 +99,9 @@ async def _amain(config_path: Path) -> int:
                 pass
 
         wait_for_stop = asyncio.create_task(stop_event.wait())
-        done, _ = await asyncio.wait(
-            [wait_for_stop, *tasks], return_when=asyncio.FIRST_COMPLETED,
+        all_watchers = asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.wait(
+            [wait_for_stop, all_watchers], return_when=asyncio.FIRST_COMPLETED,
         )
 
         log.info("shutting down, cancelling %d watcher tasks", len(tasks))
