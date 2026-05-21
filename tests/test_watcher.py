@@ -39,11 +39,17 @@ def _snap_list(status=EventStatus.UPCOMING):
 
 
 def _detail(live=False, ended=False) -> dict:
+    # Kickoff is set far enough in the future that the watcher's watchdog
+    # (10800s after kickoff in cfg) cannot trip during the test, regardless
+    # of when the test is actually run.
+    future_kickoff = (
+        datetime.now(timezone.utc) + timedelta(days=30)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
     if ended:
         return {
             "id": "33660318",
             "participants": [{"name": "A"}, {"name": "B"}],
-            "startTime": "2026-05-19T15:00:00Z",
+            "startTime": future_kickoff,
             "additionalInfo": {"live": False},
             "results": {
                 "display": {"minute": 90, "currentPeriod": {"name": "FT"}},
@@ -53,7 +59,7 @@ def _detail(live=False, ended=False) -> dict:
     return {
         "id": "33660318",
         "participants": [{"name": "A"}, {"name": "B"}],
-        "startTime": "2026-05-19T15:00:00Z",
+        "startTime": future_kickoff,
         "additionalInfo": {"live": live},
         "results": {
             "display": {"minute": 34, "currentPeriod": {"name": "1H"}},
@@ -200,3 +206,102 @@ def test_log_tick_summary_format(cfg, caplog):
     # _price_cell_count consumers together.
     expected = "tick 33660318 status=STARTED bp=4/54 sb=2/54 b9j=1/27 bw=3/27"
     assert any(expected in m for m in msgs), f"didn't find expected log: {msgs}"
+
+
+async def test_watchdog_does_not_trip_when_kickoff_is_in_future(cfg, monkeypatch):
+    # A prematch event whose kickoff is days away must NEVER have the
+    # watchdog trip — this was the bug causing all watchers to die at
+    # exactly cfg.watchdog_after_kickoff_seconds after the watcher started
+    # (rather than after kickoff).
+    monkeypatch.setattr(
+        "odds_scraper.watcher.asyncio.sleep", AsyncMock(return_value=None),
+    )
+
+    kickoff_future = (
+        datetime.now(timezone.utc) + timedelta(hours=24)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    polls = {"n": 0}
+
+    async def detail_then_ended(_id):
+        # First 5 polls return UPCOMING; 6th returns ENDED so we get out
+        polls["n"] += 1
+        common = {
+            "id": "33660318",
+            "participants": [{"name": "A"}, {"name": "B"}],
+            "startTime": kickoff_future,
+        }
+        if polls["n"] < 6:
+            return {**common, "additionalInfo": {"live": False}, "results": None}
+        return {
+            **common,
+            "additionalInfo": {"live": False},
+            "results": {
+                "display": {"minute": 90, "currentPeriod": {"name": "FT"}},
+                "participantPeriodResults": [],
+            },
+        }
+
+    bp_client = AsyncMock()
+    bp_client.get_event_detail.side_effect = detail_then_ended
+    collector = AsyncMock()
+    collector.collect.return_value = _snap_list()
+    writer = MagicMock()
+    writer.append = AsyncMock()
+    resolver = AsyncMock(return_value=(
+        {Bookmaker.SPORTYBET: "sr:match:1",
+         Bookmaker.BET9JA: "b9j-7",
+         Bookmaker.BETWAY: "sr:match:1"},
+        "sr:match:1", ""))
+
+    watcher = EventWatcher("33660318", cfg, bp_client, collector, writer, resolver)
+    await watcher.run()  # returns when ENDED arrives
+
+    # Make sure no watchdog warning was emitted
+    assert polls["n"] == 6
+
+
+async def test_watchdog_trips_after_kickoff_plus_window(monkeypatch):
+    # Configure the watchdog window very small (1s) and use a kickoff
+    # 10 seconds in the past so the watcher trips immediately on the
+    # second tick after observing kickoff.
+    cfg = WatcherConfig(
+        prematch_seconds=600, live_seconds=90,
+        status_retry_backoff_seconds=(5, 15, 45),
+        watchdog_after_kickoff_seconds=1,
+    )
+    monkeypatch.setattr(
+        "odds_scraper.watcher.asyncio.sleep", AsyncMock(return_value=None),
+    )
+    kickoff_past = (
+        datetime.now(timezone.utc) - timedelta(seconds=10)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    async def detail(_id):
+        return {
+            "id": "33660318",
+            "participants": [{"name": "A"}, {"name": "B"}],
+            "startTime": kickoff_past,
+            "additionalInfo": {"live": True},
+            "results": {
+                "display": {"minute": 34, "currentPeriod": {"name": "1H"}},
+                "participantPeriodResults": [],
+            },
+        }
+
+    bp_client = AsyncMock()
+    bp_client.get_event_detail.side_effect = detail
+    collector = AsyncMock()
+    collector.collect.return_value = _snap_list(EventStatus.STARTED)
+    writer = MagicMock()
+    writer.append = AsyncMock()
+    resolver = AsyncMock(return_value=(
+        {Bookmaker.SPORTYBET: "sr:match:1",
+         Bookmaker.BET9JA: "b9j-7",
+         Bookmaker.BETWAY: "sr:match:1"},
+        "sr:match:1", ""))
+
+    watcher = EventWatcher("33660318", cfg, bp_client, collector, writer, resolver)
+    await watcher.run()  # watchdog trips → returns
+    # No assertion needed beyond "run() returned" — the watchdog trip
+    # is what causes the return when status is not ENDED.

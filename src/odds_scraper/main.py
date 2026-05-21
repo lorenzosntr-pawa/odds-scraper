@@ -104,10 +104,18 @@ async def _amain(config_path: Path) -> int:
             while True:
                 try:
                     # Prune completed watcher tasks so `tasks` doesn't grow
-                    # unbounded over a long server run, and so the active
-                    # count below stays honest. After this prune, every
-                    # entry in `tasks` is by definition not-done, so
-                    # `bool(tasks)` is the active-watchers predicate.
+                    # unbounded over a long server run. ALSO discard the
+                    # event_id from `watched_ids` for any pruned watcher,
+                    # so the next resolve_event_ids pass can re-spawn it
+                    # if the event is still listed. Without this discard,
+                    # a watchdog-tripped or otherwise-dead watcher would
+                    # leave its id stuck in watched_ids forever and the
+                    # process would idle with no active watchers.
+                    done_tasks = [t for t in tasks if t.done()]
+                    for t in done_tasks:
+                        name = t.get_name()
+                        if name.startswith("watcher-"):
+                            watched_ids.discard(name[len("watcher-"):])
                     tasks[:] = [t for t in tasks if not t.done()]
                     any_active = bool(tasks)
                     sleep_sec = (
