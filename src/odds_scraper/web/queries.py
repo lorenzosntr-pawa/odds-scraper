@@ -184,13 +184,18 @@ def get_market_history_for_event(
     """
     db_line = 0.0 if line is None else float(line)
     sql = """
-        SELECT ts_utc, bookmaker, side, odds, probability
-        FROM prices
-        WHERE event_id = ?
-          AND market_id = ?
-          AND line      = ?
-          AND odds IS NOT NULL
-        ORDER BY ts_utc DESC, bookmaker, side
+        SELECT p.ts_utc, p.bookmaker, p.side, p.odds, p.probability,
+               s.match_minute, s.score_home, s.score_away, s.status
+        FROM prices p
+        JOIN snapshots s
+          ON s.event_id  = p.event_id
+         AND s.ts_utc    = p.ts_utc
+         AND s.bookmaker = p.bookmaker
+        WHERE p.event_id = ?
+          AND p.market_id = ?
+          AND p.line      = ?
+          AND p.odds IS NOT NULL
+        ORDER BY p.ts_utc DESC, p.bookmaker, p.side
     """
     return conn.execute(sql, (event_id, market_id, db_line)).fetchall()
 

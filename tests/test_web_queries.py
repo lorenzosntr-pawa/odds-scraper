@@ -393,3 +393,19 @@ def test_get_available_lines_multi_market_multi_line(db: Path):
         "home_over_under_ft": [0.5],
         "away_over_under_ft": [1.5],
     }
+
+
+def test_get_market_history_for_event_includes_minute_and_score(db: Path):
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    # The E_LIVE fixture snapshot has match_minute=34, score_home=1, score_away=0
+    # already set in the shared db fixture.
+    conn.close()
+    conn = open_ro_conn(db)
+    rows = get_market_history_for_event(conn, "E_LIVE", "1x2_ft", None)
+    conn.close()
+    assert len(rows) > 0
+    r = rows[0]
+    assert r["match_minute"] == 34
+    assert r["score_home"] == 1
+    assert r["score_away"] == 0
+    assert r["status"] == "STARTED"
