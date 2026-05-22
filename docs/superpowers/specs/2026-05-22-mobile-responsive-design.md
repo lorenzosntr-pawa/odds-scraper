@@ -98,8 +98,13 @@ All phone-specific rules live in a single `@media (max-width: 640px) { … }` bl
   .history-table {
     min-width: 720px;
   }
+  /* Pin explicit widths on the locked columns so sticky left offsets are
+     predictable. (Desktop layout uses these widths as min-only; phone
+     forces them exact via the media query block.) */
   .history-table th.ts-col,
   .history-table td.ts-col {
+    width: 150px;
+    min-width: 150px;
     position: sticky;
     left: 0;
     background: #0a0a0a;
@@ -107,14 +112,16 @@ All phone-specific rules live in a single `@media (max-width: 640px) { … }` bl
   }
   .history-table th.state-col,
   .history-table td.state-col {
+    width: 80px;
+    min-width: 80px;
     position: sticky;
-    left: 110px;
+    left: 150px;
     background: #0a0a0a;
     z-index: 2;
   }
   .history-table [data-bookmaker="betpawa"] {
     position: sticky;
-    left: 190px;
+    left: 230px;  /* TIME (150) + STATE (80) */
     background: #0a0a0a;
     z-index: 2;
   }
