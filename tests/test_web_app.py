@@ -526,3 +526,61 @@ def test_index_filter_row_has_country_and_league_selects(db_path: Path):
     body = client.get("/").text
     assert 'id="country-select"' in body
     assert 'id="league-select"' in body
+
+
+def test_event_detail_history_row_renders_live_state(db_path: Path):
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    cur = conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+        "match_minute, score_home, score_away, fetch_status) "
+        "VALUES ('2026-05-22T18:34:12Z', 'E1', 'betpawa', 'STARTED', "
+        "34, 1, 0, 'ok')",
+    )
+    snap_id = cur.lastrowid
+    conn.execute(
+        "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+        "market_id, line, side, odds, probability) "
+        "VALUES (?, 'E1', '2026-05-22T18:34:12Z', 'betpawa', '1x2_2up_ft', "
+        "0.0, 'home', 1.85, 0.54)",
+        (snap_id,),
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1").text
+    assert "34' · 1–0" in body
+
+
+def test_event_detail_history_row_renders_ended_state(db_path: Path):
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    cur = conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+        "match_minute, score_home, score_away, fetch_status) "
+        "VALUES ('2026-05-22T20:00:00Z', 'E1', 'betpawa', 'ENDED', "
+        "NULL, 2, 1, 'ok')",
+    )
+    snap_id = cur.lastrowid
+    conn.execute(
+        "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+        "market_id, line, side, odds, probability) "
+        "VALUES (?, 'E1', '2026-05-22T20:00:00Z', 'betpawa', '1x2_2up_ft', "
+        "0.0, 'home', 1.85, 0.54)",
+        (snap_id,),
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1").text
+    assert "FT · 2–1" in body
+
+
+def test_event_detail_history_row_renders_dash_for_upcoming(db_path: Path):
+    """The default fixture seeds an UPCOMING snapshot. The STATE cell
+    for that row must contain the em-dash."""
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1").text
+    assert 'class="state-col">—' in body
+
+
+def test_event_detail_history_table_has_state_header(db_path: Path):
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1").text
+    assert ">STATE<" in body
