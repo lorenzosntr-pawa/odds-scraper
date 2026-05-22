@@ -58,8 +58,15 @@ class OddsCollector:
         league_id = str(competition.get("id") or "")
         league_name = str(competition.get("name") or "")
 
+        event_id = str(bp_detail.get("id", ""))
+        regime = "live" if status.value == "STARTED" else "non-live"
+
         async def run(b: Bookmaker, target_id: Optional[str]):
             if b != Bookmaker.BETPAWA and not target_id:
+                log.warning(
+                    "no id resolved for %s (event=%s, regime=%s, sr=%s, genius=%s)",
+                    b.value, event_id, regime, sr_id or "-", genius_id or "-",
+                )
                 return b, (FetchStatus.LOOKUP_FAILED,
                            "no id resolved for bookmaker", [])
             try:
@@ -67,15 +74,26 @@ class OddsCollector:
                     markets = await self._fetchers[b](bp_detail)
                 else:
                     markets = await self._fetchers[b](target_id)
+                if not markets:
+                    log.info(
+                        "fetcher for %s returned empty markets (event=%s, regime=%s, id=%s)",
+                        b.value, event_id, regime, target_id or "-",
+                    )
                 return b, (FetchStatus.OK, "", markets)
             except Exception as e:  # noqa: BLE001
                 # Some bookmakers (Bet9ja behind Akamai) return multi-line
                 # HTML error pages — collapse whitespace and truncate so the
-                # log stays one line.
-                short = " ".join(str(e).split())[:120]
-                log.warning("fetch failed for %s: %s", b.value, short)
+                # log stays one line. Some exception classes have empty
+                # __str__ (info lives on attributes), so always include the
+                # type name so we never log a bare "fetch failed for X:".
+                short = " ".join(str(e).split())[:120] or "<no message>"
+                etype = type(e).__name__
+                log.warning(
+                    "fetch failed for %s: %s: %s (event=%s, regime=%s, id=%s)",
+                    b.value, etype, short, event_id, regime, target_id or "-",
+                )
                 return b, (FetchStatus.HTTP_ERROR,
-                           f"{type(e).__name__}: {short}", [])
+                           f"{etype}: {short}", [])
 
         coros = [
             run(b, resolved.get(b) if b != Bookmaker.BETPAWA else None)

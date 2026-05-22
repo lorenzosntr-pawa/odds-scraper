@@ -168,6 +168,15 @@ async def resolve_event(
         "sb_id": sb_id, "b9j_id": b9j_id, "bw_id": bw_id,
     }
     cache.set(key, entry)
+    # Log once per (event, regime) — same cardinality as the cache. Helps
+    # diagnose live-event resolution failures where SB/B9J/BW ids end up None
+    # despite the BetPawa detail having sr/genius ids.
+    log.info(
+        "resolved event %s (regime=%s) sr=%s genius=%s sb=%s b9j=%s bw=%s",
+        event_id, regime,
+        sr_id or "-", genius_id or "-",
+        sb_id or "-", b9j_id or "-", bw_id or "-",
+    )
     return _from_cached(entry)
 
 
