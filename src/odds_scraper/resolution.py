@@ -47,39 +47,30 @@ class ResolutionCache:
         self._scrub_poisoned_b9j_prematch()
 
     def _scrub_poisoned_b9j_prematch(self) -> None:
-        """Drop cached entries that won't yield a usable bet9ja id today.
+        """Drop cached entries that have an sr_id but no b9j_id.
 
-        Three sources of poisoning that all share the same fix (drop the
-        entry so it re-resolves on the next tick):
-
+        Two sources of this poisoning:
           - prematch: the bet9ja prematch map takes ~2 min to build, so
             events resolved during startup get b9j_id=None cached forever.
           - live: find_event_id_by_sr_id can transiently miss an event
             mid-match; that None would also stick.
-          - live: legacy entries from the old code path that wrote
-            `b9j_id = genius_id` (before we switched to
-            find_event_id_by_sr_id). These have b9j_id == genius_id and
-            short-circuit re-resolution by the new code.
+
+        b9j_id == genius_id (for live) is NOT poisoning anymore — the
+        resolver intentionally falls back to genius_id as a candidate
+        EVENTID when sr-lookup fails. That equality is now a legitimate
+        cache state, not a stale-code marker.
         """
-        none_with_sr = [
+        poisoned = [
             k for k, v in self._data.items()
             if v.get("sr_id") and not v.get("b9j_id")
         ]
-        legacy_live_genius = [
-            k for k, v in self._data.items()
-            if k.endswith(":live")
-            and v.get("b9j_id")
-            and v.get("b9j_id") == v.get("genius_id")
-        ]
-        poisoned = set(none_with_sr) | set(legacy_live_genius)
         if not poisoned:
             return
         for k in poisoned:
             del self._data[k]
         log.info(
-            "resolution cache: dropped %d entries "
-            "(missing b9j_id or legacy live b9j_id==genius_id) — "
-            "they will re-resolve",
+            "resolution cache: dropped %d poisoned entries "
+            "(sr_id present but b9j_id None) — they will re-resolve",
             len(poisoned),
         )
         self._persist()
