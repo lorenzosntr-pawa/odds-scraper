@@ -272,6 +272,21 @@ body.hide-betway    .history-table [data-bookmaker="betway"]    { display: none;
 .history-table tbody tr:hover           { background: #1a1a1a; }
 .history-table td:not(:first-child) { border-left: 1px solid #111; }
 
+.history-table thead th {
+  text-align: center;
+}
+.history-table th.ts-col,
+.history-table td.ts-col {
+  text-align: left;
+}
+.history-table th.side-h,
+.history-table td.num {
+  min-width: 56px;
+}
+.history-table td.num {
+  text-align: center;
+}
+
 .empty {
   padding: 24px;
   text-align: center;

@@ -601,3 +601,10 @@ def test_event_detail_default_market_is_1up(client: TestClient):
     m_2up = re.search(r'class="family-pill[^"]*"[^>]*>1x2 — 2 Up<', body)
     assert m_1up is not None and "active" in m_1up.group(0)
     assert m_2up is not None and "active" not in m_2up.group(0)
+
+
+def test_history_table_has_centered_headers_css_hook(client: TestClient):
+    """Sanity check that the table class hook is rendered so CSS can attach.
+    Visual centring is verified manually; this test guards the markup contract."""
+    r = client.get("/events/E1")
+    assert '<table class="history-table">' in r.text
