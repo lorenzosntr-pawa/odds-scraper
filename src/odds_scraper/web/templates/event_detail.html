@@ -71,6 +71,7 @@
         <thead>
           <tr>
             <th class="ts-col">TIME (UTC)</th>
+            <th class="state-col">STATE</th>
             {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
               <th data-bookmaker="{{ bm }}" colspan="{{ event.sides|length }}">
                 {{ {"betpawa":"BetPawa","sportybet":"SportyBet","bet9ja":"Bet9ja","betway":"Betway"}[bm] }}
@@ -79,6 +80,7 @@
           </tr>
           <tr class="sub-head">
             <th class="ts-col"></th>
+            <th class="state-col"></th>
             {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
               {% for side in event.sides %}
                 <th data-bookmaker="{{ bm }}" class="side-h">{{ event.sides_short[loop.index0] }}</th>
@@ -90,6 +92,7 @@
           {% for row in event.history %}
             <tr>
               <td class="ts-col">{{ row.ts_utc }}</td>
+              <td class="state-col">{% if row.match_minute is not none and row.status == 'STARTED' %}{{ row.match_minute }}' · {{ row.score_home }}–{{ row.score_away }}{% elif row.status == 'ENDED' %}FT · {{ row.score_home }}–{{ row.score_away }}{% else %}—{% endif %}</td>
               {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
                 {% for side in event.sides %}
                   {% set p = row.cells.get(bm, {}).get(side) %}

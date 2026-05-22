@@ -136,8 +136,13 @@ class EventView:
 
 @dataclass
 class HistoryRow:
-    """One snapshot's prices for a single market, all bookmakers/sides."""
+    """One snapshot's prices for a single market, all bookmakers/sides,
+    plus the match state recorded at that tick (minute + score + status)."""
     ts_utc: str
+    match_minute: Optional[int]
+    score_home: Optional[int]
+    score_away: Optional[int]
+    status: str
     # cells: {bookmaker: {side: PriceCell}}
     cells: dict[str, dict[str, PriceCell]]
 
@@ -307,18 +312,31 @@ def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
     history_rows = queries.get_market_history_for_event(
         conn, ev_row["id"], market_id, line,
     )
-    # Bucket by ts: {ts_utc: {bookmaker: {side: PriceCell}}}
-    bucket: dict[str, dict[str, dict[str, PriceCell]]] = {}
+    # Bucket by ts: per-bookmaker snapshots at the same ts share identical
+    # minute/score/status (all four extract from the same BetPawa detail),
+    # so we set state once on the first row encountered for each ts.
+    bucket: dict[str, dict] = {}
     for hr in history_rows:
         ts = hr["ts_utc"]
-        bm_cells = bucket.setdefault(ts, {})
-        bm_cells.setdefault(hr["bookmaker"], {})[hr["side"]] = PriceCell(
+        entry = bucket.setdefault(ts, {
+            "cells": {}, "minute": hr["match_minute"],
+            "score_home": hr["score_home"], "score_away": hr["score_away"],
+            "status": hr["status"] or "",
+        })
+        entry["cells"].setdefault(hr["bookmaker"], {})[hr["side"]] = PriceCell(
             odds=hr["odds"], probability=hr["probability"],
         )
 
     # Newest first
     history = [
-        HistoryRow(ts_utc=ts, cells=bucket[ts])
+        HistoryRow(
+            ts_utc=ts,
+            match_minute=bucket[ts]["minute"],
+            score_home=bucket[ts]["score_home"],
+            score_away=bucket[ts]["score_away"],
+            status=bucket[ts]["status"],
+            cells=bucket[ts]["cells"],
+        )
         for ts in sorted(bucket.keys(), reverse=True)
     ]
 

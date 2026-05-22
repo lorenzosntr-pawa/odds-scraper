@@ -323,3 +323,18 @@ body.hide-betway    .history-table [data-bookmaker="betway"]    { display: none;
 .line-pills {
   margin-top: 6px;
 }
+
+.state-col {
+  padding: 0 8px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: #9ca3af;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.history-table th.state-col {
+  color: #6b7280;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
