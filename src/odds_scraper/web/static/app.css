@@ -172,8 +172,7 @@ a.ev:hover { background: #181818; }
 }
 .search-input { flex: 1; }
 .custom-hours {
-  width: 80px;
-  text-align: right;
+  min-width: 120px;
   margin-left: 4px;
 }
 .search-input:focus,
