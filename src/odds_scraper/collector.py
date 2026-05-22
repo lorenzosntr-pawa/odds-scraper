@@ -72,10 +72,22 @@ class OddsCollector:
             try:
                 if b == Bookmaker.BETPAWA:
                     markets = await self._fetchers[b](bp_detail)
+                elif b == Bookmaker.BET9JA:
+                    # Bet9ja live needs to also try genius_id as a fallback
+                    # candidate id — bookieskit's find_event_id_by_sr_id
+                    # can return None or a stale id, and empirically the
+                    # BetGenius id sometimes works as the b9j EVENTID.
+                    fallback = (
+                        genius_id if regime == "live" and genius_id
+                        and genius_id != target_id else None
+                    )
+                    markets = await self._fetchers[b](
+                        target_id, live=(regime == "live"),
+                        fallback_id=fallback,
+                    )
                 else:
-                    # Non-BetPawa fetchers need to know the regime: SportyBet
-                    # uses a different productId for live, Bet9ja uses an
-                    # entirely different endpoint (get_live_event_detail).
+                    # SportyBet uses a different productId for live; Betway
+                    # uses the same endpoint for both.
                     markets = await self._fetchers[b](
                         target_id, live=(regime == "live"),
                     )
