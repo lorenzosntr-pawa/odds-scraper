@@ -242,8 +242,9 @@ def create_app(db_path: Path) -> FastAPI:
 
 
 def _build_event_view(conn, row) -> EventView:
-    """Card view: 1x2 family always; OU groups also included (marked as
-    is_extra) so the template can render them in a collapsible region.
+    """Card view: emit one MarketGroup per priced (market, line) tuple in the
+    order set by _COLLAPSED_ORDER then _EXPANDER_MARKETS. Each group carries
+    a stable group_key the JS layer uses to persist per-market collapse state.
 
     The detail page (per-event route) handles deep dives.
     """

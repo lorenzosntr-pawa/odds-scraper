@@ -1,10 +1,11 @@
 // =============================================================================
 // State (all client-side, persisted via localStorage)
 // =============================================================================
-//   bookmakers      : {bm: bool}        — chip on/off, hides table columns
-//   expanded_events : {id: true}        — cards with OU lines revealed
-//   search          : string            — substring filter on home/away
-//   kickoff_window  : "all" | seconds   — hide events kicking off > now+window
+//   bookmakers              : {bm: bool}              — chip on/off, hides table columns
+//   card_market_collapse    : {group_key: true}       — per-market collapse state on cards
+//   country_league_filter   : {country_id, league_id} — home-page cascading dropdown selection
+//   search                  : string                  — substring filter on home/away
+//   kickoff_window          : "all" | seconds         — hide events kicking off > now+window
 // =============================================================================
 
 const LS = {
