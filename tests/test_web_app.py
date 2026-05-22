@@ -242,8 +242,8 @@ def test_index_filter_row_includes_search_and_kickoff(client: TestClient):
     for win in ("3600", "10800", "21600", "86400", "172800"):
         assert f'data-window="{win}"' in r.text
     assert 'data-window="all"' in r.text
-    # Custom hours input and search input
-    assert 'id="kickoff-custom-hours"' in r.text
+    # Date picker (replaces the old custom-hours input) and search input
+    assert 'id="kickoff-date"' in r.text
     assert 'id="search-input"' in r.text
 
 
@@ -608,3 +608,17 @@ def test_history_table_has_centered_headers_css_hook(client: TestClient):
     Visual centring is verified manually; this test guards the markup contract."""
     r = client.get("/events/E1")
     assert '<table class="history-table">' in r.text
+
+
+def test_index_kickoff_date_input_is_type_date(client: TestClient):
+    """Native <input type="date"> opens the OS calendar picker on mobile
+    and desktop alike — verify the type attribute survives the template."""
+    r = client.get("/")
+    assert 'id="kickoff-date"' in r.text
+    assert 'type="date"' in r.text
+
+
+def test_index_no_longer_has_custom_hours_input(client: TestClient):
+    """The old kickoff-custom-hours number input has been retired."""
+    r = client.get("/")
+    assert 'id="kickoff-custom-hours"' not in r.text

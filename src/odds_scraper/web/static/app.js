@@ -59,63 +59,81 @@ function initTabs() {
 // -----------------------------------------------------------------------------
 // Kickoff timing filter
 // -----------------------------------------------------------------------------
+function localDateString(date) {
+  // Return YYYY-MM-DD in the browser's local timezone. The date picker emits
+  // local-time dates, so we compare against the card's kickoff_utc parsed
+  // to local components — not its UTC components.
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function applyKickoffFilter() {
   const win = LS.load('kickoff_window', 'all');
-  const cutoffSec = (win === 'all') ? null
-                                    : (Date.now() / 1000) + Number(win);
   document.querySelectorAll('.card[data-kickoff-utc]').forEach(card => {
-    if (cutoffSec === null) {
-      card.classList.remove('hidden-by-time');
-      return;
-    }
     const t = Date.parse(card.dataset.kickoffUtc);
     if (isNaN(t)) {
       // No parseable kickoff (shouldn't happen) — always show
       card.classList.remove('hidden-by-time');
       return;
     }
+    if (win === 'all') {
+      card.classList.remove('hidden-by-time');
+      return;
+    }
+    if (typeof win === 'string' && win.startsWith('date:')) {
+      const targetDate = win.slice(5);
+      const cardLocalDate = localDateString(new Date(t));
+      card.classList.toggle('hidden-by-time', cardLocalDate !== targetDate);
+      return;
+    }
+    // Numeric seconds window: hide events that kick off AFTER now + win.
+    // Live/ended events (kickoff in the past) always pass.
+    const cutoffSec = (Date.now() / 1000) + Number(win);
     const ks = t / 1000;
-    // Hide only events that kick off AFTER the window. Live/ended events
-    // (kickoff in the past) always pass.
     card.classList.toggle('hidden-by-time', ks > cutoffSec);
   });
 }
 
 function initKickoffFilter() {
   const current = LS.load('kickoff_window', 'all');
-  const customInput = document.getElementById('kickoff-custom-hours');
+  const dateInput = document.getElementById('kickoff-date');
+  const chips = Array.from(document.querySelectorAll('.chip.kick[data-window]'));
 
-  // If the stored window is a number that doesn't match any pill,
-  // it's a custom hours window — populate the input and clear pills.
-  const pillValues = new Set(
-    Array.from(document.querySelectorAll('.chip.kick[data-window]'))
-         .map(c => c.dataset.window)
-  );
-  const isCustom = current !== 'all' && !pillValues.has(String(current));
+  // Restore stored state on boot.
+  const isDate = typeof current === 'string' && current.startsWith('date:');
+  if (isDate && dateInput) {
+    dateInput.value = current.slice(5);
+    chips.forEach(c => c.classList.remove('on'));
+  } else {
+    chips.forEach(c => c.classList.toggle('on', c.dataset.window === String(current)));
+    if (dateInput) dateInput.value = '';
+  }
 
-  document.querySelectorAll('.chip.kick[data-window]').forEach(c => {
-    c.classList.toggle('on', !isCustom && c.dataset.window === current);
+  // Chip click: clear date input, set chip state.
+  chips.forEach(c => {
     c.addEventListener('click', () => {
-      document.querySelectorAll('.chip.kick').forEach(x => x.classList.remove('on'));
+      chips.forEach(x => x.classList.remove('on'));
       c.classList.add('on');
-      if (customInput) customInput.value = '';
+      if (dateInput) dateInput.value = '';
       LS.save('kickoff_window', c.dataset.window);
       applyKickoffFilter();
     });
   });
 
-  if (customInput) {
-    if (isCustom) customInput.value = String(Number(current) / 3600);
-    customInput.addEventListener('input', () => {
-      const hours = parseFloat(customInput.value);
-      if (!isFinite(hours) || hours <= 0) {
-        // Empty / invalid → revert to "All"
-        document.querySelectorAll('.chip.kick').forEach(x => x.classList.remove('on'));
+  // Date change: clear chips, save tagged string.
+  if (dateInput) {
+    dateInput.addEventListener('input', () => {
+      const v = dateInput.value;
+      if (!v) {
+        // User cleared the date — revert to "All" so something is selected.
+        chips.forEach(x => x.classList.remove('on'));
         document.querySelector('.chip.kick[data-window="all"]')?.classList.add('on');
         LS.save('kickoff_window', 'all');
       } else {
-        document.querySelectorAll('.chip.kick').forEach(x => x.classList.remove('on'));
-        LS.save('kickoff_window', Math.round(hours * 3600));
+        chips.forEach(x => x.classList.remove('on'));
+        LS.save('kickoff_window', `date:${v}`);
       }
       applyKickoffFilter();
     });
