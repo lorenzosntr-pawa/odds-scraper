@@ -118,20 +118,14 @@ def make_fetchers(
         # Bet9ja's internal numeric id, but the resolver picks the right
         # one via the prematch map (prematch) or find_event_id_by_sr_id
         # (live), so the fetcher just needs to pick the endpoint.
+        # The {"D": false} flake (event slipped out of live list between
+        # lookup and detail fetch) is handled inside parse_markets as of
+        # bookieskit 0.15.1.
         b9j = clients[Bookmaker.BET9JA]
         if live:
             detail = await b9j.get_live_event_detail(event_id=b9j_id)
         else:
             detail = await b9j.get_event_detail(event_id=b9j_id)
-        # Defensive: bet9ja's GetLiveEvent returns {"D": false} when the
-        # event was in the live list at lookup time but slipped out by the
-        # time we fetched its detail (half-time, brief suspension, or stale
-        # lookup). bookieskit's parse_markets would raise
-        # `AttributeError: 'bool' object has no attribute 'get'` on that
-        # shape. Treat it as "no live data right now" and let the next
-        # tick retry.
-        if not isinstance(detail.get("D"), dict):
-            return []
         return parse_markets(detail, platform="bet9ja", registry=registry)
 
     async def fetch_betway(bw_id: str, *, live: bool = False) -> list:
