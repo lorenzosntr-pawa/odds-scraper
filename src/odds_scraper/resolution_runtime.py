@@ -188,20 +188,27 @@ async def resolve_event(
     bw_id = sr_id or None
 
     b9j_id: str | None = None
-    if regime == "live" and sr_id:
-        # Bet9ja's live events expose EXTID = SR id. Resolve to Bet9ja's
-        # internal numeric id via find_event_id_by_sr_id (which scans the
-        # live-events listing once per call). The internal id is what
-        # GetLiveEvent expects, not the BetGenius id we used to pass.
-        try:
-            b9j_id = await clients[Bookmaker.BET9JA].find_event_id_by_sr_id(sr_id)
-        except Exception as e:  # noqa: BLE001
-            log.warning(
-                "bet9ja live id lookup failed for sr=%s: %s: %s",
-                sr_id, type(e).__name__,
-                " ".join(str(e).split())[:120] or "<no message>",
-            )
-            b9j_id = None
+    if regime == "live":
+        # Bet9ja's live events expose EXTID = SR id; resolve to Bet9ja's
+        # internal numeric id via find_event_id_by_sr_id. If the event
+        # isn't in bet9ja's current live list at lookup time (which
+        # happens often — bet9ja's live list lags BetPawa and doesn't
+        # cover every fixture), fall back to genius_id directly as the
+        # EVENTID candidate. GetLiveEvent will either accept it and
+        # return markets, or return {D: false} which the parser now
+        # treats as "no markets right now" without crashing.
+        if sr_id:
+            try:
+                b9j_id = await clients[Bookmaker.BET9JA].find_event_id_by_sr_id(sr_id)
+            except Exception as e:  # noqa: BLE001
+                log.warning(
+                    "bet9ja live id lookup failed for sr=%s: %s: %s",
+                    sr_id, type(e).__name__,
+                    " ".join(str(e).split())[:120] or "<no message>",
+                )
+                b9j_id = None
+        if not b9j_id and genius_id:
+            b9j_id = genius_id
     elif regime == "prematch" and sr_id:
         mapping = await _bet9ja_prematch_map.get(clients[Bookmaker.BET9JA])
         b9j_id = mapping.get(sr_id) or mapping.get(f"sr:match:{sr_id}")
