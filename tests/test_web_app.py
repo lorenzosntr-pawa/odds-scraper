@@ -110,12 +110,11 @@ def test_event_detail_renders_default_market(client: TestClient):
     # Header includes team names + back link
     assert "Liverpool" in r.text and "Arsenal" in r.text
     assert 'href="/"' in r.text
-    # Default market is 1x2 — 2 Up; its pill is active
-    assert "1x2 — 2 Up" in r.text
+    # Default market is now 1x2 — 1 Up; its family-pill is active
+    assert "1x2 — 1 Up" in r.text
     assert 'class="family-pill active"' in r.text
-    # History table shows two snapshots for E1's 1x2_2up_ft home
-    assert "1.85" in r.text  # earlier snap
-    assert "1.90" in r.text  # later snap
+    # History table shows 1x2_1up_ft prices from the fixture's only snapshot
+    assert "1.85" in r.text
     # Bookmaker headers present
     assert "BetPawa" in r.text
 
@@ -256,10 +255,11 @@ def test_events_card_carries_filter_data_attributes(client: TestClient):
 
 
 def test_events_card_skips_ou_groups_when_no_data(client: TestClient):
-    # Fixture only has 1x2 family data — no OU rows in DB → no expand
-    # toggle should be rendered.
+    """Fixture only has 1x2 family data — no OU rows in DB → no OU group
+    is rendered (we check by group_key absence, not by old market-extra)."""
     r = client.get("/events?status=upcoming")
-    assert "expand-toggle" not in r.text
+    assert 'data-group-key="over_under_ft_' not in r.text
+    assert 'data-group-key="next_goal_ft_' not in r.text
 
 
 @pytest.fixture
@@ -299,12 +299,16 @@ def db_with_ou_path(tmp_path: Path) -> Path:
 
 
 def test_events_card_has_expand_toggle_when_ou_present(db_with_ou_path: Path):
+    """With OU 2.5 priced, the card emits a market-block with the
+    matching group_key — the per-market collapse hook for the JS layer."""
     app = create_app(db_path=db_with_ou_path)
     client = TestClient(app)
     r = client.get("/events?status=upcoming")
-    assert "expand-toggle" in r.text
-    assert "market-extra" in r.text
+    assert 'data-group-key="over_under_ft_2.5"' in r.text
     assert "Match O/U 2.5" in r.text
+    # The retired bottom button must NOT appear.
+    assert "expand-toggle" not in r.text
+    assert "market-extra" not in r.text
 
 
 def test_events_card_shows_next_goal_group_when_priced(db_path: Path):
@@ -394,22 +398,6 @@ def test_events_card_expander_groups_in_fixed_order(db_path: Path):
     assert -1 < i_ng < i_ou < i_hou < i_aou
 
 
-def test_events_card_expander_button_label_updates(db_path: Path):
-    conn = sqlite3.connect(str(db_path), isolation_level=None)
-    snap_id = conn.execute(
-        "SELECT id FROM snapshots WHERE event_id='E1' LIMIT 1"
-    ).fetchone()[0]
-    conn.execute(
-        "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
-        "market_id, line, side, odds, probability) "
-        "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', 'next_goal_ft', 1.0, 'home', 1.85, 0.54)",
-        (snap_id,),
-    )
-    conn.close()
-    client = TestClient(create_app(db_path=db_path))
-    body = client.get("/events?status=upcoming").text
-    assert "more market" in body  # new label includes "more market" or "more markets"
-    assert "Show 1 Over/Under" not in body  # old label retired
 
 
 def test_event_detail_subtitle_renders_country_and_league(db_path: Path):
@@ -540,7 +528,7 @@ def test_event_detail_history_row_renders_live_state(db_path: Path):
     conn.execute(
         "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
         "market_id, line, side, odds, probability) "
-        "VALUES (?, 'E1', '2026-05-22T18:34:12Z', 'betpawa', '1x2_2up_ft', "
+        "VALUES (?, 'E1', '2026-05-22T18:34:12Z', 'betpawa', '1x2_1up_ft', "
         "0.0, 'home', 1.85, 0.54)",
         (snap_id,),
     )
@@ -562,7 +550,7 @@ def test_event_detail_history_row_renders_ended_state(db_path: Path):
     conn.execute(
         "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
         "market_id, line, side, odds, probability) "
-        "VALUES (?, 'E1', '2026-05-22T20:00:00Z', 'betpawa', '1x2_2up_ft', "
+        "VALUES (?, 'E1', '2026-05-22T20:00:00Z', 'betpawa', '1x2_1up_ft', "
         "0.0, 'home', 1.85, 0.54)",
         (snap_id,),
     )
@@ -584,3 +572,32 @@ def test_event_detail_history_table_has_state_header(db_path: Path):
     client = TestClient(create_app(db_path=db_path))
     body = client.get("/events/E1").text
     assert ">STATE<" in body
+
+
+def test_events_card_emits_group_key_per_market(client: TestClient):
+    """Every market block carries data-group-key for the JS collapse layer.
+    1x2 family group_key = canonical_id."""
+    r = client.get("/events?status=upcoming")
+    assert 'data-group-key="1x2_ft"' in r.text
+    assert 'data-group-key="1x2_1up_ft"' in r.text
+    assert 'data-group-key="1x2_2up_ft"' in r.text
+
+
+def test_events_card_no_is_extra_marker(client: TestClient):
+    """The retired is_extra flag must not leak into rendered markup —
+    regression guard for the data-group-key migration."""
+    r = client.get("/events?status=upcoming")
+    assert "market-extra" not in r.text
+    assert "expand-toggle" not in r.text
+
+
+def test_event_detail_default_market_is_1up(client: TestClient):
+    """Without ?market= query, the active family chip is 1x2 — 1 Up."""
+    r = client.get("/events/E1")
+    body = r.text
+    # The active class lands on the 1up chip, not the 2up chip.
+    import re
+    m_1up = re.search(r'class="family-pill[^"]*"[^>]*>1x2 — 1 Up<', body)
+    m_2up = re.search(r'class="family-pill[^"]*"[^>]*>1x2 — 2 Up<', body)
+    assert m_1up is not None and "active" in m_1up.group(0)
+    assert m_2up is not None and "active" not in m_2up.group(0)

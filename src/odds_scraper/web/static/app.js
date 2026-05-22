@@ -147,33 +147,39 @@ function initSearch() {
 }
 
 // -----------------------------------------------------------------------------
-// Per-card "Show OU lines" expand toggle
+// Per-market collapse (each market block in a card)
 // -----------------------------------------------------------------------------
-function applyExpandedState() {
-  const expanded = LS.load('expanded_events', {});
-  document.querySelectorAll('.card[data-event-id]').forEach(card => {
-    const open = !!expanded[card.dataset.eventId];
-    card.classList.toggle('expanded', open);
-    const btn = card.querySelector('.expand-toggle');
-    if (btn) {
-      btn.textContent = open ? btn.dataset.expandedLabel
-                             : btn.dataset.collapsedLabel;
+// localStorage shape: {group_key: true} where group_key is the value of
+// data-group-key on the .market-block (e.g., "1x2_ft", "next_goal_ft_1.0").
+// true = collapsed. Absent = use the EXPANDED_BY_DEFAULT allowlist.
+const EXPANDED_BY_DEFAULT = new Set(["1x2_ft", "1x2_1up_ft"]);
+
+function applyMarketCollapseState() {
+  const stored = LS.load('card_market_collapse', {});
+  document.querySelectorAll('.market-block[data-group-key]').forEach(block => {
+    const key = block.dataset.groupKey;
+    let collapsed;
+    if (key in stored) {
+      collapsed = !!stored[key];
+    } else {
+      collapsed = !EXPANDED_BY_DEFAULT.has(key);
     }
+    block.classList.toggle('collapsed', collapsed);
   });
 }
 
-function initExpandToggles() {
-  document.querySelectorAll('.expand-toggle').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const card = btn.closest('.card');
-      if (!card) return;
-      const id = card.dataset.eventId;
-      const stored = LS.load('expanded_events', {});
-      if (stored[id]) delete stored[id];
-      else stored[id] = true;
-      LS.save('expanded_events', stored);
-      applyExpandedState();
-    });
+function initMarketCollapse() {
+  document.body.addEventListener('click', evt => {
+    const label = evt.target.closest('.market-block .group-label');
+    if (!label) return;
+    const block = label.closest('.market-block');
+    const key = block && block.dataset.groupKey;
+    if (!key) return;
+    const stored = LS.load('card_market_collapse', {});
+    const currentlyCollapsed = block.classList.contains('collapsed');
+    stored[key] = !currentlyCollapsed;
+    LS.save('card_market_collapse', stored);
+    applyMarketCollapseState();
   });
 }
 
@@ -268,7 +274,7 @@ function initCountryLeagueFilter() {
 // client-side state because the new card markup is fresh and class-free.
 // -----------------------------------------------------------------------------
 function applyAllCardState() {
-  applyExpandedState();
+  applyMarketCollapseState();
   applyKickoffFilter();
   applySearchFilter();
 }
@@ -276,8 +282,7 @@ function applyAllCardState() {
 function initEventDelegates() {
   document.body.addEventListener('htmx:afterSwap', evt => {
     if (evt.target && evt.target.id === 'events-list') {
-      // Wire up newly-inserted toggle buttons + reapply chip/time/search state
-      initExpandToggles();
+      // After a fragment swap, re-apply per-market collapse + chip/time/search state
       applyAllCardState();
     }
   });
@@ -289,7 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initKickoffFilter();
   initSearch();
   initCountryLeagueFilter();
-  initExpandToggles();
+  initMarketCollapse();
   initEventDelegates();
   applyAllCardState();
 });

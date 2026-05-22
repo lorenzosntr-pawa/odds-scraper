@@ -29,11 +29,9 @@
     <span class="lbl" data-bookmaker="betway">BW</span>
   </div>
 
-  {% set ns = namespace(extra_count=0) %}
   {% for group in event.market_groups %}
-    {% if group.is_extra %}{% set ns.extra_count = ns.extra_count + 1 %}{% endif %}
-    <div class="market-block{% if group.is_extra %} market-extra{% endif %}">
-      <div class="group-label">▾ {{ group.label }}</div>
+    <div class="market-block" data-group-key="{{ group.group_key }}">
+      <div class="group-label">{{ group.label }}</div>
       {% for row in group.rows %}
         <div class="row">
           <span class="outcome">{{ row.market_label }} · {{ row.side_short }}</span>
@@ -53,12 +51,4 @@
       {% endfor %}
     </div>
   {% endfor %}
-
-  {% if ns.extra_count > 0 %}
-    <button class="expand-toggle" type="button"
-            data-collapsed-label="▼ Show {{ ns.extra_count }} more {% if ns.extra_count == 1 %}market{% else %}markets{% endif %}"
-            data-expanded-label="▲ Hide extra markets">
-      ▼ Show {{ ns.extra_count }} more {% if ns.extra_count == 1 %}market{% else %}markets{% endif %}
-    </button>
-  {% endif %}
 </div>

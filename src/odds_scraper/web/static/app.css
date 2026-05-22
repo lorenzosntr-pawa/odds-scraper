@@ -73,9 +73,18 @@
 .col-header {
   background: #0f0f0f;
   padding: 6px 12px;
-  display: grid;
-  grid-template-columns: 110px repeat(4, 1fr);
+  display: flex;
+  align-items: center;
   gap: 4px;
+}
+.col-header > .lbl:first-child {
+  flex: 1;
+  min-width: 180px;
+}
+.col-header > .lbl[data-bookmaker] {
+  width: 80px;
+  text-align: center;
+  white-space: nowrap;
 }
 .group-label {
   padding: 5px 12px;
@@ -87,17 +96,35 @@
   border-top: 1px solid #2a3a55;
   border-bottom: 1px solid #1a1a1a;
   cursor: pointer;
+  user-select: none;
 }
 .group-label:first-of-type { border-top: 0; }
+.group-label::before {
+  content: "▾ ";
+  display: inline-block;
+  font-size: 11px;
+}
+.market-block.collapsed .group-label::before {
+  content: "▸ ";
+}
+.market-block.collapsed .row { display: none; }
 .row {
-  display: grid;
-  grid-template-columns: 110px repeat(4, 1fr);
+  display: flex;
+  align-items: center;
   gap: 4px;
   padding: 5px 12px;
-  align-items: center;
   border-bottom: 1px solid #111;
 }
 .row:last-child { border-bottom: 0; }
+.row > .outcome {
+  flex: 1;
+  min-width: 180px;
+}
+.row > span[data-bookmaker] {
+  width: 80px;
+  text-align: center;
+  white-space: nowrap;
+}
 .outcome { color: #d1d5db; }
 .odds    { color: #4ade80; font-weight: 600; }
 .prob    { color: #94a3b8; font-size: 9px; margin-left: 4px; }
@@ -152,25 +179,6 @@ a.ev:hover { background: #181818; }
 .search-input:focus,
 .custom-hours:focus { border-color: #2a4a2a; }
 
-/* Per-card OU expand toggle + hidden extras */
-.market-extra { display: none; }
-.card.expanded .market-extra { display: block; }
-.expand-toggle {
-  display: block;
-  width: 100%;
-  padding: 6px 12px;
-  background: #0f0f0f;
-  color: #888;
-  border: 0;
-  border-top: 1px solid #1a1a1a;
-  font-family: inherit;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  cursor: pointer;
-}
-.expand-toggle:hover { background: #181818; color: #d1d5db; }
-.card.expanded .expand-toggle { color: #4ade80; }
 
 /* Card filtered-out states */
 .card.hidden-by-search { display: none; }
