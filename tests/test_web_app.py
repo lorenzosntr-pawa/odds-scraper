@@ -622,3 +622,20 @@ def test_index_no_longer_has_custom_hours_input(client: TestClient):
     """The old kickoff-custom-hours number input has been retired."""
     r = client.get("/")
     assert 'id="kickoff-custom-hours"' not in r.text
+
+
+def test_events_card_wraps_grid_in_card_grid_div(client: TestClient):
+    """The event card wraps its column header + market blocks in a single
+    .card-grid div so the phone media query can make ONE scroll container
+    per card. The event-title link (.ev) stays OUTSIDE the wrapper so it
+    never scrolls. This test guards the HTML contract the mobile CSS
+    depends on."""
+    r = client.get("/events?status=upcoming")
+    body = r.text
+    assert '<div class="card-grid">' in body
+    # The event-title anchor must appear BEFORE the card-grid wrapper so it
+    # stays put above the horizontal scroll area on phone.
+    ev_pos = body.find('<a class="ev"')
+    grid_pos = body.find('<div class="card-grid"')
+    assert ev_pos != -1 and grid_pos != -1, "both elements must exist"
+    assert ev_pos < grid_pos, "<a class='ev'> must precede <div class='card-grid'>"
