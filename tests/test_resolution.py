@@ -59,6 +59,33 @@ def test_no_match_returns_empty():
     assert match_provider_ids(bp, [("sportybet", other)]) == {}
 
 
+def test_load_scrubs_legacy_live_b9j_eq_genius(tmp_path: Path):
+    """Live entries where b9j_id == genius_id were written by the legacy
+    code path (b9j_id = genius_id). Now we resolve b9j live via
+    find_event_id_by_sr_id, but the cache hit short-circuits — drop them."""
+    import json
+    cache_path = tmp_path / "c.json"
+    cache_path.write_text(json.dumps({
+        "E1:live": {  # legacy: b9j_id matches genius_id
+            "sr_id": "sr:match:1", "genius_id": "13599054",
+            "sb_id": "sr:match:1", "b9j_id": "13599054", "bw_id": "sr:match:1",
+        },
+        "E2:live": {  # genuine b9j_id different from genius_id — kept
+            "sr_id": "sr:match:2", "genius_id": "9999",
+            "sb_id": "sr:match:2", "b9j_id": "12345", "bw_id": "sr:match:2",
+        },
+        "E3:prematch": {  # prematch with matching ids is fine — kept
+            "sr_id": "sr:match:3", "genius_id": "13599055",
+            "sb_id": "sr:match:3", "b9j_id": "13599055", "bw_id": "sr:match:3",
+        },
+    }))
+    cache = ResolutionCache(cache_path)
+    cache.load()
+    assert cache.get(ResolutionKey("E1", "live")) is None
+    assert cache.get(ResolutionKey("E2", "live"))["b9j_id"] == "12345"
+    assert cache.get(ResolutionKey("E3", "prematch"))["b9j_id"] == "13599055"
+
+
 def test_load_scrubs_poisoned_b9j_entries_both_regimes(tmp_path: Path):
     """Entries with sr_id but no b9j_id were cached during a prior run when
     the bet9ja map wasn't ready (prematch) or the live-list missed the

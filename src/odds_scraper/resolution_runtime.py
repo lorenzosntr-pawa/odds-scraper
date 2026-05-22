@@ -110,23 +110,30 @@ def make_fetchers(
             detail, platform="sportybet", registry=registry, probability="true",
         )
 
-    async def fetch_bet9ja(b9j_id: str, *, live: bool = False) -> list:
+    async def fetch_bet9ja(
+        b9j_id: str, *, live: bool = False,
+        fallback_id: str | None = None,
+    ) -> list:
         # Bet9ja exposes two separate endpoints. Prematch uses
         # get_event_detail (response under D.O with `S_*` odds keys); live
         # uses get_live_event_detail / GetLiveEvent (response under D.O
-        # with `LIVES_*` keys). The id semantics also differ — both expect
-        # Bet9ja's internal numeric id, but the resolver picks the right
-        # one via the prematch map (prematch) or find_event_id_by_sr_id
-        # (live), so the fetcher just needs to pick the endpoint.
-        # The {"D": false} flake (event slipped out of live list between
-        # lookup and detail fetch) is handled inside parse_markets as of
-        # bookieskit 0.15.1.
+        # with `LIVES_*` keys). Live ids ideally come from
+        # find_event_id_by_sr_id, but that can miss; the BetGenius id
+        # sometimes works as the EVENTID too — try it as a fallback when
+        # the primary lookup returns no markets.
         b9j = clients[Bookmaker.BET9JA]
-        if live:
-            detail = await b9j.get_live_event_detail(event_id=b9j_id)
-        else:
-            detail = await b9j.get_event_detail(event_id=b9j_id)
-        return parse_markets(detail, platform="bet9ja", registry=registry)
+
+        async def _fetch_one(eid: str) -> list:
+            if live:
+                detail = await b9j.get_live_event_detail(event_id=eid)
+            else:
+                detail = await b9j.get_event_detail(event_id=eid)
+            return parse_markets(detail, platform="bet9ja", registry=registry)
+
+        markets = await _fetch_one(b9j_id)
+        if not markets and fallback_id and fallback_id != b9j_id:
+            markets = await _fetch_one(fallback_id)
+        return markets
 
     async def fetch_betway(bw_id: str, *, live: bool = False) -> list:
         # Use the auto-paginated get_markets helper: Betway's underlying
