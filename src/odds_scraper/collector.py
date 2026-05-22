@@ -73,7 +73,12 @@ class OddsCollector:
                 if b == Bookmaker.BETPAWA:
                     markets = await self._fetchers[b](bp_detail)
                 else:
-                    markets = await self._fetchers[b](target_id)
+                    # Non-BetPawa fetchers need to know the regime: SportyBet
+                    # uses a different productId for live, Bet9ja uses an
+                    # entirely different endpoint (get_live_event_detail).
+                    markets = await self._fetchers[b](
+                        target_id, live=(regime == "live"),
+                    )
                 if not markets:
                     log.info(
                         "fetcher for %s returned empty markets (event=%s, regime=%s, id=%s)",

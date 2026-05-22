@@ -59,15 +59,16 @@ def test_no_match_returns_empty():
     assert match_provider_ids(bp, [("sportybet", other)]) == {}
 
 
-def test_load_scrubs_poisoned_b9j_prematch_entries(tmp_path: Path):
-    """Prematch entries with sr_id but no b9j_id were cached during a
-    prior startup before the bet9ja map finished building. They should be
-    dropped on next load so re-resolution can pick up the now-built map."""
+def test_load_scrubs_poisoned_b9j_entries_both_regimes(tmp_path: Path):
+    """Entries with sr_id but no b9j_id were cached during a prior run when
+    the bet9ja map wasn't ready (prematch) or the live-list missed the
+    event transiently (live). They should be dropped on next load so
+    re-resolution can pick up a fresh result. Entries with no sr_id at all
+    are legitimately unresolvable and stay cached."""
     import json
     cache_path = tmp_path / "c.json"
-    # Hand-craft a cache file with mixed good + poisoned entries.
     cache_path.write_text(json.dumps({
-        "E1:prematch": {  # poisoned: sr present, b9j missing
+        "E1:prematch": {  # poisoned: prematch + sr present + b9j missing
             "sr_id": "sr:match:1", "genius_id": "",
             "sb_id": "sr:match:1", "b9j_id": None, "bw_id": "sr:match:1",
         },
@@ -75,24 +76,23 @@ def test_load_scrubs_poisoned_b9j_prematch_entries(tmp_path: Path):
             "sr_id": "sr:match:2", "genius_id": "g-2",
             "sb_id": "sr:match:2", "b9j_id": "b9j-2", "bw_id": "sr:match:2",
         },
-        "E3:live": {  # live regime never poisoned by this rule
+        "E3:live": {  # poisoned: live + sr present + b9j missing
             "sr_id": "sr:match:3", "genius_id": "g-3",
             "sb_id": "sr:match:3", "b9j_id": None, "bw_id": "sr:match:3",
         },
-        "E4:prematch": {  # no sr_id at all — not poisoned (legitimately unresolvable)
+        "E4:prematch": {  # no sr_id — legitimately unresolvable, kept
             "sr_id": "", "genius_id": "",
             "sb_id": None, "b9j_id": None, "bw_id": None,
         },
     }))
     cache = ResolutionCache(cache_path)
     cache.load()
-    # Poisoned entry was dropped.
     assert cache.get(ResolutionKey("E1", "prematch")) is None
-    # Healthy entries survived.
     assert cache.get(ResolutionKey("E2", "prematch"))["b9j_id"] == "b9j-2"
-    assert cache.get(ResolutionKey("E3", "live"))["b9j_id"] is None
+    assert cache.get(ResolutionKey("E3", "live")) is None
     assert cache.get(ResolutionKey("E4", "prematch"))["sr_id"] == ""
     # Persisted to disk so the scrub is one-time per file.
     cache2 = ResolutionCache(cache_path)
     cache2.load()
     assert cache2.get(ResolutionKey("E1", "prematch")) is None
+    assert cache2.get(ResolutionKey("E3", "live")) is None
