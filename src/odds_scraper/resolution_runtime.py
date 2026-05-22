@@ -167,15 +167,24 @@ async def resolve_event(
         "sr_id": sr_id, "genius_id": genius_id,
         "sb_id": sb_id, "b9j_id": b9j_id, "bw_id": bw_id,
     }
-    cache.set(key, entry)
-    # Log once per (event, regime) — same cardinality as the cache. Helps
-    # diagnose live-event resolution failures where SB/B9J/BW ids end up None
-    # despite the BetPawa detail having sr/genius ids.
+    # Don't poison the cache with negative b9j_id resolutions for prematch
+    # events: the bet9ja prematch map takes ~2 min to build, so events
+    # resolved during startup would get b9j_id=None cached forever (the
+    # cache persists to disk across restarts). Skipping the write means the
+    # next tick re-resolves and picks up the now-built map. SB/BW ids
+    # don't have this problem — they're computed directly from sr_id.
+    poisons_cache = regime == "prematch" and b9j_id is None and bool(sr_id)
+    if not poisons_cache:
+        cache.set(key, entry)
+    # Log once per resolve attempt (cache miss). For poisoned entries this
+    # logs every tick until the map is built, which is the visible signal
+    # that retries are happening.
     log.info(
-        "resolved event %s (regime=%s) sr=%s genius=%s sb=%s b9j=%s bw=%s",
+        "resolved event %s (regime=%s) sr=%s genius=%s sb=%s b9j=%s bw=%s%s",
         event_id, regime,
         sr_id or "-", genius_id or "-",
         sb_id or "-", b9j_id or "-", bw_id or "-",
+        " [not cached, will retry]" if poisons_cache else "",
     )
     return _from_cached(entry)
 

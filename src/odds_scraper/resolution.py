@@ -44,6 +44,32 @@ class ResolutionCache:
                 log.warning("resolution cache unreadable, starting fresh: %s", e)
                 self._data = {}
         self._loaded = True
+        self._scrub_poisoned_b9j_prematch()
+
+    def _scrub_poisoned_b9j_prematch(self) -> None:
+        """Drop prematch entries that have an sr_id but no b9j_id.
+
+        These were cached during a prior run before the bet9ja prematch map
+        finished building (~2 min after process start). Without this scrub
+        those entries would stay b9j_id=None forever — even though the map
+        IS available on the next run. Removing them forces re-resolution.
+        """
+        poisoned = [
+            k for k, v in self._data.items()
+            if k.endswith(":prematch")
+            and v.get("sr_id")
+            and not v.get("b9j_id")
+        ]
+        if not poisoned:
+            return
+        for k in poisoned:
+            del self._data[k]
+        log.info(
+            "resolution cache: dropped %d poisoned prematch entries "
+            "(sr_id present but b9j_id None) — they will re-resolve",
+            len(poisoned),
+        )
+        self._persist()
 
     def get(self, key: ResolutionKey) -> Optional[dict]:
         assert self._loaded, "ResolutionCache.load() not called"
