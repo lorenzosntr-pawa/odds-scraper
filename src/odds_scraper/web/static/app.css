@@ -360,3 +360,106 @@ body.hide-betway    .history-table [data-bookmaker="betway"]    { display: none;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+
+/* ============================================================= */
+/* Phone portrait — 320–430px wide, with regression band to 640px */
+/* ============================================================= */
+@media (max-width: 640px) {
+
+  /* ----- Event card: lock outcome + BetPawa, scroll SB/B9J/BW ----- */
+  .card-grid {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .col-header,
+  .market-block .row {
+    min-width: 480px;
+  }
+  .col-header > .lbl:first-child,
+  .market-block .row > .outcome {
+    position: sticky;
+    left: 0;
+    background: #0a0a0a;
+    z-index: 2;
+  }
+  .col-header > .lbl[data-bookmaker="betpawa"],
+  .market-block .row > span[data-bookmaker="betpawa"] {
+    position: sticky;
+    left: 180px;
+    background: #0a0a0a;
+    z-index: 2;
+  }
+
+  /* ----- Detail-page history table: lock TIME + STATE + BP ----- */
+  .history-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .history-table {
+    min-width: 720px;
+  }
+  .history-table th.ts-col,
+  .history-table td.ts-col {
+    width: 150px;
+    min-width: 150px;
+    position: sticky;
+    left: 0;
+    background: #0a0a0a;
+    z-index: 2;
+  }
+  .history-table th.state-col,
+  .history-table td.state-col {
+    width: 80px;
+    min-width: 80px;
+    position: sticky;
+    left: 150px;
+    background: #0a0a0a;
+    z-index: 2;
+  }
+  .history-table [data-bookmaker="betpawa"] {
+    position: sticky;
+    left: 230px;
+    background: #0a0a0a;
+    z-index: 2;
+  }
+
+  /* ----- Filter row: stack groups vertically ----- */
+  .filter-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .filter-group {
+    flex-wrap: wrap;
+  }
+  .filter-group.filter-search {
+    max-width: none;
+  }
+  .filter-select {
+    flex: 1;
+  }
+
+  /* ----- Touch targets: 32px minimum for chips, pills, inputs ----- */
+  .chip {
+    min-height: 32px;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .family-pill,
+  .line-pill,
+  .pill {
+    min-height: 32px;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .filter-select,
+  #kickoff-date {
+    min-height: 32px;
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  .group-label {
+    padding: 8px 12px;
+    font-size: 10px;
+  }
+}
