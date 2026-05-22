@@ -52,6 +52,35 @@ def test_parse_score_returns_none_when_prematch():
     assert parse_score(_load("betpawa_event_upcoming.json")) is None
 
 
+def test_parse_status_ended_when_live_false_with_score():
+    """BetPawa keeps the final score in the detail after a match ends
+    and flips additionalInfo.live to False, but doesn't always set
+    currentPeriod to "FT" — some events stay at the in-play period
+    string. The live=False signal must be enough to declare ENDED
+    when a score is present."""
+    detail = {
+        "id": "1", "startTime": "2026-05-22T15:00:00Z",
+        "additionalInfo": {"live": False},
+        "results": {
+            "display": {
+                "minute": 90,
+                "currentPeriod": {"name": "2H", "slug": "second-half"},
+            },
+            "participantPeriodResults": [
+                {"participant": {"type": "HOME"},
+                 "periodResults": [
+                     {"period": {"slug": "FULL_TIME_EXCLUDING_OVERTIME"}, "result": 2},
+                 ]},
+                {"participant": {"type": "AWAY"},
+                 "periodResults": [
+                     {"period": {"slug": "FULL_TIME_EXCLUDING_OVERTIME"}, "result": 1},
+                 ]},
+            ],
+        },
+    }
+    assert parse_status(detail) == EventStatus.ENDED
+
+
 def test_parse_clock_halftime_returns_45():
     detail = {
         "id": "1", "startTime": "2026-05-19T15:00:00Z",

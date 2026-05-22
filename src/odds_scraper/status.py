@@ -22,11 +22,21 @@ def parse_status(detail: dict[str, Any]) -> EventStatus:
     if period in _ENDED_PERIODS:
         return EventStatus.ENDED
 
-    if info.minute is not None or info.score_home is not None:
+    additional = detail.get("additionalInfo") or {}
+    live = additional.get("live")
+
+    # BetPawa flips additionalInfo.live to False once a match ends but
+    # keeps the final score in the detail dict. Without this branch,
+    # the next check (score_home is not None → STARTED) would keep the
+    # event live indefinitely even after FT — observed in production
+    # for events where the period doesn't transition to "FT" / "FINAL".
+    if live is False and info.score_home is not None:
+        return EventStatus.ENDED
+
+    if live is True:
         return EventStatus.STARTED
 
-    additional = detail.get("additionalInfo") or {}
-    if additional.get("live") is True:
+    if info.minute is not None or info.score_home is not None:
         return EventStatus.STARTED
 
     if detail.get("startTime"):
