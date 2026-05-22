@@ -16,6 +16,16 @@ log = logging.getLogger(__name__)
 
 Fetcher = Callable[..., Awaitable[list]]
 
+# Bookmakers we hit during live (STARTED) events. Bet9ja's live endpoint
+# has known coverage gaps for our fixtures and Betway's live data tends
+# to lag / stay stale, so for live ticks we only fetch BP + SB. Prematch
+# uses all four. The skipped bookmakers still get a Snapshot row each
+# tick (with empty prices and a clear fetch_status) so the per-event row
+# shape is stable across regimes.
+_LIVE_BOOKMAKERS: frozenset[Bookmaker] = frozenset(
+    {Bookmaker.BETPAWA, Bookmaker.SPORTYBET},
+)
+
 
 class OddsCollector:
     """Stateless one-tick fan-out. Always returns 4 Snapshot rows (one per
@@ -62,6 +72,13 @@ class OddsCollector:
         regime = "live" if status.value == "STARTED" else "non-live"
 
         async def run(b: Bookmaker, target_id: Optional[str]):
+            if regime == "live" and b not in _LIVE_BOOKMAKERS:
+                # Skipped by policy — Bet9ja live + Betway live are
+                # currently unreliable, so we don't hit them during
+                # STARTED ticks. Emit an empty snapshot so the row shape
+                # per tick stays stable.
+                return b, (FetchStatus.LOOKUP_FAILED,
+                           "skipped: live regime restricted to BP+SB", [])
             if b != Bookmaker.BETPAWA and not target_id:
                 log.warning(
                     "no id resolved for %s (event=%s, regime=%s, sr=%s, genius=%s)",

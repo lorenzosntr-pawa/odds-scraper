@@ -251,6 +251,28 @@ async def test_out_of_manifest_lines_are_ignored():
     assert lines_seen == {2.5}
 
 
+async def test_live_regime_skips_bet9ja_and_betway(collector):
+    """For STARTED events we only hit BP + SB. Bet9ja and Betway snapshots
+    still appear in the per-tick rows (row shape stable) but with empty
+    prices and a clear fetch_status indicating the skip is by policy."""
+    rows = await collector.collect(
+        _bp_detail(live=True),
+        resolved={Bookmaker.SPORTYBET: "sr:match:1",
+                  Bookmaker.BET9JA: "b9j-7",
+                  Bookmaker.BETWAY: "sr:match:1"},
+        sr_id="sr:match:1", genius_id="g-9",
+    )
+    by_bm = {r.bookmaker: r for r in rows}
+    assert by_bm[Bookmaker.BETPAWA].fetch_status == FetchStatus.OK
+    assert by_bm[Bookmaker.SPORTYBET].fetch_status == FetchStatus.OK
+    assert by_bm[Bookmaker.BET9JA].fetch_status == FetchStatus.LOOKUP_FAILED
+    assert by_bm[Bookmaker.BET9JA].prices == {}
+    assert "live regime" in by_bm[Bookmaker.BET9JA].fetch_error
+    assert by_bm[Bookmaker.BETWAY].fetch_status == FetchStatus.LOOKUP_FAILED
+    assert by_bm[Bookmaker.BETWAY].prices == {}
+    assert "live regime" in by_bm[Bookmaker.BETWAY].fetch_error
+
+
 async def test_live_status_populates_clock_and_score(collector):
     rows = await collector.collect(
         _bp_detail(live=True),
