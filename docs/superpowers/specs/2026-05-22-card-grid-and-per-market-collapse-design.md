@@ -18,8 +18,9 @@ This sub-project fixes both in one cohesive pass since they touch the same files
 
 | Decision | Value |
 |---|---|
-| Card layout primitive | CSS grid (replaces today's flex). `.col-header` and every `.row` share the same `grid-template-columns`. |
-| Grid template | `minmax(180px, 1fr) repeat(4, 80px)` — outcome column flexes; four bookmaker columns are fixed-width and identical. |
+| Card layout primitive | Flexbox with explicit-width children. `.col-header` and every `.row` stay `display: flex`; bookmaker cells get `width: 80px; text-align: center`, outcome cell gets `flex: 1; min-width: 180px`. Same explicit widths in header and row = visual columns line up. |
+| Behaviour when a column has no priced cells | Column stays rendered (empty cells show em-dash). |
+| Behaviour when a user toggles a bookmaker chip OFF | Existing `[data-bookmaker="x"] { display: none }` rule removes header cell AND each row cell from the flex layout. Remaining columns reflow tightly — the natural flex behaviour, which is what the user wants for active filtering. |
 | Per-market toggle UX | Click the existing `.group-label` to toggle that group's rows. No new icons; just make the label itself clickable with a chevron rotation. |
 | Group key for localStorage | Non-parameterized: `canonical_id` (e.g., `1x2_ft`). Parameterized: `{canonical_id}_{line}` (e.g., `next_goal_ft_1.0`, `over_under_ft_2.5`). Stable across cards and reloads. |
 | localStorage key | `card_market_collapse`. Shape `{group_key: true}` — true = collapsed; absent = use default. |
@@ -34,9 +35,28 @@ This sub-project fixes both in one cohesive pass since they touch the same files
 
 ### Card layout (`_event_card.html` + `app.css`)
 
-Replace the existing flex spans with grid rows. Each `.row` and the `.col-header` element gets `display: grid` and the same `grid-template-columns` value. The CSS rule attaches to `.row` and `.col-header` together so they stay in lockstep — adding a new column in the future means one CSS edit.
+The current layout uses flex containers but lets each cell size to its content, so widths drift between the header and each row. Fix: keep `display: flex`, give the children explicit widths so cells at column N occupy the same horizontal position in both header and row.
 
-When a bookmaker chip is toggled off, the body class `body.hide-betpawa` already exists; its CSS rule `[data-bookmaker="betpawa"] { display: none }` causes that grid cell to drop out of the layout, and `grid-template-columns: minmax(180px, 1fr) repeat(4, 80px)` keeps producing 4 explicit tracks. Some tracks render empty when their cells are hidden — that's the explicit "always reserve the column" decision, and it keeps the remaining headers locked over their data.
+```css
+.col-header, .market-block .row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.col-header > .lbl:first-child,
+.market-block .row > .outcome {
+  flex: 1;
+  min-width: 180px;
+}
+.col-header > .lbl[data-bookmaker],
+.market-block .row > span[data-bookmaker] {
+  width: 80px;
+  text-align: center;
+  white-space: nowrap;
+}
+```
+
+When a bookmaker chip is toggled off, the existing CSS rule `body.hide-betpawa [data-bookmaker="betpawa"] { display: none }` removes the cell from the flex layout in both header and row — remaining columns reflow tightly. That matches the active-filter UX (user wants the column gone) and stays distinct from the "no priced cells but column still reserved" case (cell is empty, not `display: none`).
 
 ### Per-market collapse mechanic
 
