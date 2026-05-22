@@ -80,8 +80,8 @@ def _build_market_picker() -> list[tuple[str, Optional[float], str, str]]:
 _MARKET_PICKER = _build_market_picker()
 _PICKER_BY_SLUG = {slug: (mid, line, label) for mid, line, label, slug in _MARKET_PICKER}
 
-# Default market for the detail page when none specified — focus is 2up
-_DEFAULT_MARKET_SLUG = "1x2_2up_ft"
+# Default market for the detail page when none specified — focus is 1up
+_DEFAULT_MARKET_SLUG = "1x2_1up_ft"
 
 _POLL_SECONDS = {"live": 5, "upcoming": 30, "ended": 60}
 
@@ -114,11 +114,11 @@ class OutcomeRow:
 @dataclass
 class MarketGroup:
     label: str              # e.g., "1x2 — Full Time"
+    group_key: str          # stable key for per-market collapse persistence:
+                            #   "1x2_ft" / "1x2_1up_ft" / "1x2_2up_ft" for the
+                            #   1x2 family; f"{canonical_id}_{line}" for
+                            #   parameterized markets (e.g., "over_under_ft_2.5").
     rows: list[OutcomeRow]
-    # is_extra=True groups are hidden by default in the card view; revealed
-    # via the expand toggle. The detail page uses the market-picker pills
-    # instead and ignores this flag.
-    is_extra: bool = False
 
 
 @dataclass
@@ -242,8 +242,9 @@ def create_app(db_path: Path) -> FastAPI:
 
 
 def _build_event_view(conn, row) -> EventView:
-    """Card view: 1x2 family always; OU groups also included (marked as
-    is_extra) so the template can render them in a collapsible region.
+    """Card view: emit one MarketGroup per priced (market, line) tuple in the
+    order set by _COLLAPSED_ORDER then _EXPANDER_MARKETS. Each group carries
+    a stable group_key the JS layer uses to persist per-market collapse state.
 
     The detail page (per-event route) handles deep dives.
     """
@@ -269,7 +270,7 @@ def _build_event_view(conn, row) -> EventView:
                 prices=prices,
             ))
         groups.append(MarketGroup(
-            label=group_label, rows=rows_for_group, is_extra=False,
+            label=group_label, group_key=market_id, rows=rows_for_group,
         ))
 
     # Parameterized markets as extra (hidden-by-default) groups, in the
@@ -290,8 +291,8 @@ def _build_event_view(conn, row) -> EventView:
             if any(r.prices for r in rows_for_group):
                 groups.append(MarketGroup(
                     label=f"{label_prefix} {line}",
+                    group_key=f"{market_id}_{line}",
                     rows=rows_for_group,
-                    is_extra=True,
                 ))
 
     return EventView(
