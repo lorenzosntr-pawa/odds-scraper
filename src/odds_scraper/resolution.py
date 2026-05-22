@@ -47,25 +47,27 @@ class ResolutionCache:
         self._scrub_poisoned_b9j_prematch()
 
     def _scrub_poisoned_b9j_prematch(self) -> None:
-        """Drop prematch entries that have an sr_id but no b9j_id.
+        """Drop cached entries that have an sr_id but no b9j_id.
 
-        These were cached during a prior run before the bet9ja prematch map
-        finished building (~2 min after process start). Without this scrub
-        those entries would stay b9j_id=None forever — even though the map
-        IS available on the next run. Removing them forces re-resolution.
+        Two sources of this poisoning:
+          - prematch: the bet9ja prematch map takes ~2 min to build, so
+            events resolved during startup get b9j_id=None cached forever.
+          - live: find_event_id_by_sr_id can transiently miss an event
+            mid-match; that None would also stick.
+
+        Without this scrub those entries stay b9j_id=None across restarts.
+        Removing them on load forces re-resolution next tick.
         """
         poisoned = [
             k for k, v in self._data.items()
-            if k.endswith(":prematch")
-            and v.get("sr_id")
-            and not v.get("b9j_id")
+            if v.get("sr_id") and not v.get("b9j_id")
         ]
         if not poisoned:
             return
         for k in poisoned:
             del self._data[k]
         log.info(
-            "resolution cache: dropped %d poisoned prematch entries "
+            "resolution cache: dropped %d poisoned entries "
             "(sr_id present but b9j_id None) — they will re-resolve",
             len(poisoned),
         )

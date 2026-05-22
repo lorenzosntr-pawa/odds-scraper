@@ -99,22 +99,43 @@ def make_fetchers(
             bp_detail, platform="betpawa", registry=registry, probability="true",
         )
 
-    async def fetch_sportybet(sb_id: str) -> list:
+    async def fetch_sportybet(sb_id: str, *, live: bool = False) -> list:
+        # SportyBet uses productId=1 for live, productId=3 for prematch.
+        # Without `live=True` we silently get prematch data (which is empty
+        # for events already in-play) — that's what produced sb=0 ticks on
+        # STARTED events before this fix.
         sb = clients[Bookmaker.SPORTYBET]
-        detail = await sb.get_event_detail(event_id=sb_id)
+        detail = await sb.get_event_detail(event_id=sb_id, live=live)
         return parse_markets(
             detail, platform="sportybet", registry=registry, probability="true",
         )
 
-    async def fetch_bet9ja(b9j_id: str) -> list:
+    async def fetch_bet9ja(b9j_id: str, *, live: bool = False) -> list:
+        # Bet9ja exposes two separate endpoints. Prematch uses
+        # get_event_detail (response under D.O with `S_*` odds keys); live
+        # uses get_live_event_detail / GetLiveEvent (response under D.O
+        # with `LIVES_*` keys). The id semantics also differ — both expect
+        # Bet9ja's internal numeric id, but the resolver picks the right
+        # one via the prematch map (prematch) or find_event_id_by_sr_id
+        # (live), so the fetcher just needs to pick the endpoint.
         b9j = clients[Bookmaker.BET9JA]
-        detail = await b9j.get_event_detail(event_id=b9j_id)
+        if live:
+            detail = await b9j.get_live_event_detail(event_id=b9j_id)
+        else:
+            detail = await b9j.get_event_detail(event_id=b9j_id)
         return parse_markets(detail, platform="bet9ja", registry=registry)
 
-    async def fetch_betway(bw_id: str) -> list:
+    async def fetch_betway(bw_id: str, *, live: bool = False) -> list:
+        # Use the auto-paginated get_markets helper: Betway's underlying
+        # endpoint caps at 100 markets per page, so for big fixtures the
+        # per-team Over/Under and Next Goal markets land past page 1 and
+        # would otherwise be silently dropped. get_markets also fetches
+        # the scoreboard so the team-name placeholder substitution in the
+        # Betway parser fires correctly. `live` is accepted for signature
+        # uniformity; Betway uses the same endpoint for prematch and live.
+        del live  # endpoint is the same; flag accepted for symmetry
         bw = clients[Bookmaker.BETWAY]
-        detail = await bw.get_event_markets(event_id=bw_id)
-        return parse_markets(detail, platform="betway", registry=registry)
+        return await bw.get_markets(event_id=bw_id, registry=registry)
 
     return {
         Bookmaker.BETPAWA: fetch_betpawa,
@@ -157,8 +178,20 @@ async def resolve_event(
     bw_id = sr_id or None
 
     b9j_id: str | None = None
-    if regime == "live" and genius_id:
-        b9j_id = genius_id
+    if regime == "live" and sr_id:
+        # Bet9ja's live events expose EXTID = SR id. Resolve to Bet9ja's
+        # internal numeric id via find_event_id_by_sr_id (which scans the
+        # live-events listing once per call). The internal id is what
+        # GetLiveEvent expects, not the BetGenius id we used to pass.
+        try:
+            b9j_id = await clients[Bookmaker.BET9JA].find_event_id_by_sr_id(sr_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "bet9ja live id lookup failed for sr=%s: %s: %s",
+                sr_id, type(e).__name__,
+                " ".join(str(e).split())[:120] or "<no message>",
+            )
+            b9j_id = None
     elif regime == "prematch" and sr_id:
         mapping = await _bet9ja_prematch_map.get(clients[Bookmaker.BET9JA])
         b9j_id = mapping.get(sr_id) or mapping.get(f"sr:match:{sr_id}")
@@ -167,13 +200,16 @@ async def resolve_event(
         "sr_id": sr_id, "genius_id": genius_id,
         "sb_id": sb_id, "b9j_id": b9j_id, "bw_id": bw_id,
     }
-    # Don't poison the cache with negative b9j_id resolutions for prematch
-    # events: the bet9ja prematch map takes ~2 min to build, so events
-    # resolved during startup would get b9j_id=None cached forever (the
-    # cache persists to disk across restarts). Skipping the write means the
-    # next tick re-resolves and picks up the now-built map. SB/BW ids
-    # don't have this problem — they're computed directly from sr_id.
-    poisons_cache = regime == "prematch" and b9j_id is None and bool(sr_id)
+    # Don't poison the cache with negative b9j_id resolutions:
+    #   - prematch: the bet9ja prematch map takes ~2 min to build, so events
+    #     resolved during startup would get b9j_id=None cached forever (the
+    #     cache persists to disk across restarts).
+    #   - live: find_event_id_by_sr_id depends on Bet9ja's current live-list
+    #     which can transiently miss an event during half-time / brief
+    #     suspensions; we want to retry next tick rather than lock in None.
+    # Skipping the write means the next tick re-resolves. SB/BW ids don't
+    # have this problem — they're computed directly from sr_id.
+    poisons_cache = b9j_id is None and bool(sr_id)
     if not poisons_cache:
         cache.set(key, entry)
     # Log once per resolve attempt (cache miss). For poisoned entries this
