@@ -27,23 +27,36 @@ log = logging.getLogger(__name__)
 
 
 async def _reap_stuck_started_events(
-    db_path: Path, writer: SqliteWriter, watchdog_seconds: int,
+    db_path: Path,
+    writer: SqliteWriter,
+    watchdog_seconds: int,
+    head_stale_seconds: int = 600,
 ) -> int:
-    """Backfill a synthetic ENDED snapshot for events whose head row is
-    STARTED but kickoff was more than `watchdog_seconds` ago.
+    """Backfill a synthetic ENDED snapshot for events stuck in STARTED.
 
-    Catches two failure modes the watchdog alone can't fix:
-      - Events whose watcher exited in a prior run (the live → ENDED
-        transition was never written because the watchdog of an older
-        binary just returned without writing).
-      - Events that were live yesterday but are no longer in any
-        tournament list today, so no new watcher spawns for them and
-        they sit in the live tab forever.
+    Two firing criteria, OR'd together — either is enough to reap:
+
+    1. **head_ts stale** — the latest snapshot for the event was written
+       more than `head_stale_seconds` ago (default 10 min). At 90s live
+       cadence + ~65s of retry backoff, anything > 10 min stale means
+       the watcher is dead or hung (observed in practice when
+       resolve_event blocks indefinitely on a slow bookmaker API). The
+       in-watcher watchdog can't catch this because it only fires while
+       the watcher is alive enough to evaluate the elapsed time.
+
+    2. **kickoff aged out** — kickoff was more than `watchdog_seconds`
+       ago (default 3h). Catches events whose watcher exited cleanly in
+       a prior run without writing ENDED, or events dropped from every
+       tournament list so no new watcher ever spawns.
 
     Returns the number of events reaped.
     """
-    cutoff_iso = (
-        datetime.now(timezone.utc) - timedelta(seconds=watchdog_seconds)
+    now = datetime.now(timezone.utc)
+    kickoff_cutoff_iso = (
+        now - timedelta(seconds=watchdog_seconds)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    head_cutoff_iso = (
+        now - timedelta(seconds=head_stale_seconds)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
@@ -55,15 +68,16 @@ async def _reap_stuck_started_events(
                 FROM snapshots GROUP BY event_id
             )
             SELECT DISTINCT e.id,
-                   s.match_minute, s.score_home, s.score_away
+                   s.match_minute, s.score_home, s.score_away,
+                   l.max_ts AS head_ts
             FROM events e
             JOIN latest l ON l.event_id = e.id
             JOIN snapshots s
               ON s.event_id = l.event_id AND s.ts_utc = l.max_ts
             WHERE s.status = 'STARTED'
-              AND e.kickoff_utc < ?
+              AND (e.kickoff_utc < ? OR l.max_ts < ?)
             """,
-            (cutoff_iso,),
+            (kickoff_cutoff_iso, head_cutoff_iso),
         ).fetchall()
     finally:
         conn.close()
@@ -231,6 +245,31 @@ async def _amain(config_path: Path) -> int:
 
         refresh_task = asyncio.create_task(_refresh_loop(), name="refresh-loop")
 
+        async def _reaper_loop():
+            """Periodic stuck-STARTED reaper. The boot-time reaper already
+            ran above; this catches events that get stuck DURING a run
+            (typically a hung resolve_event call keeping the watcher
+            from writing). Runs every 5 minutes with a 10-min head_ts
+            staleness threshold."""
+            while True:
+                try:
+                    await asyncio.sleep(300)
+                    reaped_iter = await _reap_stuck_started_events(
+                        Path(cfg.output.db_path), writer,
+                        cfg.cadence.watchdog_after_kickoff_seconds,
+                    )
+                    if reaped_iter:
+                        log.info(
+                            "periodic reap: cleared %d stuck STARTED events",
+                            reaped_iter,
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    log.exception("reaper iteration failed — continuing")
+
+        reaper_task = asyncio.create_task(_reaper_loop(), name="reaper-loop")
+
         stop_event = asyncio.Event()
 
         def _trip_stop():
@@ -251,13 +290,16 @@ async def _amain(config_path: Path) -> int:
 
         active = [t for t in tasks if not t.done()]
         log.info(
-            "shutting down, cancelling refresh + %d live watcher tasks",
+            "shutting down, cancelling refresh + reaper + %d live watcher tasks",
             len(active),
         )
         refresh_task.cancel()
+        reaper_task.cancel()
         for t in active:
             t.cancel()
-        await asyncio.gather(refresh_task, *active, return_exceptions=True)
+        await asyncio.gather(
+            refresh_task, reaper_task, *active, return_exceptions=True,
+        )
 
     return 0
 
