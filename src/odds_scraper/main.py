@@ -153,6 +153,7 @@ async def _amain(config_path: Path) -> int:
             live_seconds=cfg.cadence.live_seconds,
             status_retry_backoff_seconds=cfg.cadence.status_retry_backoff_seconds,
             watchdog_after_kickoff_seconds=cfg.cadence.watchdog_after_kickoff_seconds,
+            live_lead_seconds=cfg.cadence.live_lead_seconds,
         )
 
         bp_client = clients[Bookmaker.BETPAWA]

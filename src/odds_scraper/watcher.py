@@ -42,6 +42,18 @@ class WatcherConfig:
     live_seconds: int
     status_retry_backoff_seconds: tuple[int, ...]
     watchdog_after_kickoff_seconds: int
+    # How many seconds BEFORE kickoff to start sampling at live cadence.
+    # The previous status-driven cadence waited for BetPawa to flip its
+    # `live=true` flag, which often lagged the actual kickoff by 5-15
+    # minutes — the first half of every live match would arrive with
+    # huge gaps. Kickoff-driven cadence guarantees we're already
+    # polling every `live_seconds` when the whistle blows.
+    live_lead_seconds: int = 300
+
+
+def _utcnow() -> datetime:
+    """Indirection so tests can patch the watcher's clock."""
+    return datetime.now(timezone.utc)
 
 
 class EventWatcher:
@@ -81,7 +93,7 @@ class EventWatcher:
             detail = await self._poll_status_with_retries()
             if detail is None:
                 await self._writer.append(self._sentinel_rows("status poll failed"))
-                await asyncio.sleep(self._cadence(self._last_status))
+                await asyncio.sleep(self._cadence(self._last_status, kickoff_utc))
                 continue
 
             if kickoff_utc is None:
@@ -118,7 +130,7 @@ class EventWatcher:
 
             if kickoff_utc is not None:
                 elapsed_since_kickoff = (
-                    datetime.now(timezone.utc) - kickoff_utc
+                    _utcnow() - kickoff_utc
                 ).total_seconds()
                 if elapsed_since_kickoff > self.cfg.watchdog_after_kickoff_seconds:
                     log.warning(
@@ -134,10 +146,32 @@ class EventWatcher:
                     await self._writer.append(self._ended_sentinel_rows())
                     return
 
-            await asyncio.sleep(self._cadence(status))
+            await asyncio.sleep(self._cadence(status, kickoff_utc))
 
-    def _cadence(self, status: EventStatus) -> int:
-        if status == EventStatus.STARTED:
+    def _cadence(
+        self,
+        status: EventStatus,
+        kickoff_utc: datetime | None,
+    ) -> int:
+        """Sleep interval until the next tick.
+
+        Driven primarily by `kickoff_utc` rather than BetPawa's status
+        flag — BP's prematch→live transition often lags the real
+        whistle by minutes, which under the old status-driven cadence
+        meant a 10-minute prematch poll could swallow the entire start
+        of the match. With kickoff time as the source of truth, we
+        ramp up to live cadence `live_lead_seconds` before the listed
+        kickoff and stay there for the whole in-play window.
+
+        Falls back to status-based cadence only when kickoff couldn't
+        be extracted (first tick failure path).
+        """
+        if kickoff_utc is None:
+            if status == EventStatus.STARTED:
+                return self.cfg.live_seconds
+            return self.cfg.prematch_seconds
+        sec_to_kickoff = (kickoff_utc - _utcnow()).total_seconds()
+        if sec_to_kickoff <= self.cfg.live_lead_seconds:
             return self.cfg.live_seconds
         return self.cfg.prematch_seconds
 
