@@ -885,3 +885,47 @@ def test_sim_cell_renders_true_probability(db_with_ftts_and_ou: Path):
         body,
     )
     assert sim_with_prob is not None, "SIM cell must render both odds and prob"
+
+
+def test_event_detail_history_shows_sim_column_for_1up(db_path: Path):
+    """When pricer_live_results has rows for a 1UP market, the detail
+    page history adds a SIM column with OUR's odds + prob. The default
+    fixture already seeds 1UP prices at this ts; we just need to add
+    OUR."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.execute(
+        "INSERT INTO pricer_live_results "
+        "(event_id, ts_utc, basis_used, "
+        " our_1up_home_capped, our_1up_away_capped, "
+        " our_p_home_1, our_p_away_1) "
+        "VALUES ('E1', '2026-05-21T10:00:00Z', 'bp', 1.48, 4.10, 0.66, 0.22)",
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events/E1?market=1x2_1up_ft")
+    body = r.text
+    assert 'data-bookmaker="sim"' in body
+    # Column header text — Jinja renders with surrounding whitespace
+    import re
+    assert re.search(r"<th[^>]*data-bookmaker=\"sim\"[^>]*>\s*SIM\s*</th>", body)
+    assert "1.48" in body
+    # Probability .66 → rendered as ".66"
+    assert ".66" in body
+
+
+def test_event_detail_history_omits_sim_column_for_1x2_ft(db_path: Path):
+    """SIM column is hidden on non-UP markets (1x2_ft, OU, FTTS) even if
+    pricer_live_results has rows — OUR only applies to 1UP / 2UP."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.execute(
+        "INSERT INTO pricer_live_results "
+        "(event_id, ts_utc, basis_used, "
+        " our_1up_home_capped, our_1up_away_capped) "
+        "VALUES ('E1', '2026-05-21T10:00:00Z', 'bp', 1.48, 4.10)",
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events/E1?market=1x2_ft")
+    body = r.text
+    # No SIM header for 1x2_ft market.
+    assert ">SIM<" not in body

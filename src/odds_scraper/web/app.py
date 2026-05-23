@@ -190,6 +190,10 @@ class EventDetail:
     line_pills: list[tuple[str, str, bool]]
     # History rows newest first
     history: list[HistoryRow]
+    # Bookmaker columns to render in the history table, in display
+    # order. Includes "sim" when the active market is 1UP or 2UP and
+    # pricer_live_results carries OUR for any tick.
+    history_books: tuple[str, ...]
 
 
 def create_app(db_path: Path) -> FastAPI:
@@ -420,6 +424,32 @@ def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
             odds=hr["odds"], probability=hr["probability"],
         )
 
+    # OUR engine output per tick: only loaded for UP markets, where the
+    # engine actually produces a result. Merged into each tick's cells
+    # under the pseudo-bookmaker key "sim".
+    our_by_ts = queries.get_our_history_for_event(
+        conn, ev_row["id"], market_id,
+    )
+    for ts, our in our_by_ts.items():
+        sim_cells: dict[str, PriceCell] = {}
+        if our["home_odds"] is not None:
+            sim_cells["home"] = PriceCell(
+                odds=our["home_odds"], probability=our["home_prob"],
+            )
+        if our["away_odds"] is not None:
+            sim_cells["away"] = PriceCell(
+                odds=our["away_odds"], probability=our["away_prob"],
+            )
+        if sim_cells and ts in bucket:
+            bucket[ts]["cells"]["sim"] = sim_cells
+
+    show_sim_col = bool(our_by_ts) and market_id in ("1x2_1up_ft", "1x2_2up_ft")
+    history_books: tuple[str, ...] = (
+        ("betpawa", "sportybet", "sim", "bet9ja", "betway")
+        if show_sim_col
+        else ("betpawa", "sportybet", "bet9ja", "betway")
+    )
+
     # Newest first
     history = [
         HistoryRow(
@@ -498,4 +528,5 @@ def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
         family_pills=family_pills,
         line_pills=line_pills,
         history=history,
+        history_books=history_books,
     )

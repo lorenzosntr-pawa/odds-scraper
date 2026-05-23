@@ -120,6 +120,19 @@ class EventWatcher:
                         self._last_score = (r.score_home, r.score_away)
                     if r.match_minute is not None:
                         self._last_minute = r.match_minute
+                # Persist OUR engine output for this tick alongside the
+                # scraped odds so the detail-page history can render it
+                # without re-running the engine. Score comes from the
+                # snapshot row directly — accurate at tick time even if
+                # `_last_score` got carried forward from an older tick.
+                tick_score = (0, 0)
+                if rows[0].score_home is not None and rows[0].score_away is not None:
+                    tick_score = (rows[0].score_home, rows[0].score_away)
+                await self._writer.append_pricer_live(
+                    rows[0].event_bp_id,
+                    rows[0].ts_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    rows, tick_score,
+                )
             except Exception:  # noqa: BLE001
                 log.exception("collector/writer crash for %s", self.event_bp_id)
                 await self._writer.append(self._sentinel_rows("collector crashed"))

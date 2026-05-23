@@ -59,6 +59,48 @@ class SqliteWriter:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._write_batch, snaps)
 
+    async def append_pricer_live(
+        self,
+        event_id: str,
+        ts_utc: str,
+        rows: list[Snapshot],
+        score: tuple[int, int] = (0, 0),
+    ) -> bool:
+        """Compute + persist the engine's OUR output for one tick.
+
+        Called after `append(rows)` for the same tick so the historical
+        record carries OUR alongside the scraped odds. Returns True if
+        a row was written, False if the engine couldn't produce a
+        result (missing inputs, etc).
+        """
+        if not rows:
+            return False
+        async with self._lock:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None, self._write_pricer_live, event_id, ts_utc, rows, score,
+            )
+
+    def _write_pricer_live(
+        self, event_id: str, ts_utc: str,
+        rows: list[Snapshot], score: tuple[int, int],
+    ) -> bool:
+        # Local import keeps writer.py free of the pricer package at
+        # module load time — avoids any chance of circular import via
+        # models/snapshot during startup.
+        from .pricer import live_writer as lw
+
+        conn = self._conn
+        assert conn is not None
+        try:
+            conn.execute("BEGIN")
+            ok = lw.compute_and_write(conn, event_id, ts_utc, rows, score)
+            conn.execute("COMMIT")
+            return ok
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
     def _write_batch(self, snaps: list[Snapshot]) -> None:
         conn = self._conn
         assert conn is not None

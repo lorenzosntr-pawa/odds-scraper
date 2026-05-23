@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Callable
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _BASE_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -202,7 +202,42 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
         "ON snapshots(event_id, bookmaker, ts_utc)"
     ),
     4: lambda conn: _apply_v4_pricer_tables(conn),
+    # v5: per-tick OUR engine output, written by the scraper alongside
+    # scraped snapshots so the detail page can show OUR in the
+    # historical timeline without re-running a simulator.
+    5: lambda conn: _apply_v5_pricer_live_results(conn),
 }
+
+
+def _apply_v5_pricer_live_results(conn: sqlite3.Connection) -> None:
+    """v5: pricer_live_results — one row per (event_id, ts_utc) tick."""
+    conn.execute(
+        """
+        CREATE TABLE pricer_live_results (
+            event_id            TEXT NOT NULL,
+            ts_utc              TEXT NOT NULL,
+            basis_used          TEXT NOT NULL,
+            lambda_home         REAL,
+            lambda_away         REAL,
+            our_p_home_1        REAL,
+            our_p_away_1        REAL,
+            our_1up_home_fair   REAL,
+            our_1up_home_capped REAL,
+            our_1up_away_fair   REAL,
+            our_1up_away_capped REAL,
+            our_p_home_2        REAL,
+            our_p_away_2        REAL,
+            our_2up_home_fair   REAL,
+            our_2up_home_capped REAL,
+            our_2up_away_fair   REAL,
+            our_2up_away_capped REAL,
+            PRIMARY KEY (event_id, ts_utc)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX idx_pricer_live_event ON pricer_live_results(event_id, ts_utc)"
+    )
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
