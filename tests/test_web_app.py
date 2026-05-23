@@ -863,3 +863,25 @@ def test_sim_blank_for_1x2_ft_and_ou_rows(db_with_ftts_and_ou: Path):
     # their SIM cells render em-dash. Spot-check: the page contains
     # at least one em-dash cell scoped to data-bookmaker="sim".
     assert 'data-bookmaker="sim"' in r.text
+
+
+def test_sim_cell_renders_true_probability(db_with_ftts_and_ou: Path):
+    """The SIM cell shows OUR engine's true probability (pre-margin)
+    as ".pNN" — same display style as BP/SB. Verifies the engine's
+    p_home_1 / p_home_2 outputs make it through EventView → template."""
+    client = TestClient(create_app(db_path=db_with_ftts_and_ou))
+    r = client.get("/events?status=upcoming")
+    body = r.text
+    # SIM column header now flags +p like BP/SB do.
+    assert 'data-bookmaker="sim">SIM <span class="prob-mark">+p</span>' in body
+    # At least one `.prob` mark inside a SIM cell. Find the SIM cell for
+    # 1UP home (BP quoted 1.50 in the fixture so SIM column is populated).
+    # We can't easily parse the row alignment from raw HTML, but a `.prob`
+    # tag appearing AFTER a `.odds.sim` tag in the same span proves the
+    # SIM cell now carries probability.
+    import re
+    sim_with_prob = re.search(
+        r'<span class="odds sim">[^<]+</span>\s*<span class="prob">\.\d{2}</span>',
+        body,
+    )
+    assert sim_with_prob is not None, "SIM cell must render both odds and prob"

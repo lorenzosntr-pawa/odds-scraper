@@ -140,6 +140,12 @@ class EventView:
     our_1up_away: Optional[float]
     our_2up_home: Optional[float]
     our_2up_away: Optional[float]
+    # True probabilities from the engine (pre-margin). Rendered next to
+    # the SIM cell's decimal odds as ".pNN" to match the BP/SB display.
+    our_p_1up_home: Optional[float]
+    our_p_1up_away: Optional[float]
+    our_p_2up_home: Optional[float]
+    our_p_2up_away: Optional[float]
     # True when BP itself quoted the market — drives the rule "if BP
     # missing, OUR replaces the BP cell instead of going to SIM column".
     bp_has_1up: bool
@@ -351,6 +357,7 @@ def _build_event_view(row, price_rows) -> EventView:
 
     engine_inputs, _basis = pricer_inputs.extract(prices_by_book)
     our_1up_home = our_1up_away = our_2up_home = our_2up_away = None
+    our_p_1up_home = our_p_1up_away = our_p_2up_home = our_p_2up_away = None
     if engine_inputs is not None:
         score = (row["score_home"] or 0, row["score_away"] or 0)
         engine_inputs["score"] = (int(score[0]), int(score[1]))
@@ -360,6 +367,10 @@ def _build_event_view(row, price_rows) -> EventView:
             our_1up_away = result["market_1up"]["away_margin"]
             our_2up_home = result["market_2up"]["home_margin"]
             our_2up_away = result["market_2up"]["away_margin"]
+            our_p_1up_home = result["p_home_1"]
+            our_p_1up_away = result["p_away_1"]
+            our_p_2up_home = result["p_home_2"]
+            our_p_2up_away = result["p_away_2"]
         except Exception:  # noqa: BLE001
             # Engine doesn't raise on bad inputs (returns deactivated dict),
             # so this is a defensive guard against future regressions.
@@ -379,6 +390,8 @@ def _build_event_view(row, price_rows) -> EventView:
         market_groups=groups,
         our_1up_home=our_1up_home, our_1up_away=our_1up_away,
         our_2up_home=our_2up_home, our_2up_away=our_2up_away,
+        our_p_1up_home=our_p_1up_home, our_p_1up_away=our_p_1up_away,
+        our_p_2up_home=our_p_2up_home, our_p_2up_away=our_p_2up_away,
         bp_has_1up=bp_has_1up, bp_has_2up=bp_has_2up,
     )
 
