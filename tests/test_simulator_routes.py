@@ -130,3 +130,118 @@ def test_get_run_csv_streams_file(db_path: Path, client: TestClient):
     body = r.text
     assert "event_id" in body.splitlines()[0]  # header
     assert "E1" in body
+
+
+# ---------------------------------------------------------------------------
+# Profile management UI
+# ---------------------------------------------------------------------------
+
+def test_profiles_page_renders(client: TestClient):
+    r = client.get("/simulator/profiles")
+    assert r.status_code == 200
+    assert "default" in r.text  # default profile listed
+    assert "Create new profile" in r.text
+    # Margin field pairs use _slope / _intercept naming
+    assert 'name="ONEUP_FAVORITE_MARGIN_slope"' in r.text
+    assert 'name="TWOUP_FAVORITE_BOOST_COEFFICIENT"' in r.text
+
+
+def test_simulator_runs_page_has_profiles_tab(client: TestClient):
+    r = client.get("/simulator")
+    assert 'href="/simulator/profiles"' in r.text
+
+
+def _full_profile_form_data(name: str) -> dict:
+    """Mirrors what the create-profile form sends. Tweak any single field
+    in the caller to test that the override survives the round-trip."""
+    return {
+        "name": name,
+        "ONEUP_FAVORITE_MARGIN_slope":     "0.9969",
+        "ONEUP_FAVORITE_MARGIN_intercept": "0.0313",
+        "ONEUP_UNDERDOG_MARGIN_slope":     "0.9799",
+        "ONEUP_UNDERDOG_MARGIN_intercept": "0.0400",
+        "ONEUP_MIN_GUARANTEED_REDUCTION":  "0.02",
+        "ONEUP_TRAILING_MIN_REDUCTION":    "0.05",
+        "ONEUP_TRAILING_MAX_REDUCTION":    "0.25",
+        "TWOUP_FAVORITE_MARGIN_slope":     "0.998",
+        "TWOUP_FAVORITE_MARGIN_intercept": "0.010",
+        "TWOUP_UNDERDOG_MARGIN_slope":     "0.994",
+        "TWOUP_UNDERDOG_MARGIN_intercept": "0.008",
+        "TWOUP_FAVORITE_BOOST_COEFFICIENT": "0.9",
+        "TWOUP_UNDERDOG_BOOST_COEFFICIENT": "0.6",
+        "TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION": "0.02",
+        "TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION": "0.005",
+        "TWOUP_TRAILING_MIN_REDUCTION": "0.05",
+        "TWOUP_TRAILING_MAX_REDUCTION": "0.25",
+    }
+
+
+def test_create_profile_persists_and_redirects(db_path: Path, client: TestClient):
+    data = _full_profile_form_data("boost-85")
+    data["TWOUP_FAVORITE_BOOST_COEFFICIENT"] = "0.85"
+    r = client.post(
+        "/simulator/profiles", data=data, follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/simulator/profiles"
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT name, is_default, coefficients FROM pricer_configs WHERE name=?",
+        ("boost-85",),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["is_default"] == 0
+    import json as _json
+    coeffs = _json.loads(row["coefficients"])
+    assert coeffs["TWOUP_FAVORITE_BOOST_COEFFICIENT"] == 0.85
+    assert coeffs["ONEUP_FAVORITE_MARGIN"] == [0.9969, 0.0313]
+
+
+def test_create_profile_rejects_blank_name(client: TestClient):
+    data = _full_profile_form_data("")
+    r = client.post("/simulator/profiles", data=data, follow_redirects=False)
+    assert r.status_code == 400
+
+
+def test_create_profile_rejects_duplicate_name(client: TestClient):
+    data = _full_profile_form_data("dup")
+    r1 = client.post("/simulator/profiles", data=data, follow_redirects=False)
+    assert r1.status_code == 303
+    r2 = client.post("/simulator/profiles", data=data, follow_redirects=False)
+    assert r2.status_code == 400
+
+
+def test_delete_profile_removes_custom(db_path: Path, client: TestClient):
+    data = _full_profile_form_data("to-delete")
+    client.post("/simulator/profiles", data=data, follow_redirects=False)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    pid = conn.execute(
+        "SELECT id FROM pricer_configs WHERE name=?", ("to-delete",),
+    ).fetchone()["id"]
+    conn.close()
+    r = client.post(
+        f"/simulator/profiles/{pid}/delete", follow_redirects=False,
+    )
+    assert r.status_code == 303
+    conn = sqlite3.connect(str(db_path))
+    gone = conn.execute(
+        "SELECT 1 FROM pricer_configs WHERE id=?", (pid,),
+    ).fetchone()
+    conn.close()
+    assert gone is None
+
+
+def test_delete_default_profile_returns_400(db_path: Path, client: TestClient):
+    conn = sqlite3.connect(str(db_path))
+    default_id = conn.execute(
+        "SELECT id FROM pricer_configs WHERE is_default=1"
+    ).fetchone()[0]
+    conn.close()
+    r = client.post(
+        f"/simulator/profiles/{default_id}/delete", follow_redirects=False,
+    )
+    assert r.status_code == 400

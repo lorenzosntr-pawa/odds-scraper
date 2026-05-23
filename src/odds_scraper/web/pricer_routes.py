@@ -9,6 +9,14 @@ from fastapi.templating import Jinja2Templates
 from odds_scraper.pricer import configs as config_mod, runner
 
 
+# Margin constants are stored as (slope, intercept) tuples. Form fields
+# arrive as separate `_slope` / `_intercept` inputs, joined here.
+_MARGIN_COEFFS = (
+    "ONEUP_FAVORITE_MARGIN", "ONEUP_UNDERDOG_MARGIN",
+    "TWOUP_FAVORITE_MARGIN", "TWOUP_UNDERDOG_MARGIN",
+)
+
+
 def register_pricer_routes(
     app: FastAPI, templates: Jinja2Templates,
     *, db_path: Path, conn,
@@ -72,6 +80,68 @@ def register_pricer_routes(
         finally:
             write_conn.close()
         return RedirectResponse(url=f"/simulator#run-{run_id}", status_code=303)
+
+    @app.get("/simulator/profiles", response_class=HTMLResponse)
+    async def profiles_page(request: Request):
+        profiles = config_mod.list_profiles(conn)
+        return templates.TemplateResponse(
+            request, "profiles.html",
+            {
+                "profiles": profiles,
+                "tunable_names": config_mod.TUNABLE_NAMES,
+                "margin_coeffs": _MARGIN_COEFFS,
+                "default_coefficients": config_mod.DEFAULT_COEFFICIENTS,
+            },
+        )
+
+    @app.post("/simulator/profiles")
+    async def create_profile_route(request: Request):
+        form = await request.form()
+        name = (form.get("name") or "").strip()
+        if not name:
+            raise HTTPException(400, "name is required")
+        coefficients: dict = {}
+        for k in config_mod.TUNABLE_NAMES:
+            if k in _MARGIN_COEFFS:
+                slope_raw = form.get(f"{k}_slope")
+                inter_raw = form.get(f"{k}_intercept")
+                try:
+                    coefficients[k] = [float(slope_raw), float(inter_raw)]
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"invalid value for {k}")
+            else:
+                raw = form.get(k)
+                try:
+                    coefficients[k] = float(raw)
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"invalid value for {k}")
+        write_conn = sqlite3.connect(str(db_path), isolation_level=None)
+        write_conn.row_factory = sqlite3.Row
+        try:
+            try:
+                config_mod.create_profile(write_conn, name, coefficients)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            except sqlite3.IntegrityError:
+                raise HTTPException(
+                    400, f"profile name {name!r} already exists",
+                )
+        finally:
+            write_conn.close()
+        return RedirectResponse(url="/simulator/profiles", status_code=303)
+
+    @app.post("/simulator/profiles/{profile_id}/delete")
+    async def delete_profile_route(profile_id: int):
+        write_conn = sqlite3.connect(str(db_path), isolation_level=None)
+        write_conn.row_factory = sqlite3.Row
+        try:
+            try:
+                config_mod.delete_profile(write_conn, profile_id)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+        finally:
+            write_conn.close()
+        return RedirectResponse(url="/simulator/profiles", status_code=303)
 
     @app.get("/simulator/runs/{run_id}/csv")
     async def get_run_csv(run_id: int):

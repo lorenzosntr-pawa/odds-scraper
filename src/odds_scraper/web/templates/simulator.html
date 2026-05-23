@@ -3,7 +3,11 @@
 <div class="p-3 max-w-screen-2xl mx-auto" data-page-title="Pricer Simulator">
   <div class="flex justify-between border-b border-gray-900 pb-3 mb-3">
     <div class="text-white font-semibold tracking-wider" title="Pricer Simulator">PRICER SIMULATOR</div>
-    <a class="tab" href="/">← back to events</a>
+    <div class="flex gap-1">
+      <a class="tab active" href="/simulator">RUNS</a>
+      <a class="tab" href="/simulator/profiles">PROFILES</a>
+      <a class="tab" href="/" style="margin-left:12px">← back to events</a>
+    </div>
   </div>
 
   <form method="post" action="/simulator/runs" class="sim-form">
@@ -38,8 +42,7 @@
         </select>
       </div>
       <p class="filter-lbl" style="margin-top:6px;color:#888">
-        Editing coefficients inline lands in a follow-up — for now pick a profile.
-        Use the CLI to create a new profile, then re-load this page.
+        Need a different config? <a href="/simulator/profiles" style="color:#fbbf24">Manage profiles →</a>
       </p>
     </div>
 
