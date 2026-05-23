@@ -1,0 +1,262 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterator
+
+from . import engine, inputs as input_extract, configs as config_mod, csv_export
+
+
+@contextmanager
+def with_coefficients(overrides: dict) -> Iterator[None]:
+    """Temporarily set module-level constants on engine.py.
+
+    Engine reads constants directly from its module globals. To honour a
+    profile's coefficients we setattr the overrides before the call and
+    restore originals on exit. Not thread-safe — the web app runs single-
+    process asyncio and engine calls are sync within one event loop, so
+    no two engine calls overlap. The card OUR column always runs under
+    the seeded default (no override), so this contextmanager is only
+    entered by the simulator runner.
+    """
+    saved = {k: getattr(engine, k) for k in overrides}
+    try:
+        for k, v in overrides.items():
+            setattr(engine, k, v)
+        yield
+    finally:
+        for k, v in saved.items():
+            setattr(engine, k, v)
+
+
+_BOOK_PREFIXES = {
+    "betpawa":   "bp",
+    "sportybet": "sb",
+    "bet9ja":    "b9j",
+    "betway":    "bw",
+}
+
+
+def _select_snapshot_ids(
+    conn: sqlite3.Connection, coverage: str, scope: dict,
+) -> list[int]:
+    """Return distinct snapshot ids in scope, ordered by event_id then ts.
+
+    coverage:
+      'all'      — every snapshot for events that match scope
+      'latest'   — only the most recent snapshot per event
+      'prematch' — UPCOMING snapshots only
+      'live'     — STARTED snapshots only
+    """
+    status = scope.get("status") or ""
+    where_extra: list[str] = []
+    params: list = []
+    if coverage in ("prematch", "live"):
+        where_extra.append("s.status = ?")
+        params.append("UPCOMING" if coverage == "prematch" else "STARTED")
+    if status == "live":
+        where_extra.append("s.status = 'STARTED'")
+    elif status == "upcoming":
+        where_extra.append("s.status = 'UPCOMING'")
+    elif status == "ended":
+        where_extra.append("s.status = 'ENDED'")
+    if scope.get("country"):
+        where_extra.append("e.country_id = ?")
+        params.append(scope["country"])
+    if scope.get("league"):
+        where_extra.append("e.league_id = ?")
+        params.append(scope["league"])
+    where_clause = " AND " + " AND ".join(where_extra) if where_extra else ""
+
+    if coverage == "latest":
+        sql = f"""
+            WITH latest AS (
+                SELECT event_id, MAX(ts_utc) AS max_ts
+                FROM snapshots GROUP BY event_id
+            )
+            SELECT DISTINCT s.id, s.event_id, s.ts_utc
+            FROM snapshots s
+            JOIN events e ON e.id = s.event_id
+            JOIN latest l ON l.event_id = s.event_id AND l.max_ts = s.ts_utc
+            WHERE 1=1 {where_clause}
+            ORDER BY s.event_id, s.ts_utc
+        """
+    else:
+        sql = f"""
+            SELECT DISTINCT s.id, s.event_id, s.ts_utc
+            FROM snapshots s
+            JOIN events e ON e.id = s.event_id
+            WHERE 1=1 {where_clause}
+            ORDER BY s.event_id, s.ts_utc
+        """
+    return [row[0] for row in conn.execute(sql, params).fetchall()]
+
+
+def _load_tick_prices(
+    conn: sqlite3.Connection, event_id: str, ts_utc: str,
+) -> dict[str, list]:
+    """Return {book: [price_row, ...]} for every (event, ts) bucket — i.e.
+    every book's snapshot at the same timestamp. SQLite Row is dict-like."""
+    rows = conn.execute(
+        "SELECT bookmaker, market_id, line, side, odds, probability "
+        "FROM prices WHERE event_id = ? AND ts_utc = ?",
+        (event_id, ts_utc),
+    ).fetchall()
+    out: dict[str, list] = {}
+    for r in rows:
+        out.setdefault(r["bookmaker"], []).append({
+            "market_id":   r["market_id"],
+            "line":        r["line"],
+            "side":        r["side"],
+            "odds":        r["odds"],
+            "probability": r["probability"],
+        })
+    return out
+
+
+def _extract_quoted_up(prices: list) -> dict:
+    """Return {1up_home, 1up_away, 2up_home, 2up_away} odds for one book's
+    snapshot. Missing rows stay None."""
+    out = {"1up_home": None, "1up_away": None, "2up_home": None, "2up_away": None}
+    for r in prices:
+        m = r["market_id"]
+        if m == "1x2_1up_ft" and r["side"] in ("home", "away"):
+            out[f"1up_{r['side']}"] = r["odds"]
+        elif m == "1x2_2up_ft" and r["side"] in ("home", "away"):
+            out[f"2up_{r['side']}"] = r["odds"]
+    return out
+
+
+def _score_for_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> tuple[int, int]:
+    row = conn.execute(
+        "SELECT score_home, score_away FROM snapshots WHERE id = ?",
+        (snapshot_id,),
+    ).fetchone()
+    if row is None or row["score_home"] is None or row["score_away"] is None:
+        return (0, 0)
+    return (int(row["score_home"]), int(row["score_away"]))
+
+
+def run_simulation(
+    conn: sqlite3.Connection,
+    *,
+    config: config_mod.Profile,
+    coverage: str,
+    scope: dict,
+    csv_dir: Path,
+) -> int:
+    """Execute a simulation run, persist rows + CSV, return new run id.
+
+    `coverage` in {'all', 'latest', 'prematch', 'live'}.
+    `scope` carries the filter selections so a run can be reproduced later.
+    """
+    snapshot_ids = _select_snapshot_ids(conn, coverage, scope)
+    if not snapshot_ids:
+        # Still record the run — n_rows=0 surfaces in the history UI.
+        return _record_empty_run(conn, config, coverage, scope, csv_dir)
+
+    overrides = config_mod.coefficients_to_engine_overrides(config.coefficients)
+
+    # Resolve ts_utc and event_id for each snapshot
+    snap_meta = {
+        row["id"]: (row["event_id"], row["ts_utc"])
+        for row in conn.execute(
+            f"SELECT id, event_id, ts_utc FROM snapshots "
+            f"WHERE id IN ({','.join('?' * len(snapshot_ids))})",
+            snapshot_ids,
+        )
+    }
+
+    results: list[tuple] = []
+    seen_events: set[str] = set()
+
+    with with_coefficients(overrides):
+        for snap_id in snapshot_ids:
+            event_id, ts_utc = snap_meta[snap_id]
+            prices_by_book = _load_tick_prices(conn, event_id, ts_utc)
+            engine_inputs, basis = input_extract.extract(prices_by_book)
+            if engine_inputs is None:
+                continue
+            engine_inputs["score"] = _score_for_snapshot(conn, snap_id)
+            res = engine.price_early_payout_markets(**engine_inputs)
+            quoted = {
+                book: _extract_quoted_up(prices_by_book.get(book, []))
+                for book in ("betpawa", "sportybet", "bet9ja", "betway")
+            }
+            results.append((
+                snap_id, event_id, ts_utc, basis,
+                res["lambda_home"], res["lambda_away"],
+                res["p_home_1"], res["p_away_1"],
+                res["market_1up"]["home_fair"],   res["market_1up"]["home_margin"],
+                res["market_1up"]["away_fair"],   res["market_1up"]["away_margin"],
+                res["p_home_2"], res["p_away_2"],
+                res["market_2up"]["home_fair"],   res["market_2up"]["home_margin"],
+                res["market_2up"]["away_fair"],   res["market_2up"]["away_margin"],
+                quoted["betpawa"]["1up_home"],   quoted["betpawa"]["1up_away"],
+                quoted["betpawa"]["2up_home"],   quoted["betpawa"]["2up_away"],
+                quoted["sportybet"]["1up_home"], quoted["sportybet"]["1up_away"],
+                quoted["sportybet"]["2up_home"], quoted["sportybet"]["2up_away"],
+                quoted["bet9ja"]["1up_home"],    quoted["bet9ja"]["1up_away"],
+                quoted["bet9ja"]["2up_home"],    quoted["bet9ja"]["2up_away"],
+                quoted["betway"]["1up_home"],    quoted["betway"]["1up_away"],
+                quoted["betway"]["2up_home"],    quoted["betway"]["2up_away"],
+            ))
+            seen_events.add(event_id)
+
+    # Create run row first to get the id (needed for filename + FK).
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cur = conn.execute(
+        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
+        "n_events, n_rows, csv_path) VALUES (?, ?, ?, ?, ?, ?, '')",
+        (now_iso, config.id, coverage, json.dumps(scope),
+         len(seen_events), len(results)),
+    )
+    run_id = cur.lastrowid
+    csv_path = f"sim/run_{run_id:04d}.csv"
+
+    # 35 columns total: run_id + 34 from each `results` tuple. Build the
+    # placeholder string once so the column count is unambiguous.
+    _RESULT_COLS = (
+        "run_id, snapshot_id, event_id, ts_utc, basis_used, "
+        "lambda_home, lambda_away, "
+        "our_p_home_1, our_p_away_1, "
+        "our_1up_home_fair, our_1up_home_capped, our_1up_away_fair, our_1up_away_capped, "
+        "our_p_home_2, our_p_away_2, "
+        "our_2up_home_fair, our_2up_home_capped, our_2up_away_fair, our_2up_away_capped, "
+        "bp_1up_home_odds, bp_1up_away_odds, bp_2up_home_odds, bp_2up_away_odds, "
+        "sb_1up_home_odds, sb_1up_away_odds, sb_2up_home_odds, sb_2up_away_odds, "
+        "b9j_1up_home_odds, b9j_1up_away_odds, b9j_2up_home_odds, b9j_2up_away_odds, "
+        "bw_1up_home_odds, bw_1up_away_odds, bw_2up_home_odds, bw_2up_away_odds"
+    )
+    placeholders = ",".join("?" * 35)
+    conn.executemany(
+        f"INSERT INTO pricer_results ({_RESULT_COLS}) VALUES ({placeholders})",
+        [(run_id, *row) for row in results],
+    )
+    conn.execute(
+        "UPDATE pricer_runs SET csv_path = ? WHERE id = ?", (csv_path, run_id),
+    )
+    csv_export.write_run_csv(conn, run_id, csv_dir / f"run_{run_id:04d}.csv")
+    return run_id
+
+
+def _record_empty_run(
+    conn: sqlite3.Connection, config: config_mod.Profile,
+    coverage: str, scope: dict, csv_dir: Path,
+) -> int:
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cur = conn.execute(
+        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
+        "n_events, n_rows, csv_path) VALUES (?, ?, ?, ?, 0, 0, '')",
+        (now_iso, config.id, coverage, json.dumps(scope)),
+    )
+    run_id = cur.lastrowid
+    csv_path = f"sim/run_{run_id:04d}.csv"
+    conn.execute(
+        "UPDATE pricer_runs SET csv_path = ? WHERE id = ?", (csv_path, run_id),
+    )
+    csv_export.write_run_csv(conn, run_id, csv_dir / f"run_{run_id:04d}.csv")
+    return run_id
