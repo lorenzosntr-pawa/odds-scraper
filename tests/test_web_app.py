@@ -714,6 +714,16 @@ def test_index_kickoff_filter_group_is_taggable(client: TestClient):
     assert 'filter-group filter-kickoff' in r.text
 
 
+def test_css_hides_kickoff_chips_on_ended_tab(client: TestClient):
+    """ENDED tab keeps the date picker but drops the forward-window chips
+    (1h / 3h / 6h / 24h / 48h are meaningless when everything's already
+    finished). Guarded as a CSS contract — the JS sets body.tab-ended,
+    this rule does the actual hiding."""
+    r = client.get("/static/app.css")
+    assert r.status_code == 200
+    assert 'body.tab-ended .filter-kickoff .chip.kick' in r.text
+
+
 def test_events_card_wraps_grid_in_card_grid_div(client: TestClient):
     """The event card wraps its column header + market blocks in a single
     .card-grid div so the phone media query can make ONE scroll container
