@@ -3,16 +3,31 @@ from __future__ import annotations
 from typing import Iterable, Mapping, Optional
 
 
+# Anything below this is treated as a suspended / placeholder odds value
+# and dropped at the input layer so it can't reach the engine. The
+# engine's cap step divides by source_odds, so a 0 (BP sometimes writes
+# 0 when a selection is suspended) blows up with ZeroDivisionError.
+_MIN_VALID_ODDS = 1.01
+
+
+def _is_valid_odds(v) -> bool:
+    return v is not None and v >= _MIN_VALID_ODDS
+
+
+def _is_valid_prob(v) -> bool:
+    return v is not None and 0.0 < v < 1.0
+
+
 def _extract_1x2(prices: Iterable) -> Optional[dict]:
     """Return {'home': {'odds':_, 'prob':_}, 'draw': …, 'away': …} or None
-    if any side is missing or has null prob/odds. Treated as one input —
+    if any side is missing or has invalid prob/odds. Treated as one input —
     all three sides must come from the same book.
     """
     out: dict = {}
     for r in prices:
         if r["market_id"] != "1x2_ft":
             continue
-        if r["odds"] is None or r["probability"] is None:
+        if not _is_valid_odds(r["odds"]) or not _is_valid_prob(r["probability"]):
             continue
         out[r["side"]] = {"odds": r["odds"], "prob": r["probability"]}
     if {"home", "draw", "away"} <= out.keys():
@@ -21,24 +36,26 @@ def _extract_1x2(prices: Iterable) -> Optional[dict]:
 
 
 def _extract_ou(prices: Iterable, market_id: str) -> list[tuple[float, float]]:
-    """Return list of (line, over_prob) for the given market. Drops null probs."""
+    """Return list of (line, over_prob) for the given market. Drops rows
+    with invalid (None or out-of-range) probabilities."""
     out: list[tuple[float, float]] = []
     for r in prices:
         if r["market_id"] != market_id or r["side"] != "over":
             continue
-        if r["probability"] is None:
+        if not _is_valid_prob(r["probability"]):
             continue
         out.append((r["line"], r["probability"]))
     return out
 
 
 def _extract_ftts(prices: Iterable) -> Optional[dict]:
-    """Return {'home': prob, 'away': prob} or None if either is missing."""
+    """Return {'home': prob, 'away': prob} or None if either is missing
+    or has an invalid probability."""
     out: dict = {}
     for r in prices:
         if r["market_id"] != "next_goal_ft":
             continue
-        if r["probability"] is None:
+        if not _is_valid_prob(r["probability"]):
             continue
         if r["side"] in ("home", "away"):
             out[r["side"]] = r["probability"]

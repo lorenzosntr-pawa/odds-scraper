@@ -128,3 +128,58 @@ def test_run_simulation_coverage_latest_emits_one_row_per_event(db, tmp_path):
     ).fetchall()
     assert len(rows) == 1
     assert rows[0]["ts_utc"] == "2026-05-21T11:00:00Z"
+
+
+def test_run_simulation_skips_snapshot_with_zero_odds(db, tmp_path):
+    """Live snapshots sometimes carry odds=0 for suspended selections.
+    The engine's cap step would crash (1.0 / source_odds → ZeroDivisionError).
+    The runner must drop those snapshots and keep going so one bad row
+    doesn't kill an entire run."""
+    # Seed one good event so we know the runner produces output.
+    _seed_event_with_priced_snapshot(db, "GOOD")
+    # Seed a second event whose 1x2 has odds=0 — engine input filter
+    # should drop it OR the runner's try/except should catch it.
+    db.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES ('BAD', 'B-Home', 'B-Away', '2026-05-22T18:30:00Z')",
+    )
+    cur = db.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+        "match_minute, score_home, score_away, fetch_status) "
+        "VALUES ('2026-05-21T12:00:00Z', 'BAD', 'betpawa', 'STARTED', "
+        "1, 0, 0, 'ok')",
+    )
+    snap_id = cur.lastrowid
+    bad_rows = [
+        # All three 1x2 sides — one has odds=0 (suspended), so this whole
+        # snapshot's 1x2 input is invalid and gets dropped.
+        ("1x2_ft", 0.0, "home", 0.00, 0.54),
+        ("1x2_ft", 0.0, "draw", 3.40, 0.29),
+        ("1x2_ft", 0.0, "away", 4.20, 0.17),
+        ("over_under_ft", 2.5, "over",  1.85, 0.55),
+        ("over_under_ft", 2.5, "under", 1.95, 0.45),
+        ("next_goal_ft", 1.0, "home", 1.85, 0.54),
+        ("next_goal_ft", 1.0, "none", 8.50, 0.12),
+        ("next_goal_ft", 1.0, "away", 3.50, 0.34),
+    ]
+    for mid, line, side, odds, prob in bad_rows:
+        db.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, 'BAD', '2026-05-21T12:00:00Z', 'betpawa', ?, ?, ?, ?, ?)",
+            (snap_id, mid, line, side, odds, prob),
+        )
+
+    default = configs.load_default(db)
+    run_id = runner.run_simulation(
+        db, config=default, coverage="all",
+        scope={"status": "", "country": "", "league": "", "date": "", "search": ""},
+        csv_dir=tmp_path / "sim",
+    )
+    rows = db.execute(
+        "SELECT event_id FROM pricer_results WHERE run_id = ?", (run_id,),
+    ).fetchall()
+    event_ids = {r["event_id"] for r in rows}
+    # Run survived; only the good event produced a result.
+    assert "GOOD" in event_ids
+    assert "BAD" not in event_ids
