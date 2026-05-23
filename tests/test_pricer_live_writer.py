@@ -60,7 +60,7 @@ def test_compute_and_write_inserts_row(tmp_path: Path):
         _tick_snapshot(Bookmaker.BET9JA, with_prob=False),
         _tick_snapshot(Bookmaker.BETWAY, with_prob=False),
     ]
-    ok = live_writer.compute_and_write(
+    ok = live_writer.compute_and_write_from_snapshots(
         conn, "E1", "2026-05-22T18:30:00Z", rows, (0, 0),
     )
     assert ok is True
@@ -85,7 +85,7 @@ def test_compute_and_write_returns_false_on_insufficient_inputs(tmp_path: Path):
     no_prob_rows = [
         _tick_snapshot(b, with_prob=False) for b in Bookmaker
     ]
-    ok = live_writer.compute_and_write(
+    ok = live_writer.compute_and_write_from_snapshots(
         conn, "E1", "2026-05-22T18:30:00Z", no_prob_rows, (0, 0),
     )
     assert ok is False
@@ -102,7 +102,7 @@ def test_compute_and_write_is_idempotent(tmp_path: Path):
     rows = [_tick_snapshot(b, with_prob=(b == Bookmaker.BETPAWA))
             for b in Bookmaker]
     for _ in range(3):
-        live_writer.compute_and_write(
+        live_writer.compute_and_write_from_snapshots(
             conn, "E1", "2026-05-22T18:30:00Z", rows, (0, 0),
         )
     n = conn.execute(
@@ -129,3 +129,48 @@ async def test_writer_append_pricer_live_writes_row(tmp_path: Path):
     ).fetchone()[0]
     check.close()
     assert n == 1
+
+
+def test_backfill_all_populates_missing_ticks(tmp_path: Path):
+    """backfill_all walks every (event_id, ts_utc) tick in snapshots
+    that doesn't yet have a pricer_live_results row, computes OUR,
+    and inserts. Existing rows are skipped (idempotent re-run)."""
+    db = tmp_path / "odds.db"
+    # Use the writer to seed two ticks (one prematch UPCOMING, one live)
+    import asyncio
+    from datetime import timedelta
+
+    rows1 = [_tick_snapshot(b, with_prob=(b == Bookmaker.BETPAWA),
+                            event_id="EV1") for b in Bookmaker]
+    # Force a different ts for the second tick
+    for r in rows1:
+        object.__setattr__(r, "status", EventStatus.UPCOMING)
+
+    rows2_ts = datetime(2026, 5, 22, 19, 0, tzinfo=timezone.utc)
+    rows2 = []
+    for b in Bookmaker:
+        snap = _tick_snapshot(b, with_prob=(b == Bookmaker.BETPAWA),
+                              event_id="EV1")
+        object.__setattr__(snap, "ts_utc", rows2_ts)
+        rows2.append(snap)
+
+    async def seed():
+        async with SqliteWriter(db) as w:
+            await w.append(rows1)
+            await w.append(rows2)
+    asyncio.get_event_loop().run_until_complete(seed()) if False else asyncio.run(seed())
+
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    # No OUR rows yet.
+    assert conn.execute(
+        "SELECT COUNT(*) FROM pricer_live_results"
+    ).fetchone()[0] == 0
+
+    written, skipped = live_writer.backfill_all(conn)
+    assert written == 2, f"expected 2 ticks backfilled, got {written}"
+    assert skipped == 0
+
+    # Re-run is idempotent — both ticks already covered.
+    written2, _ = live_writer.backfill_all(conn)
+    assert written2 == 0
+    conn.close()

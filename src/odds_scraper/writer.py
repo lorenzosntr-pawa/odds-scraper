@@ -94,7 +94,9 @@ class SqliteWriter:
         assert conn is not None
         try:
             conn.execute("BEGIN")
-            ok = lw.compute_and_write(conn, event_id, ts_utc, rows, score)
+            ok = lw.compute_and_write_from_snapshots(
+                conn, event_id, ts_utc, rows, score,
+            )
             conn.execute("COMMIT")
             return ok
         except Exception:
