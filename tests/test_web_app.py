@@ -288,14 +288,23 @@ def db_with_ou_path(tmp_path: Path) -> Path:
 
 def test_events_card_has_expand_toggle_when_ou_present(db_with_ou_path: Path):
     """With OU 2.5 priced, the card emits a market-block with the
-    matching group_key — the per-market collapse hook for the JS layer."""
+    matching group_key AND a master "Show more markets" toggle. Markets
+    past the 1x2 family live inside the .card-extras region hidden behind
+    that toggle."""
     app = create_app(db_path=db_with_ou_path)
     client = TestClient(app)
     r = client.get("/events?status=upcoming")
     assert 'data-group-key="over_under_ft_2.5"' in r.text
     assert "Match O/U 2.5" in r.text
-    # The retired bottom button must NOT appear.
-    assert "expand-toggle" not in r.text
+    assert "expand-toggle" in r.text
+    assert 'class="card-extras"' in r.text
+    # The OU group_key must appear AFTER the card-extras opening tag —
+    # extras live inside it, not in the always-visible primary region.
+    extras_pos = r.text.find('class="card-extras"')
+    ou_pos = r.text.find('data-group-key="over_under_ft_2.5"')
+    assert extras_pos != -1 and ou_pos != -1
+    assert extras_pos < ou_pos
+    # The legacy per-group .market-extra class stays retired.
     assert "market-extra" not in r.text
 
 
