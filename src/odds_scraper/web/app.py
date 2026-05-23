@@ -13,6 +13,7 @@ from odds_scraper.models import MARKET_MANIFEST, MarketSpec
 from odds_scraper.pricer import engine, inputs as pricer_inputs
 
 from . import queries
+from .pricer_routes import register_pricer_routes
 
 # Markets visible in the collapsed event-list card, in display order.
 # Derived from queries.COLLAPSED_MARKETS for a single source of truth.
@@ -199,6 +200,8 @@ def create_app(db_path: Path) -> FastAPI:
 
     app = FastAPI(title="odds-scraper UX")
     app.mount("/static", StaticFiles(directory=str(pkg_dir / "static")), name="static")
+
+    register_pricer_routes(app, templates, db_path=db_path, conn=conn)
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):

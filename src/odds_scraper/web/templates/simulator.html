@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="p-3 max-w-screen-2xl mx-auto" data-page-title="Pricer Simulator">
+  <div class="flex justify-between border-b border-gray-900 pb-3 mb-3">
+    <div class="text-white font-semibold tracking-wider" title="Pricer Simulator">PRICER SIMULATOR</div>
+    <a class="tab" href="/">← back to events</a>
+  </div>
+
+  <form method="post" action="/simulator/runs" class="sim-form">
+    <div class="sim-section">
+      <div class="sim-section-h">1 · Event scope</div>
+      <div class="filter-group">
+        <span class="filter-lbl">Status</span>
+        <label><input type="radio" name="status" value="upcoming" checked> upcoming</label>
+        <label><input type="radio" name="status" value="live"> live</label>
+        <label><input type="radio" name="status" value="ended"> ended</label>
+      </div>
+      <div class="filter-group">
+        <span class="filter-lbl">Country</span>
+        <input class="filter-select" type="text" name="country" placeholder="country_id">
+        <span class="filter-lbl">League</span>
+        <input class="filter-select" type="text" name="league" placeholder="league_id">
+        <span class="filter-lbl">Date</span>
+        <input type="date" class="custom-hours" name="date">
+        <span class="filter-lbl">Search</span>
+        <input class="search-input" type="search" name="search" placeholder="team">
+      </div>
+    </div>
+
+    <div class="sim-section">
+      <div class="sim-section-h">2 · Config</div>
+      <div class="filter-group">
+        <span class="filter-lbl">Profile</span>
+        <select name="config_id" class="filter-select">
+          {% for p in profiles %}
+            <option value="{{ p.id }}">{{ p.name }}{% if p.is_default %} (default){% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <p class="filter-lbl" style="margin-top:6px;color:#888">
+        Editing coefficients inline lands in a follow-up — for now pick a profile.
+        Use the CLI to create a new profile, then re-load this page.
+      </p>
+    </div>
+
+    <div class="sim-section">
+      <div class="sim-section-h">3 · Run</div>
+      <div class="filter-group">
+        <span class="filter-lbl">Coverage</span>
+        <label><input type="radio" name="coverage" value="all" checked> all snapshots</label>
+        <label><input type="radio" name="coverage" value="latest"> latest per event</label>
+        <label><input type="radio" name="coverage" value="prematch"> prematch only</label>
+        <label><input type="radio" name="coverage" value="live"> live only</label>
+      </div>
+      <button type="submit" class="chip on" style="padding:6px 16px;cursor:pointer">Run simulation</button>
+    </div>
+  </form>
+
+  <div class="sim-section">
+    <div class="sim-section-h">4 · Last run</div>
+    {% if last_run %}
+      <p class="filter-lbl">
+        Run #{{ last_run.id }} · {{ last_run.created_at }} · {{ last_run.coverage }} ·
+        {{ last_run.n_events }} events · {{ last_run.n_rows }} rows ·
+        <a href="/simulator/runs/{{ last_run.id }}/csv" style="color:#60a5fa">download CSV</a>
+      </p>
+    {% else %}
+      <p class="filter-lbl">No runs yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="sim-section">
+    <div class="sim-section-h">5 · History</div>
+    <table class="history-table">
+      <thead>
+        <tr><th>#</th><th>created</th><th>profile</th><th>coverage</th><th>events</th><th>rows</th><th>csv</th></tr>
+      </thead>
+      <tbody>
+        {% for r in history %}
+        <tr>
+          <td>{{ r.id }}</td>
+          <td>{{ r.created_at }}</td>
+          <td>{{ r.profile_name }}</td>
+          <td>{{ r.coverage }}</td>
+          <td>{{ r.n_events }}</td>
+          <td>{{ r.n_rows }}</td>
+          <td><a href="/simulator/runs/{{ r.id }}/csv" style="color:#60a5fa">csv</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<style>
+  .sim-section { margin: 14px 0; padding: 10px; background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 4px; }
+  .sim-section-h { color: #fbbf24; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  .sim-form label { color: #d1d5db; font-size: 11px; margin-right: 8px; }
+</style>
+{% endblock %}
