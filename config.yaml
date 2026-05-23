@@ -3,6 +3,28 @@ events:
   - 35385310
 tournaments:
   - 12329 # MLS
+  - 11965 # EPL
+  - 12097 # Serie A
+  - 12110 # Bundesliga
+  - 12039 # LaLiga
+  - 12127 # Ligue 1
+  - 12541 # Conference
+  - 12545 # Champions League
+  - 12542 # Libertadores
+  - 12543 # Sudamericana
+  - 258194 # wrld cup
+  - 13234 # Brazil Serie A
+  - 12128 # Belgium Pro League
+  - 12664 # Parva Liga
+  - 12199 # Chile Primera Division
+  - 13344 # Chinese Super League
+  - 12561 # Primera A Col
+  - 12756 # Copa Colombiana
+  - 12340 # 1. Liga Czech
+  - 12001 # Premier League Egypt
+  - 12919 # Veikkausliiga
+  - 12125 # Eredivise
+  - 12752 #Ukrainian Premier League
   # Add tournament/competition IDs here to auto-watch their UPCOMING + LIVE events.
   # The resolver re-polls these on a schedule and spawns watchers for new fixtures.
   # - 11965   # example: Serie A
@@ -15,6 +37,10 @@ refresh_interval_when_idle_seconds: 600
 cadence:
   prematch_seconds: 600
   live_seconds: 90
+  # Start sampling at live_seconds this many seconds before kickoff so
+  # we don't miss the first 5-15 minutes of in-play while waiting for
+  # BetPawa to flip its `live=true` status flag.
+  live_lead_seconds: 300
   status_retry_backoff_seconds: [5, 15, 45]
   watchdog_after_kickoff_seconds: 10800
 output:

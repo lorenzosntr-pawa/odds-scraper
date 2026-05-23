@@ -97,6 +97,13 @@ async def test_exits_on_ended(cfg):
 
 
 async def test_cadence_switch_at_kickoff(cfg, monkeypatch):
+    """Cadence is driven by `kickoff_utc`, not by BetPawa's `live` flag.
+
+    Two ticks happen at different mocked "nows": the first an hour
+    before kickoff (so prematch cadence), the second a minute after
+    kickoff (so live cadence). The BetPawa `live` flag stays False
+    throughout to prove the cadence ignores it.
+    """
     sleeps: list[float] = []
 
     async def fake_sleep(s):
@@ -104,7 +111,36 @@ async def test_cadence_switch_at_kickoff(cfg, monkeypatch):
 
     monkeypatch.setattr("odds_scraper.watcher.asyncio.sleep", fake_sleep)
 
-    statuses = iter([_detail(live=False), _detail(live=True), _detail(ended=True)])
+    # Fixed kickoff; mock clock jumps over it between ticks.
+    kickoff = datetime.now(timezone.utc) + timedelta(hours=1)
+    detail = {
+        "id": "33660318",
+        "participants": [{"name": "A"}, {"name": "B"}],
+        "startTime": kickoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "additionalInfo": {"live": False},
+        "results": None,
+    }
+    ended_detail = {
+        "id": "33660318",
+        "participants": [{"name": "A"}, {"name": "B"}],
+        "startTime": kickoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "additionalInfo": {"live": False},
+        "results": {
+            "display": {"minute": 90, "currentPeriod": {"name": "FT"}},
+            "participantPeriodResults": [],
+        },
+    }
+    # Each non-ending tick calls _utcnow twice: once in the watchdog
+    # check, once in _cadence. Two ticks before ENDED → 4 calls.
+    fake_nows = iter([
+        kickoff - timedelta(hours=1), kickoff - timedelta(hours=1),
+        kickoff + timedelta(minutes=1), kickoff + timedelta(minutes=1),
+    ])
+    monkeypatch.setattr(
+        "odds_scraper.watcher._utcnow", lambda: next(fake_nows),
+    )
+
+    statuses = iter([detail, detail, ended_detail])
     bp_client = AsyncMock()
     bp_client.get_event_detail.side_effect = lambda _id: next(statuses)
     collector = AsyncMock()
@@ -119,8 +155,54 @@ async def test_cadence_switch_at_kickoff(cfg, monkeypatch):
 
     watcher = EventWatcher("33660318", cfg, bp_client, collector, writer, resolver)
     await watcher.run()
-    assert sleeps[0] == 600
-    assert sleeps[1] == 90
+    assert sleeps[0] == 600   # tick 1: kickoff in 1h → prematch
+    assert sleeps[1] == 90    # tick 2: kickoff was 1m ago → live
+
+
+async def test_cadence_ramps_up_within_live_lead_window(cfg, monkeypatch):
+    """Inside the live_lead_seconds window before kickoff, cadence must
+    already be `live_seconds` even though the BetPawa `live` flag is
+    still False — that's the whole point of the kickoff-driven cadence."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+
+    monkeypatch.setattr("odds_scraper.watcher.asyncio.sleep", fake_sleep)
+
+    # Kickoff inside the live-lead window (default 300s = 5 min).
+    kickoff = datetime.now(timezone.utc) + timedelta(minutes=2)
+    detail = {
+        "id": "33660318",
+        "participants": [{"name": "A"}, {"name": "B"}],
+        "startTime": kickoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "additionalInfo": {"live": False},
+        "results": None,
+    }
+    ended_detail = {
+        "id": "33660318",
+        "participants": [{"name": "A"}, {"name": "B"}],
+        "startTime": kickoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "additionalInfo": {"live": False},
+        "results": {"display": {"minute": 90, "currentPeriod": {"name": "FT"}},
+                    "participantPeriodResults": []},
+    }
+    statuses = iter([detail, ended_detail])
+    bp_client = AsyncMock()
+    bp_client.get_event_detail.side_effect = lambda _id: next(statuses)
+    collector = AsyncMock()
+    collector.collect.return_value = _snap_list()
+    writer = MagicMock()
+    writer.append = AsyncMock()
+    resolver = AsyncMock(return_value=(
+        {Bookmaker.SPORTYBET: "sr:match:1",
+         Bookmaker.BET9JA: "b9j-7",
+         Bookmaker.BETWAY: "sr:match:1"},
+        "sr:match:1", ""))
+
+    watcher = EventWatcher("33660318", cfg, bp_client, collector, writer, resolver)
+    await watcher.run()
+    assert sleeps[0] == 90  # 2 min before kickoff is inside the 5-min lead window
 
 
 async def test_status_poll_retries_then_emits_sentinel(cfg, monkeypatch):

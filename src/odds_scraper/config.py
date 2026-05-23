@@ -13,6 +13,7 @@ class CadenceConfig:
     live_seconds: int
     status_retry_backoff_seconds: tuple[int, ...]
     watchdog_after_kickoff_seconds: int
+    live_lead_seconds: int = 300
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ def load_config(path: Path | str) -> AppConfig:
                 int(x) for x in cad["status_retry_backoff_seconds"]
             ),
             watchdog_after_kickoff_seconds=int(cad["watchdog_after_kickoff_seconds"]),
+            live_lead_seconds=int(cad.get("live_lead_seconds", 300)),
         ),
         output=OutputConfig(
             db_path=str(out.get("db_path", "data/odds.db")),
