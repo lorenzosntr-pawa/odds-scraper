@@ -96,44 +96,87 @@ def get_latest_prices_for_event(
 
     scope='collapsed' restricts to the 1x2 family.
     scope='opened' returns all markets.
+
+    Thin wrapper over get_latest_prices_for_events for single-event call sites.
+    """
+    by_event = get_latest_prices_for_events(conn, [event_id], scope=scope)
+    return by_event.get(event_id, [])
+
+
+def get_latest_prices_for_events(
+    conn: sqlite3.Connection,
+    event_ids: list[str] | tuple[str, ...],
+    scope: Scope = "opened",
+) -> dict[str, list[sqlite3.Row]]:
+    """Latest price per (bookmaker, market_id, line, side) for many events.
+
+    Returns a dict keyed by event_id. Events with no prices map to [].
+
+    Built around the writer's invariant that every tick writes one
+    snapshot per (event, bookmaker) atomically — so "latest price per
+    outcome" reduces to "latest snapshot per (event, bookmaker), then
+    all prices for those snapshot ids". Two index-friendly steps replace
+    the N+1 per-event CTE that turned the home page into ~88s of DB
+    work once the prices table grew past ~1M rows.
+
+    scope='collapsed' restricts to the 1x2 family.
+    scope='opened' returns all markets.
     """
     if scope not in ("collapsed", "opened"):
         raise ValueError(f"unknown scope {scope!r}")
-    # Group by the full outcome key so the "latest" is computed per outcome,
-    # not per bookmaker. Today the writer batches all of a bookmaker's
-    # markets at the same ts_utc per tick, so the two formulations would
-    # return the same rows — but pinning each outcome to its own MAX(ts)
-    # protects against future writer changes that may emit per-market.
+    if not event_ids:
+        return {}
+
+    eid_list = list(event_ids)
+    out: dict[str, list[sqlite3.Row]] = {eid: [] for eid in eid_list}
+
+    # Step 1: latest fetch_status='ok' snapshot per (event, bookmaker).
+    # Filtering on fetch_status='ok' is what gives us "fall back to last
+    # successful tick" semantics — failed-fetch snapshots have no price
+    # rows, so picking the latest non-OK one would render the cell as a
+    # dash even though prior tick data is still meaningful. Uses the
+    # idx_snapshots_event_bm_ts index added in schema v3.
+    eid_placeholders = ",".join("?" * len(eid_list))
+    snap_sql = f"""
+        SELECT s.id
+        FROM snapshots s
+        JOIN (
+            SELECT event_id, bookmaker, MAX(ts_utc) AS max_ts
+            FROM snapshots
+            WHERE event_id IN ({eid_placeholders})
+              AND fetch_status = 'ok'
+            GROUP BY event_id, bookmaker
+        ) latest
+          ON latest.event_id  = s.event_id
+         AND latest.bookmaker = s.bookmaker
+         AND latest.max_ts    = s.ts_utc
+    """
+    snap_ids = [r[0] for r in conn.execute(snap_sql, eid_list).fetchall()]
+    if not snap_ids:
+        return out
+
+    # Step 2: prices keyed by snapshot_id (primary key prefix — fast lookup).
     market_filter = ""
     market_params: tuple[str, ...] = ()
     if scope == "collapsed":
-        placeholders = ",".join("?" * len(COLLAPSED_MARKETS))
-        market_filter = f"AND p.market_id IN ({placeholders})"
+        mp = ",".join("?" * len(COLLAPSED_MARKETS))
+        market_filter = f"AND p.market_id IN ({mp})"
         market_params = COLLAPSED_MARKETS
-    sql = f"""
-        WITH latest_per_outcome AS (
-            SELECT event_id, bookmaker, market_id, line, side,
-                   MAX(ts_utc) AS max_ts
-            FROM prices
-            WHERE event_id = ?
-            GROUP BY event_id, bookmaker, market_id, line, side
-        )
-        SELECT p.bookmaker, p.market_id, p.line, p.side,
+    snap_placeholders = ",".join("?" * len(snap_ids))
+    prices_sql = f"""
+        SELECT p.event_id, p.bookmaker, p.market_id, p.line, p.side,
                p.odds, p.probability
         FROM prices p
-        JOIN latest_per_outcome l
-          ON l.event_id  = p.event_id
-         AND l.bookmaker = p.bookmaker
-         AND l.market_id = p.market_id
-         AND l.line      = p.line
-         AND l.side      = p.side
-         AND l.max_ts    = p.ts_utc
-        WHERE p.event_id = ?
+        WHERE p.snapshot_id IN ({snap_placeholders})
           {market_filter}
-        ORDER BY p.market_id, p.line, p.side, p.bookmaker
+        ORDER BY p.event_id, p.market_id, p.line, p.side, p.bookmaker
     """
-    params: list[str | int | float] = [event_id, event_id, *market_params]
-    return conn.execute(sql, params).fetchall()
+    rows = conn.execute(
+        prices_sql, [*snap_ids, *market_params],
+    ).fetchall()
+    for r in rows:
+        out[r["event_id"]].append(r)
+    return out
 
 
 def get_event_meta(

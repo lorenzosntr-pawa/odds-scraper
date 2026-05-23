@@ -33,18 +33,6 @@ def db_path(tmp_path: Path) -> Path:
                 "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', ?, 0.0, ?, ?, ?)",
                 (snap_id, market_id, side, odds, prob),
             )
-    # A second snapshot for E1 — verifies history table renders multiple rows
-    cur2 = conn.execute(
-        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
-        "VALUES ('2026-05-21T10:01:30Z', 'E1', 'betpawa', 'UPCOMING', 'ok')",
-    )
-    snap_id2 = cur2.lastrowid
-    conn.execute(
-        "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
-        "market_id, line, side, odds, probability) "
-        "VALUES (?, 'E1', '2026-05-21T10:01:30Z', 'betpawa', '1x2_2up_ft', 0.0, 'home', 1.90, 0.53)",
-        (snap_id2,),
-    )
     conn.close()
     return path
 

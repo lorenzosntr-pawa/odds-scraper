@@ -33,6 +33,7 @@ def test_init_schema_creates_all_indexes(conn):
     }
     assert {
         "idx_snapshots_event_ts",
+        "idx_snapshots_event_bm_ts",
         "idx_snapshots_ts",
         "idx_prices_event_market_outcome",
         "idx_prices_ts",
@@ -61,12 +62,12 @@ def test_v2_adds_country_and_league_columns(conn):
     assert {"country_id", "country_name", "league_id", "league_name"} <= cols
 
 
-def test_v2_schema_version_recorded(conn):
+def test_schema_version_recorded(conn):
     init_schema(conn)
     row = conn.execute(
         "SELECT version FROM schema_version WHERE rowid = 1"
     ).fetchone()
-    assert row[0] == 2
+    assert row[0] == SCHEMA_VERSION
 
 
 def test_v2_upgrades_a_v1_database(conn):
@@ -111,7 +112,7 @@ def test_v2_upgrades_a_v1_database(conn):
     v = conn.execute(
         "SELECT version FROM schema_version WHERE rowid = 1"
     ).fetchone()
-    assert v[0] == 2
+    assert v[0] == SCHEMA_VERSION
 
 
 def test_v2_migration_is_idempotent_after_partial_failure(conn):
@@ -143,4 +144,4 @@ def test_v2_migration_is_idempotent_after_partial_failure(conn):
     v = conn.execute(
         "SELECT version FROM schema_version WHERE rowid = 1"
     ).fetchone()
-    assert v[0] == 2
+    assert v[0] == SCHEMA_VERSION
