@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Callable
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _BASE_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -84,6 +85,106 @@ def _add_columns_if_missing(
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
 
 
+def _apply_v4_pricer_tables(conn: sqlite3.Connection) -> None:
+    """v4: pricer integration — configs, runs, results + seed default profile.
+
+    The "default" config is the read-only baseline pinned to the engine
+    source's FeatureProperties.java values. Tests and the /simulator
+    page rely on it being present exactly once with is_default=1.
+
+    Note: we use individual conn.execute() calls (not executescript) because
+    init_schema wraps each migration in BEGIN/COMMIT, and executescript
+    issues an implicit COMMIT before running, which would end that tx.
+    """
+    conn.execute(
+        """
+        CREATE TABLE pricer_configs (
+            id           INTEGER PRIMARY KEY,
+            name         TEXT NOT NULL UNIQUE,
+            created_at   TEXT NOT NULL,
+            is_default   INTEGER NOT NULL DEFAULT 0,
+            coefficients TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE pricer_runs (
+            id          INTEGER PRIMARY KEY,
+            created_at  TEXT NOT NULL,
+            config_id   INTEGER NOT NULL REFERENCES pricer_configs(id),
+            coverage    TEXT NOT NULL,
+            scope_json  TEXT NOT NULL,
+            n_events    INTEGER NOT NULL,
+            n_rows      INTEGER NOT NULL,
+            csv_path    TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX idx_pricer_runs_created ON pricer_runs(created_at DESC)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE pricer_results (
+            run_id              INTEGER NOT NULL REFERENCES pricer_runs(id),
+            snapshot_id         INTEGER NOT NULL REFERENCES snapshots(id),
+            event_id            TEXT    NOT NULL,
+            ts_utc              TEXT    NOT NULL,
+            basis_used          TEXT    NOT NULL,
+            lambda_home         REAL,
+            lambda_away         REAL,
+            our_p_home_1        REAL,
+            our_p_away_1        REAL,
+            our_1up_home_fair   REAL,
+            our_1up_home_capped REAL,
+            our_1up_away_fair   REAL,
+            our_1up_away_capped REAL,
+            our_p_home_2        REAL,
+            our_p_away_2        REAL,
+            our_2up_home_fair   REAL,
+            our_2up_home_capped REAL,
+            our_2up_away_fair   REAL,
+            our_2up_away_capped REAL,
+            bp_1up_home_odds    REAL, bp_1up_away_odds  REAL,
+            bp_2up_home_odds    REAL, bp_2up_away_odds  REAL,
+            sb_1up_home_odds    REAL, sb_1up_away_odds  REAL,
+            sb_2up_home_odds    REAL, sb_2up_away_odds  REAL,
+            b9j_1up_home_odds   REAL, b9j_1up_away_odds REAL,
+            b9j_2up_home_odds   REAL, b9j_2up_away_odds REAL,
+            bw_1up_home_odds    REAL, bw_1up_away_odds  REAL,
+            bw_2up_home_odds    REAL, bw_2up_away_odds  REAL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX idx_pricer_results_run   ON pricer_results(run_id)"
+    )
+    conn.execute(
+        "CREATE INDEX idx_pricer_results_event ON pricer_results(event_id, ts_utc)"
+    )
+    default_coeffs = {
+        "ONEUP_FAVORITE_MARGIN": [0.9969, 0.0313],
+        "ONEUP_UNDERDOG_MARGIN": [0.9799, 0.0400],
+        "ONEUP_MIN_GUARANTEED_REDUCTION": 0.02,
+        "ONEUP_TRAILING_MIN_REDUCTION": 0.05,
+        "ONEUP_TRAILING_MAX_REDUCTION": 0.25,
+        "TWOUP_FAVORITE_MARGIN": [0.998, 0.010],
+        "TWOUP_UNDERDOG_MARGIN": [0.994, 0.008],
+        "TWOUP_FAVORITE_BOOST_COEFFICIENT": 0.9,
+        "TWOUP_UNDERDOG_BOOST_COEFFICIENT": 0.6,
+        "TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION": 0.02,
+        "TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION": 0.005,
+        "TWOUP_TRAILING_MIN_REDUCTION": 0.05,
+        "TWOUP_TRAILING_MAX_REDUCTION": 0.25,
+    }
+    conn.execute(
+        "INSERT INTO pricer_configs (name, created_at, is_default, coefficients) "
+        "VALUES ('default', datetime('now'), 1, ?)",
+        (json.dumps(default_coeffs),),
+    )
+
+
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: lambda conn: None,
     2: lambda conn: _add_columns_if_missing(conn, "events", [
@@ -100,6 +201,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
         "CREATE INDEX IF NOT EXISTS idx_snapshots_event_bm_ts "
         "ON snapshots(event_id, bookmaker, ts_utc)"
     ),
+    4: lambda conn: _apply_v4_pricer_tables(conn),
 }
 
 
