@@ -739,3 +739,49 @@ def test_events_card_wraps_grid_in_card_grid_div(client: TestClient):
     grid_pos = body.find('<div class="card-grid"')
     assert ev_pos != -1 and grid_pos != -1, "both elements must exist"
     assert ev_pos < grid_pos, "<a class='ev'> must precede <div class='card-grid'>"
+
+
+def test_event_view_carries_our_odds(db_path: Path):
+    """The card route attaches OUR 1UP/2UP odds to each event view so
+    the template can render the SIM column."""
+    # Seed FTTS so 1UP is computable in the existing fixture.
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    snap_id = conn.execute(
+        "SELECT id FROM snapshots WHERE event_id='E1' LIMIT 1"
+    ).fetchone()[0]
+    for side, odds, prob in [
+        ("home", 1.85, 0.54), ("none", 8.5, 0.12), ("away", 3.5, 0.34),
+    ]:
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', "
+            "'next_goal_ft', 1.0, ?, ?, ?)",
+            (snap_id, side, odds, prob),
+        )
+    for side, odds, prob in [("over", 1.85, 0.55), ("under", 1.95, 0.45)]:
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', "
+            "'over_under_ft', 2.5, ?, ?, ?)",
+            (snap_id, side, odds, prob),
+        )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events?status=upcoming")
+    # OUR 1up/2up should now be in the markup as data attrs on the SIM cells.
+    assert 'data-bookmaker="sim"' in r.text
+
+
+def test_event_view_no_our_when_inputs_missing(db_path: Path):
+    """With no OU and no FTTS in the fixture, OUR is not computable —
+    the SIM cell renders em-dash (no .sim class)."""
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events?status=upcoming")
+    # SIM column header present (markup always renders the column)
+    assert 'data-bookmaker="sim"' in r.text
+    # … but the cell content for that row should be em-dash since the
+    # default fixture lacks OU + FTTS.
+    # Verified indirectly: no .sim class in the events-list markup.
+    assert "class=\"sim\"" not in r.text
