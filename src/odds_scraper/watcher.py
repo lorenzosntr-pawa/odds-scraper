@@ -63,6 +63,11 @@ class EventWatcher:
         self._writer = writer
         self._resolver = resolver
         self._last_status: EventStatus = EventStatus.UNKNOWN
+        # Last observed live state, carried forward into the synthetic
+        # ENDED snapshot the watchdog writes on exit. Without these the
+        # ENDED tab card would lose the final score / minute.
+        self._last_minute: int | None = None
+        self._last_score: tuple[int, int] | None = None
 
     async def run(self) -> None:
         # Kickoff is learned from the first successful detail tick.
@@ -95,6 +100,14 @@ class EventWatcher:
                 rows = await self._collector.collect(detail, resolved, sr_id, genius_id)
                 await self._writer.append(rows)
                 self._log_tick_summary(rows)
+                # Carry forward the last observed minute/score from any
+                # row that has them set — the watchdog uses these to
+                # populate the synthetic ENDED snapshot on exit.
+                for r in rows:
+                    if r.score_home is not None and r.score_away is not None:
+                        self._last_score = (r.score_home, r.score_away)
+                    if r.match_minute is not None:
+                        self._last_minute = r.match_minute
             except Exception:  # noqa: BLE001
                 log.exception("collector/writer crash for %s", self.event_bp_id)
                 await self._writer.append(self._sentinel_rows("collector crashed"))
@@ -112,6 +125,13 @@ class EventWatcher:
                         "event %s watchdog tripped %.0fs after kickoff — exiting",
                         self.event_bp_id, elapsed_since_kickoff,
                     )
+                    # Write a synthetic ENDED snapshot so the event leaves
+                    # the live tab. Without this the last observed snapshot
+                    # (typically STARTED) stays as the head and the card
+                    # sticks in the live tab forever — BetPawa doesn't
+                    # always flip its status fields to "ended" cleanly,
+                    # and we have no other source of truth.
+                    await self._writer.append(self._ended_sentinel_rows())
                     return
 
             await asyncio.sleep(self._cadence(status))
@@ -168,6 +188,35 @@ class EventWatcher:
                 bookmaker=b,
                 fetch_status=FetchStatus.HTTP_ERROR,
                 fetch_error=reason,
+                prices={},
+            ))
+        return rows
+
+    def _ended_sentinel_rows(self) -> list[Snapshot]:
+        """Synthetic snapshot rows declaring the event ENDED.
+
+        Written when the watchdog trips. Carries forward the last
+        observed minute and score so the ENDED tab card still shows the
+        final state. fetch_status=OK because this is not a fetch failure
+        — it's the watcher's authoritative call that the event is over.
+        """
+        ts = datetime.now(timezone.utc)
+        score_home = self._last_score[0] if self._last_score else None
+        score_away = self._last_score[1] if self._last_score else None
+        rows: list[Snapshot] = []
+        for b in Bookmaker:
+            rows.append(Snapshot(
+                ts_utc=ts,
+                event_bp_id=self.event_bp_id,
+                sr_id="", genius_id="",
+                home="", away="",
+                kickoff_utc=ts,
+                status=EventStatus.ENDED,
+                match_minute=self._last_minute,
+                score_home=score_home, score_away=score_away,
+                bookmaker=b,
+                fetch_status=FetchStatus.OK,
+                fetch_error="",
                 prices={},
             ))
         return rows

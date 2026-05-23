@@ -308,5 +308,79 @@ async def test_watchdog_trips_after_kickoff_plus_window(monkeypatch):
 
     watcher = EventWatcher("33660318", cfg, bp_client, collector, writer, resolver)
     await watcher.run()  # watchdog trips → returns
-    # No assertion needed beyond "run() returned" — the watchdog trip
-    # is what causes the return when status is not ENDED.
+    # Watchdog must have written a synthetic ENDED snapshot before
+    # exiting, otherwise the event sticks in the live tab forever.
+    appended_batches = [call.args[0] for call in writer.append.call_args_list]
+    # The last batch is the ENDED sentinel.
+    last_batch = appended_batches[-1]
+    assert all(s.status == EventStatus.ENDED for s in last_batch)
+    assert all(s.fetch_status == FetchStatus.OK for s in last_batch)
+    assert len(last_batch) == len(Bookmaker)
+
+
+async def test_watchdog_ended_sentinel_carries_last_score(monkeypatch):
+    """The synthetic ENDED snapshot must carry the last observed score
+    and minute so the ENDED tab card still shows the final state."""
+    cfg = WatcherConfig(
+        prematch_seconds=600, live_seconds=90,
+        status_retry_backoff_seconds=(5, 15, 45),
+        watchdog_after_kickoff_seconds=1,
+    )
+    monkeypatch.setattr(
+        "odds_scraper.watcher.asyncio.sleep", AsyncMock(return_value=None),
+    )
+    kickoff_past = (
+        datetime.now(timezone.utc) - timedelta(seconds=10)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    async def detail(_id):
+        return {
+            "id": "33660318",
+            "participants": [{"name": "A"}, {"name": "B"}],
+            "startTime": kickoff_past,
+            "additionalInfo": {"live": True},
+            "results": {
+                "display": {"minute": 89, "currentPeriod": {"name": "2H"}},
+                "participantPeriodResults": [
+                    {"participant": {"type": "HOME"},
+                     "periodResults": [{"period": {"slug": "FULL_TIME_EXCLUDING_OVERTIME"}, "result": 2}]},
+                    {"participant": {"type": "AWAY"},
+                     "periodResults": [{"period": {"slug": "FULL_TIME_EXCLUDING_OVERTIME"}, "result": 1}]},
+                ],
+            },
+        }
+
+    # Return STARTED rows with score 2-1 / minute 89 on each collect.
+    snaps = [
+        Snapshot(
+            ts_utc=datetime.now(timezone.utc),
+            event_bp_id="33660318",
+            sr_id="", genius_id="",
+            home="A", away="B",
+            kickoff_utc=datetime.now(timezone.utc) - timedelta(seconds=10),
+            status=EventStatus.STARTED,
+            match_minute=89, score_home=2, score_away=1,
+            bookmaker=b,
+            fetch_status=FetchStatus.OK, fetch_error="", prices={},
+        )
+        for b in Bookmaker
+    ]
+    bp_client = AsyncMock()
+    bp_client.get_event_detail.side_effect = detail
+    collector = AsyncMock()
+    collector.collect.return_value = snaps
+    writer = MagicMock()
+    writer.append = AsyncMock()
+    resolver = AsyncMock(return_value=(
+        {Bookmaker.SPORTYBET: "sr:match:1",
+         Bookmaker.BET9JA: "b9j-7",
+         Bookmaker.BETWAY: "sr:match:1"},
+        "sr:match:1", ""))
+
+    watcher = EventWatcher("33660318", cfg, bp_client, collector, writer, resolver)
+    await watcher.run()
+
+    last_batch = writer.append.call_args_list[-1].args[0]
+    assert all(s.status == EventStatus.ENDED for s in last_batch)
+    assert all(s.score_home == 2 and s.score_away == 1 for s in last_batch)
+    assert all(s.match_minute == 89 for s in last_batch)
