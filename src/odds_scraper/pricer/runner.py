@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -8,6 +9,8 @@ from pathlib import Path
 from typing import Iterator
 
 from . import engine, inputs as input_extract, configs as config_mod, csv_export
+
+log = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -181,7 +184,18 @@ def run_simulation(
             if engine_inputs is None:
                 continue
             engine_inputs["score"] = _score_for_snapshot(conn, snap_id)
-            res = engine.price_early_payout_markets(**engine_inputs)
+            try:
+                res = engine.price_early_payout_markets(**engine_inputs)
+            except Exception as exc:  # noqa: BLE001
+                # Engine assumes well-formed inputs (e.g. source_odds > 0
+                # for the cap step). The input filter drops obvious cases
+                # but some live snapshots carry residual oddities — skip
+                # this snapshot rather than killing the whole run.
+                log.warning(
+                    "engine crashed on event=%s ts=%s — skipping (%s)",
+                    event_id, ts_utc, exc,
+                )
+                continue
             quoted = {
                 book: _extract_quoted_up(prices_by_book.get(book, []))
                 for book in ("betpawa", "sportybet", "bet9ja", "betway")
