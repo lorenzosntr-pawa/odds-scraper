@@ -209,7 +209,16 @@ def create_app(db_path: Path) -> FastAPI:
         rows = queries.get_events_by_status(  # type: ignore[arg-type]
             conn, status, country_id=country, league_id=league,
         )
-        events = [_build_event_view(conn, row) for row in rows]
+        # Batch the latest-prices fetch across all events: one query for
+        # the whole page instead of one per event. Turns ~88s of N+1
+        # round-trips on a populated DB into a single sub-second call.
+        prices_by_event = queries.get_latest_prices_for_events(
+            conn, [row["id"] for row in rows], scope="opened",
+        )
+        events = [
+            _build_event_view(row, prices_by_event.get(row["id"], []))
+            for row in rows
+        ]
         return templates.TemplateResponse(
             request,
             "_events_list.html",
@@ -241,16 +250,18 @@ def create_app(db_path: Path) -> FastAPI:
     return app
 
 
-def _build_event_view(conn, row) -> EventView:
+def _build_event_view(row, price_rows) -> EventView:
     """Card view: emit one MarketGroup per priced (market, line) tuple in the
     order set by _COLLAPSED_ORDER then _EXPANDER_MARKETS. Each group carries
     a stable group_key the JS layer uses to persist per-market collapse state.
 
+    price_rows are pre-fetched by the route handler (batched across all
+    events on the page) — see get_latest_prices_for_events. Splitting the
+    fetch from the build keeps the home page on a single DB round-trip
+    for prices regardless of event count.
+
     The detail page (per-event route) handles deep dives.
     """
-    price_rows = queries.get_latest_prices_for_event(
-        conn, row["id"], scope="opened",
-    )
     bucket: dict[tuple[str, float, str], dict[str, PriceCell]] = {}
     for pr in price_rows:
         key = (pr["market_id"], pr["line"], pr["side"])
