@@ -30,7 +30,8 @@
       <span class="lbl" data-bookmaker="betway">BW</span>
     </div>
 
-    {% for group in event.market_groups %}
+    {% set primary_keys = ('1x2_ft', '1x2_1up_ft', '1x2_2up_ft') %}
+    {% macro render_group(group) %}
       <div class="market-block" data-group-key="{{ group.group_key }}">
         <div class="group-label">{{ group.label }}</div>
         {% for row in group.rows %}
@@ -51,6 +52,26 @@
           </div>
         {% endfor %}
       </div>
+    {% endmacro %}
+
+    {# Primary markets — 1x2 family, always inline #}
+    {% for group in event.market_groups if group.group_key in primary_keys %}
+      {{ render_group(group) }}
     {% endfor %}
+
+    {# Extras — everything past 1x2 family, hidden behind the master toggle #}
+    {% set extras = event.market_groups | rejectattr('group_key', 'in', primary_keys) | list %}
+    {% if extras %}
+      <button class="expand-toggle" type="button"
+              data-collapsed-label="▼ Show {{ extras|length }} more {% if extras|length == 1 %}market{% else %}markets{% endif %}"
+              data-expanded-label="▲ Hide extra markets">
+        ▼ Show {{ extras|length }} more {% if extras|length == 1 %}market{% else %}markets{% endif %}
+      </button>
+      <div class="card-extras">
+        {% for group in extras %}
+          {{ render_group(group) }}
+        {% endfor %}
+      </div>
+    {% endif %}
   </div>
 </div>

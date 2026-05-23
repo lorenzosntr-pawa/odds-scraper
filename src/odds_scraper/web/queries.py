@@ -130,12 +130,13 @@ def get_latest_prices_for_events(
     eid_list = list(event_ids)
     out: dict[str, list[sqlite3.Row]] = {eid: [] for eid in eid_list}
 
-    # Step 1: latest fetch_status='ok' snapshot per (event, bookmaker).
-    # Filtering on fetch_status='ok' is what gives us "fall back to last
-    # successful tick" semantics — failed-fetch snapshots have no price
-    # rows, so picking the latest non-OK one would render the cell as a
-    # dash even though prior tick data is still meaningful. Uses the
-    # idx_snapshots_event_bm_ts index added in schema v3.
+    # Step 1: absolute latest snapshot per (event, bookmaker). We do NOT
+    # filter by fetch_status='ok' here — the card MUST reflect the most
+    # recent tick's reality, not fall back to older successful ticks. If
+    # the latest tick had no markets (failed fetch, or the live-skip
+    # policy for B9J/BW), the cell shows em-dash. That's better than
+    # showing odds the bookmaker has since removed.
+    # Uses the idx_snapshots_event_bm_ts index added in schema v3.
     eid_placeholders = ",".join("?" * len(eid_list))
     snap_sql = f"""
         SELECT s.id
@@ -144,7 +145,6 @@ def get_latest_prices_for_events(
             SELECT event_id, bookmaker, MAX(ts_utc) AS max_ts
             FROM snapshots
             WHERE event_id IN ({eid_placeholders})
-              AND fetch_status = 'ok'
             GROUP BY event_id, bookmaker
         ) latest
           ON latest.event_id  = s.event_id

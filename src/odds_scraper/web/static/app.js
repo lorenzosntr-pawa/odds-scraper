@@ -171,7 +171,7 @@ function initSearch() {
 // localStorage shape: {group_key: true} where group_key is the value of
 // data-group-key on the .market-block (e.g., "1x2_ft", "next_goal_ft_1.0").
 // true = collapsed. Absent = use the EXPANDED_BY_DEFAULT allowlist.
-const EXPANDED_BY_DEFAULT = new Set(["1x2_ft", "1x2_1up_ft"]);
+const EXPANDED_BY_DEFAULT = new Set(["1x2_ft", "1x2_1up_ft", "1x2_2up_ft"]);
 
 function applyMarketCollapseState() {
   const stored = LS.load('card_market_collapse', {});
@@ -199,6 +199,41 @@ function initMarketCollapse() {
     stored[key] = !currentlyCollapsed;
     LS.save('card_market_collapse', stored);
     applyMarketCollapseState();
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Card-level master expand toggle ("Show N more markets" button)
+// -----------------------------------------------------------------------------
+// Hides the .card-extras region (everything past the 1x2 family) behind
+// a single button. Persisted per event_id in localStorage so refreshing
+// remembers which cards the user opened. Independent of per-market
+// collapse — extras can still be individually collapsed when visible.
+function applyCardExpandedState() {
+  const stored = LS.load('expanded_events', {});
+  document.querySelectorAll('.card[data-event-id]').forEach(card => {
+    const open = !!stored[card.dataset.eventId];
+    card.classList.toggle('expanded', open);
+    const btn = card.querySelector('.expand-toggle');
+    if (btn) {
+      btn.textContent = open ? btn.dataset.expandedLabel
+                             : btn.dataset.collapsedLabel;
+    }
+  });
+}
+
+function initCardExpand() {
+  document.body.addEventListener('click', evt => {
+    const btn = evt.target.closest('.expand-toggle');
+    if (!btn) return;
+    const card = btn.closest('.card[data-event-id]');
+    if (!card) return;
+    const id = card.dataset.eventId;
+    const stored = LS.load('expanded_events', {});
+    if (stored[id]) delete stored[id];
+    else stored[id] = true;
+    LS.save('expanded_events', stored);
+    applyCardExpandedState();
   });
 }
 
@@ -294,6 +329,7 @@ function initCountryLeagueFilter() {
 // -----------------------------------------------------------------------------
 function applyAllCardState() {
   applyMarketCollapseState();
+  applyCardExpandedState();
   applyKickoffFilter();
   applySearchFilter();
 }
@@ -314,6 +350,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSearch();
   initCountryLeagueFilter();
   initMarketCollapse();
+  initCardExpand();
   initEventDelegates();
   applyAllCardState();
 });

@@ -108,6 +108,27 @@
   content: "▸ ";
 }
 .market-block.collapsed .row { display: none; }
+
+/* Card-level master expand toggle: hides the extras region (everything
+   past the 1x2 family) behind a single "Show N more markets" button. */
+.card-extras { display: none; }
+.card.expanded .card-extras { display: block; }
+.expand-toggle {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  background: #0f0f0f;
+  color: #888;
+  border: 0;
+  border-top: 1px solid #1a1a1a;
+  font-family: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.expand-toggle:hover { background: #181818; color: #d1d5db; }
+.card.expanded .expand-toggle { color: #4ade80; }
 .row {
   display: flex;
   align-items: center;
