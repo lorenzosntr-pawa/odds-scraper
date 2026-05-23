@@ -192,9 +192,26 @@ def create_app(db_path: Path) -> FastAPI:
     db_path is captured in the closure so handlers reuse one connection per
     process. SQLite connections in WAL mode + check_same_thread=False are
     safe to share across uvicorn worker threads for read-only access.
+
+    On boot, open a writeable connection just long enough to run
+    init_schema. Migrations are otherwise only applied by the scraper
+    writer side, so if the web app is started against a DB that hasn't
+    seen the latest version yet (e.g. v4 pricer tables on a long-lived
+    DB after a server update), the read-only conn would 500 on the
+    first query that touches the new schema.
     """
+    import sqlite3
+
+    from odds_scraper.db_schema import init_schema
+
     pkg_dir = Path(__file__).parent
     templates = Jinja2Templates(directory=str(pkg_dir / "templates"))
+
+    bootstrap = sqlite3.connect(str(db_path), isolation_level=None)
+    try:
+        init_schema(bootstrap)
+    finally:
+        bootstrap.close()
 
     conn = queries.open_ro_conn(db_path)
 
