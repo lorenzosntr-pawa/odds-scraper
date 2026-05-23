@@ -204,6 +204,13 @@ a.ev:hover { background: #181818; }
 .card.hidden-by-search { display: none; }
 .card.hidden-by-time   { display: none; }
 
+/* Per-tab filter visibility.
+   LIVE tab: kickoff filter makes no sense (everything is already in
+   play), so hide it and show the Sort control instead. Other tabs do
+   the inverse. */
+body.tab-live .filter-kickoff   { display: none; }
+body:not(.tab-live) .filter-sort { display: none; }
+
 /* Bookmaker chip toggle — body class hides matching columns INSIDE the
    events list AND the detail history table. Scoped via id/class to keep
    the chips themselves clickable. */

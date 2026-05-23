@@ -39,11 +39,22 @@ function initBookmakerChips() {
 // -----------------------------------------------------------------------------
 // Tabs (events-list page only)
 // -----------------------------------------------------------------------------
+// `body.tab-{live,upcoming,ended}` mirrors the active tab so CSS can swap
+// out filter groups that only make sense on one tab (e.g. Kickoff hidden
+// on LIVE, Sort shown only on LIVE).
+function applyBodyTabClass() {
+  const active = document.querySelector('.tab[data-status].active');
+  const status = (active && active.dataset.status) || 'upcoming';
+  document.body.classList.remove('tab-live', 'tab-upcoming', 'tab-ended');
+  document.body.classList.add(`tab-${status}`);
+}
+
 function initTabs() {
   document.querySelectorAll('.tab[data-status]').forEach(t => {
     t.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
       t.classList.add('active');
+      applyBodyTabClass();
       const stored = LS.load('country_league_filter', {country_id: '', league_id: ''});
       const params = new URLSearchParams({
         status:  t.dataset.status,
@@ -70,6 +81,13 @@ function localDateString(date) {
 }
 
 function applyKickoffFilter() {
+  // On LIVE tab the kickoff filter is hidden and meaningless — make
+  // sure no card stays stuck with `hidden-by-time` from a previous tab.
+  if (document.body.classList.contains('tab-live')) {
+    document.querySelectorAll('.card.hidden-by-time')
+      .forEach(c => c.classList.remove('hidden-by-time'));
+    return;
+  }
   const win = LS.load('kickoff_window', 'all');
   document.querySelectorAll('.card[data-kickoff-utc]').forEach(card => {
     const t = Date.parse(card.dataset.kickoffUtc);
@@ -324,6 +342,49 @@ function initCountryLeagueFilter() {
 }
 
 // -----------------------------------------------------------------------------
+// LIVE-tab card sort. Server returns cards ordered by match minute DESC;
+// this overlay lets the user pick minute asc/desc or total-goals
+// asc/desc. Runs client-side on the rendered fragment — fine for the
+// ~tens of cards in a live tab. Other tabs ignore this (the sort chips
+// are hidden via CSS).
+// -----------------------------------------------------------------------------
+function applyLiveSort() {
+  if (!document.body.classList.contains('tab-live')) return;
+  const cards = Array.from(document.querySelectorAll('#events-list .card'));
+  if (cards.length < 2) return;
+  const parent = cards[0].parentNode;
+  const sort = LS.load('live_sort', 'minute_desc');
+  const minute = c => Number(c.dataset.matchMinute || 0);
+  const goals  = c => Number(c.dataset.scoreHome || 0)
+                    + Number(c.dataset.scoreAway || 0);
+  cards.sort((a, b) => {
+    switch (sort) {
+      case 'minute_asc':  return minute(a) - minute(b);
+      case 'goals_desc':  return goals(b)  - goals(a);
+      case 'goals_asc':   return goals(a)  - goals(b);
+      case 'minute_desc':
+      default:            return minute(b) - minute(a);
+    }
+  });
+  for (const c of cards) parent.appendChild(c);
+}
+
+function initSortControl() {
+  const chips = Array.from(document.querySelectorAll('.chip.sort[data-sort]'));
+  if (!chips.length) return;
+  const current = LS.load('live_sort', 'minute_desc');
+  chips.forEach(c => c.classList.toggle('on', c.dataset.sort === current));
+  chips.forEach(c => {
+    c.addEventListener('click', () => {
+      chips.forEach(x => x.classList.remove('on'));
+      c.classList.add('on');
+      LS.save('live_sort', c.dataset.sort);
+      applyLiveSort();
+    });
+  });
+}
+
+// -----------------------------------------------------------------------------
 // Wire it all together. After every HTMX swap (polling refresh), re-apply
 // client-side state because the new card markup is fresh and class-free.
 // -----------------------------------------------------------------------------
@@ -332,6 +393,7 @@ function applyAllCardState() {
   applyCardExpandedState();
   applyKickoffFilter();
   applySearchFilter();
+  applyLiveSort();
 }
 
 function initEventDelegates() {
@@ -346,7 +408,9 @@ function initEventDelegates() {
 document.addEventListener('DOMContentLoaded', () => {
   initBookmakerChips();
   initTabs();
+  applyBodyTabClass();
   initKickoffFilter();
+  initSortControl();
   initSearch();
   initCountryLeagueFilter();
   initMarketCollapse();

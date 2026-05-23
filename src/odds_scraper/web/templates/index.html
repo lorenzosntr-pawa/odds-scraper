@@ -33,7 +33,7 @@
       <button class="chip on" data-bookmaker="betway">BW</button>
     </div>
 
-    <div class="filter-group">
+    <div class="filter-group filter-kickoff">
       <span class="filter-lbl">Kickoff</span>
       <button class="chip kick on" data-window="all">All</button>
       <button class="chip kick"    data-window="3600">1h</button>
@@ -43,6 +43,14 @@
       <button class="chip kick"    data-window="172800">48h</button>
       <input type="date" id="kickoff-date" class="custom-hours"
              title="Show only events kicking off on this day (local time)">
+    </div>
+
+    <div class="filter-group filter-sort">
+      <span class="filter-lbl">Sort</span>
+      <button class="chip sort on" data-sort="minute_desc">Minute &darr;</button>
+      <button class="chip sort"    data-sort="minute_asc">Minute &uarr;</button>
+      <button class="chip sort"    data-sort="goals_desc">Goals &darr;</button>
+      <button class="chip sort"    data-sort="goals_asc">Goals &uarr;</button>
     </div>
 
     <div class="filter-group filter-search">
