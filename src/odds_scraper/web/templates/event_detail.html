@@ -67,23 +67,27 @@
   <div class="history-wrap">
     <div class="history-title">History — {{ event.market_label }}</div>
     {% if event.history %}
+      {% set book_label = {"betpawa":"BetPawa","sportybet":"SportyBet","bet9ja":"Bet9ja","betway":"Betway","sim":"SIM"} %}
       <table class="history-table">
         <thead>
           <tr>
             <th class="ts-col">TIME (UTC)</th>
             <th class="state-col">STATE</th>
-            {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
-              <th data-bookmaker="{{ bm }}" colspan="{{ event.sides|length }}">
-                {{ {"betpawa":"BetPawa","sportybet":"SportyBet","bet9ja":"Bet9ja","betway":"Betway"}[bm] }}
+            {% for bm in event.history_books %}
+              <th data-bookmaker="{{ bm }}"
+                  {% if bm == "sim" %}class="sim"{% endif %}
+                  colspan="{{ event.sides|length }}">
+                {{ book_label[bm] }}
               </th>
             {% endfor %}
           </tr>
           <tr class="sub-head">
             <th class="ts-col"></th>
             <th class="state-col"></th>
-            {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
+            {% for bm in event.history_books %}
               {% for side in event.sides %}
-                <th data-bookmaker="{{ bm }}" class="side-h">{{ event.sides_short[loop.index0] }}</th>
+                <th data-bookmaker="{{ bm }}"
+                    {% if bm == "sim" %}class="side-h sim"{% else %}class="side-h"{% endif %}>{{ event.sides_short[loop.index0] }}</th>
               {% endfor %}
             {% endfor %}
           </tr>
@@ -93,13 +97,13 @@
             <tr>
               <td class="ts-col">{{ row.ts_utc }}</td>
               <td class="state-col">{% if row.match_minute is not none and row.status == 'STARTED' %}{{ row.match_minute }}' · {{ row.score_home }}–{{ row.score_away }}{% elif row.status == 'ENDED' %}FT · {{ row.score_home }}–{{ row.score_away }}{% else %}—{% endif %}</td>
-              {% for bm in ("betpawa", "sportybet", "bet9ja", "betway") %}
+              {% for bm in event.history_books %}
                 {% for side in event.sides %}
                   {% set p = row.cells.get(bm, {}).get(side) %}
                   <td data-bookmaker="{{ bm }}" class="num">
                     {% if p %}
-                      <span class="odds">{{ "%.2f"|format(p.odds) }}</span>
-                      {% if bm in ("betpawa", "sportybet") and p.probability is not none %}
+                      <span class="odds{% if bm == 'sim' %} sim{% endif %}">{{ "%.2f"|format(p.odds) }}</span>
+                      {% if bm in ("betpawa", "sportybet", "sim") and p.probability is not none %}
                         <span class="prob">.{{ "%02d"|format([(p.probability * 100)|round|int, 99]|min) }}</span>
                       {% endif %}
                     {% else %}<span class="text-gray-700">—</span>{% endif %}

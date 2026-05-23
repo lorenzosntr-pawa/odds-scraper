@@ -243,6 +243,41 @@ def get_market_history_for_event(
     return conn.execute(sql, (event_id, market_id, db_line)).fetchall()
 
 
+def get_our_history_for_event(
+    conn: sqlite3.Connection, event_id: str, market_id: str,
+) -> dict[str, dict[str, float | None]]:
+    """Return OUR engine output per tick for the requested 1UP or 2UP market.
+
+    Returned shape: {ts_utc: {"home_odds": _, "away_odds": _,
+                              "home_prob": _, "away_prob": _}}.
+    Empty dict if the market isn't a UP market or no rows exist.
+
+    Used by the detail-page history to render OUR alongside the bookmaker
+    columns. The values come from `pricer_live_results`, written by the
+    scraper one row per tick.
+    """
+    if market_id == "1x2_1up_ft":
+        odds_h, odds_a = "our_1up_home_capped", "our_1up_away_capped"
+        prob_h, prob_a = "our_p_home_1", "our_p_away_1"
+    elif market_id == "1x2_2up_ft":
+        odds_h, odds_a = "our_2up_home_capped", "our_2up_away_capped"
+        prob_h, prob_a = "our_p_home_2", "our_p_away_2"
+    else:
+        return {}
+    rows = conn.execute(
+        f"SELECT ts_utc, {odds_h}, {odds_a}, {prob_h}, {prob_a} "
+        f"FROM pricer_live_results WHERE event_id = ?",
+        (event_id,),
+    ).fetchall()
+    return {
+        r["ts_utc"]: {
+            "home_odds": r[odds_h], "away_odds": r[odds_a],
+            "home_prob": r[prob_h], "away_prob": r[prob_a],
+        }
+        for r in rows
+    }
+
+
 def get_country_league_index(
     conn: sqlite3.Connection,
 ) -> list[dict]:

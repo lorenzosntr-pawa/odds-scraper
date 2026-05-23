@@ -85,6 +85,7 @@ async def test_exits_on_ended(cfg):
     collector.collect.return_value = _snap_list(EventStatus.ENDED)
     writer = MagicMock()
     writer.append = AsyncMock()
+    writer.append_pricer_live = AsyncMock(return_value=False)
     resolver = AsyncMock(return_value=(
         {Bookmaker.SPORTYBET: "sr:match:1",
          Bookmaker.BET9JA: "b9j-7",
@@ -147,6 +148,7 @@ async def test_cadence_switch_at_kickoff(cfg, monkeypatch):
     collector.collect.return_value = _snap_list()
     writer = MagicMock()
     writer.append = AsyncMock()
+    writer.append_pricer_live = AsyncMock(return_value=False)
     resolver = AsyncMock(return_value=(
         {Bookmaker.SPORTYBET: "sr:match:1",
          Bookmaker.BET9JA: "b9j-7",
@@ -194,6 +196,7 @@ async def test_cadence_ramps_up_within_live_lead_window(cfg, monkeypatch):
     collector.collect.return_value = _snap_list()
     writer = MagicMock()
     writer.append = AsyncMock()
+    writer.append_pricer_live = AsyncMock(return_value=False)
     resolver = AsyncMock(return_value=(
         {Bookmaker.SPORTYBET: "sr:match:1",
          Bookmaker.BET9JA: "b9j-7",
@@ -224,6 +227,7 @@ async def test_status_poll_retries_then_emits_sentinel(cfg, monkeypatch):
     collector.collect.return_value = _snap_list(EventStatus.ENDED)
     writer = MagicMock()
     writer.append = AsyncMock()
+    writer.append_pricer_live = AsyncMock(return_value=False)
     resolver = AsyncMock(return_value=(
         {Bookmaker.SPORTYBET: "sr:match:1",
          Bookmaker.BET9JA: "b9j-7",
@@ -335,6 +339,7 @@ async def test_watchdog_does_not_trip_when_kickoff_is_in_future(cfg, monkeypatch
     collector.collect.return_value = _snap_list()
     writer = MagicMock()
     writer.append = AsyncMock()
+    writer.append_pricer_live = AsyncMock(return_value=False)
     resolver = AsyncMock(return_value=(
         {Bookmaker.SPORTYBET: "sr:match:1",
          Bookmaker.BET9JA: "b9j-7",
@@ -382,6 +387,7 @@ async def test_watchdog_trips_after_kickoff_plus_window(monkeypatch):
     collector.collect.return_value = _snap_list(EventStatus.STARTED)
     writer = MagicMock()
     writer.append = AsyncMock()
+    writer.append_pricer_live = AsyncMock(return_value=False)
     resolver = AsyncMock(return_value=(
         {Bookmaker.SPORTYBET: "sr:match:1",
          Bookmaker.BET9JA: "b9j-7",
@@ -453,6 +459,7 @@ async def test_watchdog_ended_sentinel_carries_last_score(monkeypatch):
     collector.collect.return_value = snaps
     writer = MagicMock()
     writer.append = AsyncMock()
+    writer.append_pricer_live = AsyncMock(return_value=False)
     resolver = AsyncMock(return_value=(
         {Bookmaker.SPORTYBET: "sr:match:1",
          Bookmaker.BET9JA: "b9j-7",

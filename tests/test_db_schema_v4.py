@@ -14,7 +14,8 @@ def test_schema_v4_creates_pricer_tables(tmp_path: Path):
         )
     }
     assert {"pricer_configs", "pricer_runs", "pricer_results"} <= tables
-    assert SCHEMA_VERSION == 4
+    # v4 tables must still exist on any future schema version.
+    assert SCHEMA_VERSION >= 4
 
 
 def test_schema_v4_seeds_default_config(tmp_path: Path):
