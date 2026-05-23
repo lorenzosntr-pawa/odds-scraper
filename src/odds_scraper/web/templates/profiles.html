@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="p-3 max-w-screen-2xl mx-auto" data-page-title="Pricer Profiles">
+  <div class="flex justify-between border-b border-gray-900 pb-3 mb-3">
+    <div class="text-white font-semibold tracking-wider" title="Pricer Profiles">PRICER SIMULATOR</div>
+    <div class="flex gap-1">
+      <a class="tab" href="/simulator">RUNS</a>
+      <a class="tab active" href="/simulator/profiles">PROFILES</a>
+      <a class="tab" href="/" style="margin-left:12px">← back to events</a>
+    </div>
+  </div>
+
+  <div class="sim-section">
+    <div class="sim-section-h">Existing profiles</div>
+    <table class="history-table" style="width:100%">
+      <thead>
+        <tr><th style="text-align:left">name</th><th>created</th><th>kind</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for p in profiles %}
+        <tr>
+          <td style="text-align:left">{{ p.name }}</td>
+          <td>{{ p.created_at }}</td>
+          <td>{% if p.is_default %}default (read-only){% else %}custom{% endif %}</td>
+          <td>
+            {% if not p.is_default %}
+              <form method="post"
+                    action="/simulator/profiles/{{ p.id }}/delete"
+                    style="display:inline"
+                    onsubmit="return confirm('Delete profile {{ p.name }}?');">
+                <button type="submit" class="chip"
+                        style="background:#3a0a0a;border:1px solid #fbbf24;color:#fbbf24;cursor:pointer">delete</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sim-section">
+    <div class="sim-section-h">Create new profile</div>
+    <form method="post" action="/simulator/profiles" class="sim-form">
+      <div class="filter-group">
+        <span class="filter-lbl">Profile name</span>
+        <input class="search-input" type="text" name="name" required
+               placeholder="e.g. boost-85" autocomplete="off">
+      </div>
+
+      <div class="profile-fields">
+        <div class="profile-col">
+          <div class="profile-h">1UP</div>
+          {% set fav = default_coefficients["ONEUP_FAVORITE_MARGIN"] %}
+          {% set dog = default_coefficients["ONEUP_UNDERDOG_MARGIN"] %}
+          <label>Favorite margin (slope, intercept)
+            <input type="number" step="any" name="ONEUP_FAVORITE_MARGIN_slope" value="{{ fav[0] }}" required>
+            <input type="number" step="any" name="ONEUP_FAVORITE_MARGIN_intercept" value="{{ fav[1] }}" required>
+          </label>
+          <label>Underdog margin (slope, intercept)
+            <input type="number" step="any" name="ONEUP_UNDERDOG_MARGIN_slope" value="{{ dog[0] }}" required>
+            <input type="number" step="any" name="ONEUP_UNDERDOG_MARGIN_intercept" value="{{ dog[1] }}" required>
+          </label>
+          <label>Min guaranteed reduction
+            <input type="number" step="any" name="ONEUP_MIN_GUARANTEED_REDUCTION"
+                   value="{{ default_coefficients['ONEUP_MIN_GUARANTEED_REDUCTION'] }}" required>
+          </label>
+          <label>Trailing reduction min
+            <input type="number" step="any" name="ONEUP_TRAILING_MIN_REDUCTION"
+                   value="{{ default_coefficients['ONEUP_TRAILING_MIN_REDUCTION'] }}" required>
+          </label>
+          <label>Trailing reduction max
+            <input type="number" step="any" name="ONEUP_TRAILING_MAX_REDUCTION"
+                   value="{{ default_coefficients['ONEUP_TRAILING_MAX_REDUCTION'] }}" required>
+          </label>
+        </div>
+
+        <div class="profile-col">
+          <div class="profile-h">2UP</div>
+          {% set fav2 = default_coefficients["TWOUP_FAVORITE_MARGIN"] %}
+          {% set dog2 = default_coefficients["TWOUP_UNDERDOG_MARGIN"] %}
+          <label>Favorite margin (slope, intercept)
+            <input type="number" step="any" name="TWOUP_FAVORITE_MARGIN_slope" value="{{ fav2[0] }}" required>
+            <input type="number" step="any" name="TWOUP_FAVORITE_MARGIN_intercept" value="{{ fav2[1] }}" required>
+          </label>
+          <label>Underdog margin (slope, intercept)
+            <input type="number" step="any" name="TWOUP_UNDERDOG_MARGIN_slope" value="{{ dog2[0] }}" required>
+            <input type="number" step="any" name="TWOUP_UNDERDOG_MARGIN_intercept" value="{{ dog2[1] }}" required>
+          </label>
+          <label>Favorite boost coefficient
+            <input type="number" step="any" name="TWOUP_FAVORITE_BOOST_COEFFICIENT"
+                   value="{{ default_coefficients['TWOUP_FAVORITE_BOOST_COEFFICIENT'] }}" required>
+          </label>
+          <label>Underdog boost coefficient
+            <input type="number" step="any" name="TWOUP_UNDERDOG_BOOST_COEFFICIENT"
+                   value="{{ default_coefficients['TWOUP_UNDERDOG_BOOST_COEFFICIENT'] }}" required>
+          </label>
+          <label>Favorite min guaranteed reduction
+            <input type="number" step="any" name="TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION"
+                   value="{{ default_coefficients['TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION'] }}" required>
+          </label>
+          <label>Underdog min guaranteed reduction
+            <input type="number" step="any" name="TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION"
+                   value="{{ default_coefficients['TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION'] }}" required>
+          </label>
+          <label>Trailing reduction min
+            <input type="number" step="any" name="TWOUP_TRAILING_MIN_REDUCTION"
+                   value="{{ default_coefficients['TWOUP_TRAILING_MIN_REDUCTION'] }}" required>
+          </label>
+          <label>Trailing reduction max
+            <input type="number" step="any" name="TWOUP_TRAILING_MAX_REDUCTION"
+                   value="{{ default_coefficients['TWOUP_TRAILING_MAX_REDUCTION'] }}" required>
+          </label>
+        </div>
+      </div>
+
+      <button type="submit" class="chip on" style="padding:6px 16px;cursor:pointer;margin-top:8px">
+        Create profile
+      </button>
+    </form>
+  </div>
+</div>
+
+<style>
+  .sim-section { margin: 14px 0; padding: 10px; background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 4px; }
+  .sim-section-h { color: #fbbf24; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  .profile-fields { display: flex; gap: 24px; margin-top: 12px; flex-wrap: wrap; }
+  .profile-col { flex: 1; min-width: 320px; }
+  .profile-h { color: #93c5fd; font-size: 11px; font-weight: 600; margin-bottom: 6px; }
+  .profile-col label {
+    display: block;
+    margin: 4px 0;
+    color: #d1d5db;
+    font-size: 11px;
+  }
+  .profile-col input[type="number"] {
+    width: 90px;
+    background: #0f0f0f;
+    border: 1px solid #1a1a1a;
+    border-radius: 3px;
+    color: #d1d5db;
+    padding: 2px 6px;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    margin-left: 4px;
+  }
+  .profile-col input[type="number"]:focus { outline: none; border-color: #2a4a2a; }
+</style>
+{% endblock %}
