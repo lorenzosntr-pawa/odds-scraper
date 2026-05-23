@@ -19,7 +19,7 @@ from . import engine, inputs as input_extract
 log = logging.getLogger(__name__)
 
 
-def _snapshots_to_prices_by_book(rows: Iterable[Snapshot]) -> dict[str, list[dict]]:
+def snapshots_to_prices_by_book(rows: Iterable[Snapshot]) -> dict[str, list[dict]]:
     """Reshape a tick's per-bookmaker Snapshot list into the row-of-dicts
     form `pricer.inputs.extract` expects. Mirrors the column layout the
     web app and simulator use, so the same engine input contract holds."""
@@ -41,7 +41,7 @@ def compute_and_write(
     conn: sqlite3.Connection,
     event_id: str,
     ts_utc: str,
-    rows: list[Snapshot],
+    prices_by_book: dict[str, list[dict]],
     score: tuple[int, int] = (0, 0),
 ) -> bool:
     """Run the engine on this tick's prices and persist the result.
@@ -52,7 +52,6 @@ def compute_and_write(
     Never raises — engine crashes log a warning and return False, so a
     bad tick can't break the watcher's main loop.
     """
-    prices_by_book = _snapshots_to_prices_by_book(rows)
     engine_inputs, basis = input_extract.extract(prices_by_book)
     if engine_inputs is None:
         return False
@@ -91,3 +90,72 @@ def compute_and_write(
         ),
     )
     return True
+
+
+def compute_and_write_from_snapshots(
+    conn: sqlite3.Connection,
+    event_id: str,
+    ts_utc: str,
+    rows: list[Snapshot],
+    score: tuple[int, int] = (0, 0),
+) -> bool:
+    """Convenience wrapper used by the watcher's hot path: takes the
+    per-bookmaker Snapshot list directly off the collector output and
+    reshapes it for `compute_and_write`."""
+    return compute_and_write(
+        conn, event_id, ts_utc,
+        snapshots_to_prices_by_book(rows), score,
+    )
+
+
+def backfill_all(conn: sqlite3.Connection) -> tuple[int, int]:
+    """One-shot: populate `pricer_live_results` for every existing
+    (event_id, ts_utc) tick in `snapshots` that doesn't already have a
+    row.
+
+    Returns (written, skipped). Skipped covers ticks where the engine
+    couldn't produce output (missing 1X2 / OU / FTTS — typical for
+    very early prematch snapshots before BetPawa publishes the markets).
+
+    Score per tick comes from MAX(score_home/away) across that tick's
+    per-bookmaker snapshots — all four are sourced from BetPawa's
+    detail dict, so the values agree, but MAX collapses any rare
+    inconsistency to one deterministic number.
+    """
+    ticks = conn.execute(
+        """
+        SELECT s.event_id, s.ts_utc,
+               MAX(s.score_home) AS sh,
+               MAX(s.score_away) AS sa
+        FROM snapshots s
+        LEFT JOIN pricer_live_results r
+          ON r.event_id = s.event_id AND r.ts_utc = s.ts_utc
+        WHERE r.event_id IS NULL
+        GROUP BY s.event_id, s.ts_utc
+        ORDER BY s.event_id, s.ts_utc
+        """
+    ).fetchall()
+
+    written = 0
+    skipped = 0
+    for ev_id, ts, sh, sa in ticks:
+        price_rows = conn.execute(
+            "SELECT bookmaker, market_id, line, side, odds, probability "
+            "FROM prices WHERE event_id = ? AND ts_utc = ?",
+            (ev_id, ts),
+        ).fetchall()
+        prices_by_book: dict[str, list[dict]] = {}
+        for bm, mid, line, side, odds, prob in price_rows:
+            prices_by_book.setdefault(bm, []).append({
+                "market_id":   mid,
+                "line":        line if line is not None else 0.0,
+                "side":        side,
+                "odds":        odds,
+                "probability": prob,
+            })
+        score = (int(sh), int(sa)) if sh is not None and sa is not None else (0, 0)
+        if compute_and_write(conn, ev_id, ts, prices_by_book, score):
+            written += 1
+        else:
+            skipped += 1
+    return written, skipped
