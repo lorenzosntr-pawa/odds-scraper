@@ -207,9 +207,13 @@ a.ev:hover { background: #181818; }
 /* Per-tab filter visibility.
    LIVE tab: kickoff filter makes no sense (everything is already in
    play), so hide it and show the Sort control instead. Other tabs do
-   the inverse. */
+   the inverse.
+   ENDED tab: forward-window chips (1h / 3h / 6h / 24h / 48h) are
+   meaningless for matches already finished, so hide them — only the
+   date picker stays useful for browsing a specific past day. */
 body.tab-live .filter-kickoff   { display: none; }
 body:not(.tab-live) .filter-sort { display: none; }
+body.tab-ended .filter-kickoff .chip.kick { display: none; }
 
 /* Bookmaker chip toggle — body class hides matching columns INSIDE the
    events list AND the detail history table. Scoped via id/class to keep
