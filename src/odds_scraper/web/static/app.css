@@ -150,6 +150,29 @@
 .odds    { color: #4ade80; font-weight: 600; }
 .prob    { color: #94a3b8; font-size: 9px; margin-left: 4px; }
 
+/* Pricer SIM column — OUR engine output. Strong marker so a glance
+   never confuses simulated odds with a real market quote. */
+.lbl.sim, .odds.sim {
+  color: #fbbf24;
+  font-weight: 600;
+}
+.sim-pill {
+  display: inline-block;
+  border: 1px solid #fbbf24;
+  color: #fbbf24;
+  background: #3a2f0a;
+  padding: 0 3px;
+  margin-left: 3px;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+.col-header > .lbl[data-bookmaker="sim"],
+.row > span[data-bookmaker="sim"] {
+  width: 90px;       /* slightly wider than other cells to fit "1.85 SIM" */
+  text-align: center;
+  white-space: nowrap;
+}
+
 /* Event card header is now an anchor; reset link styles */
 a.ev { text-decoration: none; color: inherit; }
 a.ev:hover { background: #181818; }

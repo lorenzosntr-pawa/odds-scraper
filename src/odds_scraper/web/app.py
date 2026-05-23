@@ -10,8 +10,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from odds_scraper.models import MARKET_MANIFEST, MarketSpec
+from odds_scraper.pricer import engine, inputs as pricer_inputs
 
 from . import queries
+from .pricer_routes import register_pricer_routes
 
 # Markets visible in the collapsed event-list card, in display order.
 # Derived from queries.COLLAPSED_MARKETS for a single source of truth.
@@ -132,6 +134,16 @@ class EventView:
     score_home: Optional[int]
     score_away: Optional[int]
     market_groups: list[MarketGroup]
+    # OUR-engine output for the SIM column. None when inputs are missing
+    # or the engine deactivates.
+    our_1up_home: Optional[float]
+    our_1up_away: Optional[float]
+    our_2up_home: Optional[float]
+    our_2up_away: Optional[float]
+    # True when BP itself quoted the market — drives the rule "if BP
+    # missing, OUR replaces the BP cell instead of going to SIM column".
+    bp_has_1up: bool
+    bp_has_2up: bool
 
 
 @dataclass
@@ -188,6 +200,8 @@ def create_app(db_path: Path) -> FastAPI:
 
     app = FastAPI(title="odds-scraper UX")
     app.mount("/static", StaticFiles(directory=str(pkg_dir / "static")), name="static")
+
+    register_pricer_routes(app, templates, db_path=db_path, conn=conn)
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
@@ -306,12 +320,49 @@ def _build_event_view(row, price_rows) -> EventView:
                     rows=rows_for_group,
                 ))
 
+    # Pricer integration: build per-book buckets, run engine on the latest
+    # snapshot, surface OUR 1up/2up to the template.
+    prices_by_book: dict[str, list] = {}
+    for pr in price_rows:
+        prices_by_book.setdefault(pr["bookmaker"], []).append({
+            "market_id":   pr["market_id"],
+            "line":        pr["line"],
+            "side":        pr["side"],
+            "odds":        pr["odds"],
+            "probability": pr["probability"],
+        })
+
+    engine_inputs, _basis = pricer_inputs.extract(prices_by_book)
+    our_1up_home = our_1up_away = our_2up_home = our_2up_away = None
+    if engine_inputs is not None:
+        score = (row["score_home"] or 0, row["score_away"] or 0)
+        engine_inputs["score"] = (int(score[0]), int(score[1]))
+        try:
+            result = engine.price_early_payout_markets(**engine_inputs)
+            our_1up_home = result["market_1up"]["home_margin"]
+            our_1up_away = result["market_1up"]["away_margin"]
+            our_2up_home = result["market_2up"]["home_margin"]
+            our_2up_away = result["market_2up"]["away_margin"]
+        except Exception:  # noqa: BLE001
+            # Engine doesn't raise on bad inputs (returns deactivated dict),
+            # so this is a defensive guard against future regressions.
+            pass
+
+    bp_prices = prices_by_book.get("betpawa", [])
+    bp_has_1up = any(p["market_id"] == "1x2_1up_ft" and p["side"] in ("home", "away")
+                     and p["odds"] is not None for p in bp_prices)
+    bp_has_2up = any(p["market_id"] == "1x2_2up_ft" and p["side"] in ("home", "away")
+                     and p["odds"] is not None for p in bp_prices)
+
     return EventView(
         id=row["id"], home=row["home"], away=row["away"],
         kickoff_utc=row["kickoff_utc"], status=row["status"],
         match_minute=row["match_minute"],
         score_home=row["score_home"], score_away=row["score_away"],
         market_groups=groups,
+        our_1up_home=our_1up_home, our_1up_away=our_1up_away,
+        our_2up_home=our_2up_home, our_2up_away=our_2up_away,
+        bp_has_1up=bp_has_1up, bp_has_2up=bp_has_2up,
     )
 
 

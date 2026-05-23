@@ -9,6 +9,7 @@ build/
 dist/
 data/*.csv
 data/*.json
+data/sim/
 !data/.gitkeep
 .env
 .superpowers/
