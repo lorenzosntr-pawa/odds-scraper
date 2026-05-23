@@ -621,6 +621,99 @@ def test_index_no_longer_has_custom_hours_input(client: TestClient):
     assert 'id="kickoff-custom-hours"' not in r.text
 
 
+@pytest.fixture
+def db_with_ended(tmp_path: Path) -> Path:
+    """Event E2 has an ENDED head snapshot — for slim-card / kickoff
+    meta / no-grid assertions on the ended tab. Timestamp is "now" so
+    the queries.py 24h cutoff on the ended tab never strands it."""
+    from datetime import datetime, timezone
+    path = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    init_schema(conn)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    kickoff = "2026-05-20T18:30:00Z"
+    conn.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES ('E2', 'Chelsea', 'Spurs', ?)",
+        (kickoff,),
+    )
+    conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+        "match_minute, score_home, score_away, fetch_status) "
+        "VALUES (?, 'E2', 'betpawa', 'ENDED', 90, 2, 1, 'ok')",
+        (now,),
+    )
+    conn.close()
+    return path
+
+
+def test_ended_card_has_no_market_grid(db_with_ended: Path):
+    """ENDED cards drop the markets-grid entirely (head snapshot is the
+    synthetic empty one written by the reaper / watchdog sentinel)."""
+    client = TestClient(create_app(db_path=db_with_ended))
+    r = client.get("/events?status=ended")
+    assert "Chelsea" in r.text and "Spurs" in r.text
+    assert '<div class="card-grid">' not in r.text
+    assert "MARKET · OUTCOME" not in r.text
+
+
+def test_ended_card_meta_shows_kickoff(db_with_ended: Path):
+    client = TestClient(create_app(db_path=db_with_ended))
+    r = client.get("/events?status=ended")
+    assert "kickoff 2026-05-20T18:30:00Z" in r.text
+    assert "2 – 1" in r.text
+    assert "ENDED" in r.text
+
+
+def test_live_card_meta_shows_kickoff(db_path: Path):
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+        "match_minute, score_home, score_away, fetch_status) "
+        "VALUES ('2026-05-22T18:34:12Z', 'E1', 'betpawa', 'STARTED', "
+        "34, 1, 0, 'ok')",
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events?status=live")
+    assert "kickoff 2026-05-22T18:30:00Z" in r.text
+    assert "LIVE 34'" in r.text
+
+
+def test_events_card_carries_sort_data_attributes(db_path: Path):
+    """LIVE-tab client-side sort reads these off the card root."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+        "match_minute, score_home, score_away, fetch_status) "
+        "VALUES ('2026-05-22T18:34:12Z', 'E1', 'betpawa', 'STARTED', "
+        "34, 1, 0, 'ok')",
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events?status=live")
+    assert 'data-status="STARTED"' in r.text
+    assert 'data-match-minute="34"' in r.text
+    assert 'data-score-home="1"' in r.text
+    assert 'data-score-away="0"' in r.text
+
+
+def test_index_has_sort_filter_group(client: TestClient):
+    """LIVE-only Sort chips; CSS hides them on other tabs via body.tab-live."""
+    r = client.get("/")
+    assert 'class="filter-group filter-sort"' in r.text
+    assert 'data-sort="minute_desc"' in r.text
+    assert 'data-sort="minute_asc"' in r.text
+    assert 'data-sort="goals_desc"' in r.text
+    assert 'data-sort="goals_asc"' in r.text
+
+
+def test_index_kickoff_filter_group_is_taggable(client: TestClient):
+    """Kickoff group carries .filter-kickoff so CSS can hide it on LIVE."""
+    r = client.get("/")
+    assert 'filter-group filter-kickoff' in r.text
+
+
 def test_events_card_wraps_grid_in_card_grid_div(client: TestClient):
     """The event card wraps its column header + market blocks in a single
     .card-grid div so the phone media query can make ONE scroll container
