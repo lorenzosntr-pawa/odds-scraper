@@ -36,7 +36,7 @@
     <div class="col-header">
       <span class="lbl">MARKET · OUTCOME</span>
       <span class="lbl" data-bookmaker="betpawa">BP <span class="prob-mark">+p</span></span>
-      <span class="lbl sim" data-bookmaker="sim">SIM</span>
+      <span class="lbl sim" data-bookmaker="sim">SIM <span class="prob-mark">+p</span></span>
       <span class="lbl" data-bookmaker="sportybet">SB <span class="prob-mark">+p</span></span>
       <span class="lbl" data-bookmaker="bet9ja">B9J</span>
       <span class="lbl" data-bookmaker="betway">BW</span>
@@ -49,16 +49,29 @@
         {% for row in group.rows %}
           {% set is_up_row = group.group_key in ('1x2_1up_ft', '1x2_2up_ft') %}
           {% set our_value = none %}
+          {% set our_prob = none %}
           {% set bp_has_quote = false %}
           {% if is_up_row %}
             {% if group.group_key == '1x2_1up_ft' %}
               {% set bp_has_quote = event.bp_has_1up %}
-              {% if row.side_short == 'H' %}{% set our_value = event.our_1up_home %}{% endif %}
-              {% if row.side_short == 'A' %}{% set our_value = event.our_1up_away %}{% endif %}
+              {% if row.side_short == 'H' %}
+                {% set our_value = event.our_1up_home %}
+                {% set our_prob = event.our_p_1up_home %}
+              {% endif %}
+              {% if row.side_short == 'A' %}
+                {% set our_value = event.our_1up_away %}
+                {% set our_prob = event.our_p_1up_away %}
+              {% endif %}
             {% else %}
               {% set bp_has_quote = event.bp_has_2up %}
-              {% if row.side_short == 'H' %}{% set our_value = event.our_2up_home %}{% endif %}
-              {% if row.side_short == 'A' %}{% set our_value = event.our_2up_away %}{% endif %}
+              {% if row.side_short == 'H' %}
+                {% set our_value = event.our_2up_home %}
+                {% set our_prob = event.our_p_2up_home %}
+              {% endif %}
+              {% if row.side_short == 'A' %}
+                {% set our_value = event.our_2up_away %}
+                {% set our_prob = event.our_p_2up_away %}
+              {% endif %}
             {% endif %}
           {% endif %}
           <div class="row">
@@ -74,6 +87,9 @@
                 {% endif %}
               {% elif is_up_row and our_value is not none and not bp_has_quote %}
                 <span class="odds sim">{{ "%.2f"|format(our_value) }}</span>
+                {% if our_prob is not none %}
+                  <span class="prob">.{{ "%02d"|format([(our_prob * 100)|round|int, 99]|min) }}</span>
+                {% endif %}
                 <span class="sim-pill">SIM</span>
               {% else %}<span class="text-gray-700">—</span>{% endif %}
             </span>
@@ -82,6 +98,9 @@
             <span data-bookmaker="sim">
               {% if is_up_row and our_value is not none and bp_has_quote %}
                 <span class="odds sim">{{ "%.2f"|format(our_value) }}</span>
+                {% if our_prob is not none %}
+                  <span class="prob">.{{ "%02d"|format([(our_prob * 100)|round|int, 99]|min) }}</span>
+                {% endif %}
                 <span class="sim-pill">SIM</span>
               {% else %}<span class="text-gray-700">—</span>{% endif %}
             </span>
