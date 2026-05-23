@@ -4,15 +4,17 @@ import argparse
 import asyncio
 import logging
 import signal
+import sqlite3
 import sys
 from contextlib import AsyncExitStack
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from .collector import OddsCollector
 from .config import load_config
 from .event_resolver import resolve_event_ids
-from .models import Bookmaker
+from .models import Bookmaker, EventStatus, FetchStatus, Snapshot
 from .registry import build_registry
 from .resolution import ResolutionCache
 from .resolution_runtime import (
@@ -22,6 +24,75 @@ from .watcher import EventWatcher, WatcherConfig
 from .writer import SqliteWriter
 
 log = logging.getLogger(__name__)
+
+
+async def _reap_stuck_started_events(
+    db_path: Path, writer: SqliteWriter, watchdog_seconds: int,
+) -> int:
+    """Backfill a synthetic ENDED snapshot for events whose head row is
+    STARTED but kickoff was more than `watchdog_seconds` ago.
+
+    Catches two failure modes the watchdog alone can't fix:
+      - Events whose watcher exited in a prior run (the live → ENDED
+        transition was never written because the watchdog of an older
+        binary just returned without writing).
+      - Events that were live yesterday but are no longer in any
+        tournament list today, so no new watcher spawns for them and
+        they sit in the live tab forever.
+
+    Returns the number of events reaped.
+    """
+    cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(seconds=watchdog_seconds)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            WITH latest AS (
+                SELECT event_id, MAX(ts_utc) AS max_ts
+                FROM snapshots GROUP BY event_id
+            )
+            SELECT DISTINCT e.id,
+                   s.match_minute, s.score_home, s.score_away
+            FROM events e
+            JOIN latest l ON l.event_id = e.id
+            JOIN snapshots s
+              ON s.event_id = l.event_id AND s.ts_utc = l.max_ts
+            WHERE s.status = 'STARTED'
+              AND e.kickoff_utc < ?
+            """,
+            (cutoff_iso,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return 0
+
+    ts = datetime.now(timezone.utc)
+    for r in rows:
+        synthetic = [
+            Snapshot(
+                ts_utc=ts,
+                event_bp_id=r["id"],
+                sr_id="", genius_id="",
+                home="", away="",
+                kickoff_utc=ts,
+                status=EventStatus.ENDED,
+                match_minute=r["match_minute"],
+                score_home=r["score_home"],
+                score_away=r["score_away"],
+                bookmaker=bm,
+                fetch_status=FetchStatus.OK,
+                fetch_error="",
+                prices={},
+            )
+            for bm in Bookmaker
+        ]
+        await writer.append(synthetic)
+    return len(rows)
 
 
 async def supervise_watcher(
@@ -59,6 +130,20 @@ async def _amain(config_path: Path) -> int:
         fetchers = make_fetchers(clients, registry=registry)
         collector = OddsCollector(fetchers=fetchers)
         writer = await stack.enter_async_context(SqliteWriter(Path(cfg.output.db_path)))
+
+        # Reap stuck STARTED events from prior runs: their watchers
+        # either exited cleanly (writing nothing) or were never spawned
+        # again because the events fell out of every tournament list.
+        # Without this they'd sit in the live tab forever.
+        reaped = await _reap_stuck_started_events(
+            Path(cfg.output.db_path), writer,
+            cfg.cadence.watchdog_after_kickoff_seconds,
+        )
+        if reaped:
+            log.info(
+                "reaped %d stuck STARTED events (wrote synthetic ENDED snapshots)",
+                reaped,
+            )
 
         async def resolver(detail: dict[str, Any]):
             return await resolve_event(detail, clients=clients, cache=cache)
