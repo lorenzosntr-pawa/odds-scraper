@@ -6,7 +6,7 @@
      data-match-minute="{{ event.match_minute if event.match_minute is not none else '' }}"
      data-score-home="{{ event.score_home if event.score_home is not none else '' }}"
      data-score-away="{{ event.score_away if event.score_away is not none else '' }}">
-  <a class="ev" href="/events/{{ event.id }}">
+  <a class="ev" href="/events/{{ event.id }}{% if status %}?from={{ status }}{% endif %}">
     <div>
       <div class="ev-name">{{ event.home }} — {{ event.away }}
         <span class="caret">→</span>

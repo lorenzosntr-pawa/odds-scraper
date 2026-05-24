@@ -4,9 +4,10 @@
   <div class="flex justify-between border-b border-gray-900 pb-3 mb-3">
     <div class="text-white font-semibold tracking-wider">ODDS · LIVE COMPARISON</div>
     <div class="flex gap-1" id="tabs">
-      <button class="tab" data-status="live">LIVE</button>
-      <button class="tab active" data-status="upcoming">UPCOMING</button>
-      <button class="tab" data-status="ended">ENDED</button>
+      {% set s = initial_status or 'upcoming' %}
+      <button class="tab{% if s == 'live' %} active{% endif %}" data-status="live">LIVE</button>
+      <button class="tab{% if s == 'upcoming' %} active{% endif %}" data-status="upcoming">UPCOMING</button>
+      <button class="tab{% if s == 'ended' %} active{% endif %}" data-status="ended">ENDED</button>
       <a class="tab" href="/simulator" style="margin-left:12px;color:#fbbf24">SIMULATOR →</a>
     </div>
   </div>
@@ -83,7 +84,7 @@
   </script>
 
   <div id="events-list"
-       hx-get="/events?status=upcoming"
+       hx-get="/events?status={{ initial_status or 'upcoming' }}"
        hx-trigger="load"
        hx-swap="outerHTML">
   </div>

@@ -1,11 +1,19 @@
 // =============================================================================
 // State (all client-side, persisted via localStorage)
 // =============================================================================
-//   bookmakers              : {bm: bool}              — chip on/off, hides table columns
-//   card_market_collapse    : {group_key: true}       — per-market collapse state on cards
-//   country_league_filter   : {country_id, league_id} — home-page cascading dropdown selection
-//   search                  : string                  — substring filter on home/away
-//   kickoff_window          : "all" | seconds         — hide events kicking off > now+window
+//   GLOBAL (one value across all tabs):
+//     bookmakers              : {bm: bool}              — chip on/off, hides table columns
+//     card_market_collapse    : {group_key: true}       — per-market collapse state on cards
+//     expanded_events         : {event_id: true}        — master expand toggle per event
+//     live_sort               : "minute_desc" | ...     — LIVE-tab card sort
+//
+//   PER-TAB (scoped by current status — country_league_filter_live,
+//            country_league_filter_upcoming, …):
+//     country_league_filter   : {country_id, league_id} — cascading dropdowns
+//     search                  : string                  — substring filter on home/away
+//     kickoff_window          : "all" | seconds | "date:…"
+//
+// Per-tab keys so filtering by "England" in UPCOMING doesn't carry into ENDED.
 // =============================================================================
 
 const LS = {
@@ -17,7 +25,19 @@ const LS = {
 };
 
 // -----------------------------------------------------------------------------
-// Bookmaker chips
+// Per-tab key scoping
+// -----------------------------------------------------------------------------
+function currentStatus() {
+  const active = document.querySelector('.tab[data-status].active');
+  return (active && active.dataset.status) || 'upcoming';
+}
+
+function filterKey(name) {
+  return `${name}_${currentStatus()}`;
+}
+
+// -----------------------------------------------------------------------------
+// Bookmaker chips (global across tabs)
 // -----------------------------------------------------------------------------
 function initBookmakerChips() {
   const stored = LS.load('bookmakers', {});
@@ -37,14 +57,13 @@ function initBookmakerChips() {
 }
 
 // -----------------------------------------------------------------------------
-// Tabs (events-list page only)
+// Tabs
 // -----------------------------------------------------------------------------
 // `body.tab-{live,upcoming,ended}` mirrors the active tab so CSS can swap
 // out filter groups that only make sense on one tab (e.g. Kickoff hidden
 // on LIVE, Sort shown only on LIVE).
 function applyBodyTabClass() {
-  const active = document.querySelector('.tab[data-status].active');
-  const status = (active && active.dataset.status) || 'upcoming';
+  const status = currentStatus();
   document.body.classList.remove('tab-live', 'tab-upcoming', 'tab-ended');
   document.body.classList.add(`tab-${status}`);
 }
@@ -55,7 +74,14 @@ function initTabs() {
       document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
       t.classList.add('active');
       applyBodyTabClass();
-      const stored = LS.load('country_league_filter', {country_id: '', league_id: ''});
+      // Sync every form control to the NEW tab's saved filter state
+      // BEFORE firing the HTMX request so the URL we send carries
+      // this tab's stored country/league (not the previous tab's).
+      applyCountryLeagueFromStorage();
+      applySearchInputFromStorage();
+      applyKickoffControlsFromStorage();
+      const stored = LS.load(filterKey('country_league_filter'),
+                             {country_id: '', league_id: ''});
       const params = new URLSearchParams({
         status:  t.dataset.status,
         country: stored.country_id || '',
@@ -88,7 +114,7 @@ function applyKickoffFilter() {
       .forEach(c => c.classList.remove('hidden-by-time'));
     return;
   }
-  const win = LS.load('kickoff_window', 'all');
+  const win = LS.load(filterKey('kickoff_window'), 'all');
   document.querySelectorAll('.card[data-kickoff-utc]').forEach(card => {
     const t = Date.parse(card.dataset.kickoffUtc);
     if (isNaN(t)) {
@@ -114,12 +140,10 @@ function applyKickoffFilter() {
   });
 }
 
-function initKickoffFilter() {
-  const current = LS.load('kickoff_window', 'all');
+function applyKickoffControlsFromStorage() {
+  const current = LS.load(filterKey('kickoff_window'), 'all');
   const dateInput = document.getElementById('kickoff-date');
   const chips = Array.from(document.querySelectorAll('.chip.kick[data-window]'));
-
-  // Restore stored state on boot.
   const isDate = typeof current === 'string' && current.startsWith('date:');
   if (isDate && dateInput) {
     dateInput.value = current.slice(5);
@@ -128,41 +152,47 @@ function initKickoffFilter() {
     chips.forEach(c => c.classList.toggle('on', c.dataset.window === String(current)));
     if (dateInput) dateInput.value = '';
   }
+}
 
-  // Chip click: clear date input, set chip state.
+function initKickoffFilter() {
+  const dateInput = document.getElementById('kickoff-date');
+  const chips = Array.from(document.querySelectorAll('.chip.kick[data-window]'));
+
+  // Chip click: clear date input, save under this tab's scoped key.
   chips.forEach(c => {
     c.addEventListener('click', () => {
       chips.forEach(x => x.classList.remove('on'));
       c.classList.add('on');
       if (dateInput) dateInput.value = '';
-      LS.save('kickoff_window', c.dataset.window);
+      LS.save(filterKey('kickoff_window'), c.dataset.window);
       applyKickoffFilter();
     });
   });
 
-  // Date change: clear chips, save tagged string.
+  // Date change: clear chips, save tagged string under scoped key.
   if (dateInput) {
     dateInput.addEventListener('input', () => {
       const v = dateInput.value;
       if (!v) {
-        // User cleared the date — revert to "All" so something is selected.
         chips.forEach(x => x.classList.remove('on'));
         document.querySelector('.chip.kick[data-window="all"]')?.classList.add('on');
-        LS.save('kickoff_window', 'all');
+        LS.save(filterKey('kickoff_window'), 'all');
       } else {
         chips.forEach(x => x.classList.remove('on'));
-        LS.save('kickoff_window', `date:${v}`);
+        LS.save(filterKey('kickoff_window'), `date:${v}`);
       }
       applyKickoffFilter();
     });
   }
+
+  applyKickoffControlsFromStorage();
 }
 
 // -----------------------------------------------------------------------------
 // Search bar
 // -----------------------------------------------------------------------------
 function applySearchFilter() {
-  const q = (LS.load('search', '') || '').trim().toLowerCase();
+  const q = (LS.load(filterKey('search'), '') || '').trim().toLowerCase();
   document.querySelectorAll('.card[data-event-name]').forEach(card => {
     if (!q) {
       card.classList.remove('hidden-by-search');
@@ -173,18 +203,24 @@ function applySearchFilter() {
   });
 }
 
+function applySearchInputFromStorage() {
+  const input = document.getElementById('search-input');
+  if (!input) return;
+  input.value = LS.load(filterKey('search'), '') || '';
+}
+
 function initSearch() {
   const input = document.getElementById('search-input');
   if (!input) return;
-  input.value = LS.load('search', '') || '';
+  applySearchInputFromStorage();
   input.addEventListener('input', () => {
-    LS.save('search', input.value);
+    LS.save(filterKey('search'), input.value);
     applySearchFilter();
   });
 }
 
 // -----------------------------------------------------------------------------
-// Per-market collapse (each market block in a card)
+// Per-market collapse (each market block in a card) — GLOBAL across tabs
 // -----------------------------------------------------------------------------
 // localStorage shape: {group_key: true} where group_key is the value of
 // data-group-key on the .market-block (e.g., "1x2_ft", "next_goal_ft_1.0").
@@ -221,12 +257,8 @@ function initMarketCollapse() {
 }
 
 // -----------------------------------------------------------------------------
-// Card-level master expand toggle ("Show N more markets" button)
+// Card-level master expand toggle ("Show N more markets" button) — GLOBAL
 // -----------------------------------------------------------------------------
-// Hides the .card-extras region (everything past the 1x2 family) behind
-// a single button. Persisted per event_id in localStorage so refreshing
-// remembers which cards the user opened. Independent of per-market
-// collapse — extras can still be individually collapsed when visible.
 function applyCardExpandedState() {
   const stored = LS.load('expanded_events', {});
   document.querySelectorAll('.card[data-event-id]').forEach(card => {
@@ -258,6 +290,32 @@ function initCardExpand() {
 // -----------------------------------------------------------------------------
 // Country/League cascading dropdowns
 // -----------------------------------------------------------------------------
+// `populateLeagues` is module-scope so applyCountryLeagueFromStorage can
+// refill the league dropdown without going through the change-event
+// (which would trigger an extra HTMX refresh).
+let _populateLeagues = (_country_id) => {};
+
+function applyCountryLeagueFromStorage() {
+  const countrySel = document.getElementById('country-select');
+  const leagueSel  = document.getElementById('league-select');
+  if (!countrySel || !leagueSel) return;
+  const stored = LS.load(filterKey('country_league_filter'),
+                         {country_id: '', league_id: ''});
+  countrySel.value = stored.country_id || '';
+  _populateLeagues(stored.country_id || '');
+  if (stored.league_id) {
+    try {
+      if (leagueSel.querySelector(`option[value="${stored.league_id}"]`)) {
+        leagueSel.value = stored.league_id;
+      } else {
+        leagueSel.value = '';
+      }
+    } catch { leagueSel.value = ''; }
+  } else {
+    leagueSel.value = '';
+  }
+}
+
 function initCountryLeagueFilter() {
   const countrySel = document.getElementById('country-select');
   const leagueSel  = document.getElementById('league-select');
@@ -270,9 +328,7 @@ function initCountryLeagueFilter() {
     catch { index = []; }
   }
 
-  const stored = LS.load('country_league_filter', {country_id: '', league_id: ''});
-
-  function populateLeagues(country_id) {
+  _populateLeagues = function (country_id) {
     leagueSel.innerHTML = '<option value="">All</option>';
     if (!country_id) {
       leagueSel.disabled = true;
@@ -290,17 +346,12 @@ function initCountryLeagueFilter() {
       leagueSel.appendChild(opt);
     }
     leagueSel.disabled = country.leagues.length === 0;
-  }
-
-  function currentStatus() {
-    const activeTab = document.querySelector('.tab[data-status].active');
-    return (activeTab && activeTab.dataset.status) || 'upcoming';
-  }
+  };
 
   function refresh() {
     const country_id = countrySel.value;
     const league_id  = leagueSel.value;
-    LS.save('country_league_filter', {country_id, league_id});
+    LS.save(filterKey('country_league_filter'), {country_id, league_id});
     const params = new URLSearchParams({
       status: currentStatus(),
       country: country_id,
@@ -310,18 +361,11 @@ function initCountryLeagueFilter() {
                      {target: '#events-list', swap: 'outerHTML'});
   }
 
-  countrySel.value = stored.country_id || '';
-  populateLeagues(stored.country_id || '');
-  if (stored.league_id) {
-    try {
-      if (leagueSel.querySelector(`option[value="${stored.league_id}"]`)) {
-        leagueSel.value = stored.league_id;
-      }
-    } catch { /* malformed stored value — ignore, fall through to "All" */ }
-  }
+  // Initial paint: load this tab's stored country/league into the dropdowns.
+  applyCountryLeagueFromStorage();
 
   countrySel.addEventListener('change', () => {
-    populateLeagues(countrySel.value);
+    _populateLeagues(countrySel.value);
     refresh();
   });
   leagueSel.addEventListener('change', refresh);
@@ -330,6 +374,8 @@ function initCountryLeagueFilter() {
   // own (hx-trigger="load"). If we have a stored filter, listen for the
   // initial swap to complete, then re-fire with the filter applied. Using
   // setTimeout(0) here would race the initial unfiltered fetch.
+  const stored = LS.load(filterKey('country_league_filter'),
+                         {country_id: '', league_id: ''});
   if (stored.country_id || stored.league_id) {
     const onFirstSwap = (evt) => {
       if (evt.target && evt.target.id === 'events-list') {

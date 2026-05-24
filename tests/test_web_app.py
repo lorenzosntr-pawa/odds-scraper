@@ -69,7 +69,7 @@ def test_events_fragment_includes_polling_trigger(client: TestClient):
 
 def test_events_card_links_to_detail_page(client: TestClient):
     r = client.get("/events?status=upcoming")
-    assert 'href="/events/E1"' in r.text
+    assert 'href="/events/E1?from=upcoming"' in r.text
 
 
 def test_events_card_shows_probability_for_bp_sb(client: TestClient):
@@ -482,8 +482,8 @@ def test_events_fragment_filters_by_country(db_path: Path):
     client = TestClient(create_app(db_path=db_path))
     r = client.get("/events?status=upcoming&country=242")
     assert r.status_code == 200
-    assert 'href="/events/E_DE"' in r.text
-    assert 'href="/events/E_US"' not in r.text
+    assert 'href="/events/E_DE?from=upcoming"' in r.text
+    assert 'href="/events/E_US' not in r.text
 
 
 def test_events_fragment_filters_by_league(db_path: Path):
@@ -502,8 +502,8 @@ def test_events_fragment_filters_by_league(db_path: Path):
     conn.close()
     client = TestClient(create_app(db_path=db_path))
     r = client.get("/events?status=upcoming&league=BL2")
-    assert 'href="/events/E_BL2"' in r.text
-    assert 'href="/events/E_BL1"' not in r.text
+    assert 'href="/events/E_BL2?from=upcoming"' in r.text
+    assert 'href="/events/E_BL1' not in r.text
 
 
 def test_index_filter_row_has_country_and_league_selects(db_path: Path):
@@ -929,3 +929,69 @@ def test_event_detail_history_omits_sim_column_for_1x2_ft(db_path: Path):
     body = r.text
     # No SIM header for 1x2_ft market.
     assert ">SIM<" not in body
+
+
+def test_index_status_param_sets_active_tab(client: TestClient):
+    """`/` accepts ?status= so the back link from /events/<id> can land
+    on the same tab the user came from. Active class lands on the
+    matching tab; events-list hx-get URL targets the same status."""
+    r = client.get("/?status=ended")
+    assert r.status_code == 200
+    body = r.text
+    # ENDED button is active, others are not.
+    import re
+    assert re.search(r'<button class="tab active"[^>]*data-status="ended"', body)
+    assert re.search(r'<button class="tab"\s+data-status="upcoming"', body)
+    # Initial events-list fetch targets ENDED.
+    assert 'hx-get="/events?status=ended"' in body
+
+
+def test_index_unknown_status_falls_back_to_upcoming(client: TestClient):
+    r = client.get("/?status=garbage")
+    assert r.status_code == 200
+    body = r.text
+    import re
+    assert re.search(r'<button class="tab active"\s+data-status="upcoming"', body)
+
+
+def test_event_card_link_carries_from_query_param(db_path: Path):
+    """Card anchor URL includes ?from={status} so the detail page can
+    point its back link to the right tab. Seed a second event with an
+    ENDED head snapshot — fixture's E1 stays UPCOMING."""
+    from datetime import datetime, timezone
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES ('E_END', 'Chelsea', 'Spurs', '2026-05-20T18:30:00Z')",
+    )
+    conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
+        "VALUES (?, 'E_END', 'betpawa', 'ENDED', 'ok')",
+        (now_iso,),
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events?status=upcoming")
+    assert 'href="/events/E1?from=upcoming"' in r.text
+    r2 = client.get("/events?status=ended")
+    assert 'href="/events/E_END?from=ended"' in r2.text
+
+
+def test_event_detail_back_link_honors_from_param(client: TestClient):
+    r = client.get("/events/E1?from=ended")
+    assert r.status_code == 200
+    assert 'href="/?status=ended"' in r.text
+
+
+def test_event_detail_back_link_defaults_to_upcoming(client: TestClient):
+    """Direct deep link to a detail page (no `from`) defaults to upcoming."""
+    r = client.get("/events/E1")
+    assert r.status_code == 200
+    assert 'href="/?status=upcoming"' in r.text
+
+
+def test_event_detail_unknown_from_sanitized_to_upcoming(client: TestClient):
+    r = client.get("/events/E1?from=garbage")
+    assert r.status_code == 200
+    assert 'href="/?status=upcoming"' in r.text
