@@ -41,7 +41,11 @@ class SqliteWriter:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA busy_timeout = 5000")
+        # 30s busy_timeout — a parallel simulator run in the web app
+        # holds the writer lock during its batched executemany of
+        # thousands of pricer_results rows. 5s was too short and the
+        # scraper writer hit `database is locked` on overlap.
+        conn.execute("PRAGMA busy_timeout = 30000")
         init_schema(conn)
         return conn
 
