@@ -95,7 +95,11 @@ def _select_snapshot_ids(
             WHERE 1=1 {where_clause}
             ORDER BY s.event_id, s.ts_utc
         """
-    return [row[0] for row in conn.execute(sql, params).fetchall()]
+    # Return (id, event_id, ts_utc) tuples — the caller needs all three.
+    # The SQL already selects them; returning the full tuple avoids a
+    # second `WHERE id IN (...)` query that for large runs (thousands
+    # of snapshots) blows SQLite's variable-count limit.
+    return [(row[0], row[1], row[2]) for row in conn.execute(sql, params).fetchall()]
 
 
 def _load_tick_prices(
@@ -156,21 +160,16 @@ def run_simulation(
     `coverage` in {'all', 'latest', 'prematch', 'live'}.
     `scope` carries the filter selections so a run can be reproduced later.
     """
-    snapshot_ids = _select_snapshot_ids(conn, coverage, scope)
-    if not snapshot_ids:
+    snapshots = _select_snapshot_ids(conn, coverage, scope)
+    if not snapshots:
         # Still record the run — n_rows=0 surfaces in the history UI.
         return _record_empty_run(conn, config, coverage, scope, csv_dir)
 
     overrides = config_mod.coefficients_to_engine_overrides(config.coefficients)
 
-    # Resolve ts_utc and event_id for each snapshot
-    snap_meta = {
-        row["id"]: (row["event_id"], row["ts_utc"])
-        for row in conn.execute(
-            f"SELECT id, event_id, ts_utc FROM snapshots "
-            f"WHERE id IN ({','.join('?' * len(snapshot_ids))})",
-            snapshot_ids,
-        )
+    snapshot_ids = [snap_id for (snap_id, _ev, _ts) in snapshots]
+    snap_meta: dict[int, tuple[str, str]] = {
+        snap_id: (ev, ts) for (snap_id, ev, ts) in snapshots
     }
 
     results: list[tuple] = []
