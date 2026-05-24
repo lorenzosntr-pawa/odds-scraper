@@ -45,12 +45,13 @@
     {% endif %}
   </div>
 
+  {% set from_qs = '&from=' ~ event.from_status if event.from_status else '' %}
   <div class="pills family-pills">
     {% for fid, label, default_slug, active, disabled in event.family_pills %}
       {% if disabled %}
         <span class="family-pill disabled" title="No data">{{ label }}</span>
       {% else %}
-        <a href="/events/{{ event.id }}?market={{ default_slug }}"
+        <a href="/events/{{ event.id }}?market={{ default_slug }}{{ from_qs }}"
            class="family-pill{% if active %} active{% endif %}">{{ label }}</a>
       {% endif %}
     {% endfor %}
@@ -58,7 +59,7 @@
   {% if event.line_pills %}
     <div class="pills line-pills">
       {% for slug, label, active in event.line_pills %}
-        <a href="/events/{{ event.id }}?market={{ slug }}"
+        <a href="/events/{{ event.id }}?market={{ slug }}{{ from_qs }}"
            class="line-pill{% if active %} active{% endif %}">{{ label }}</a>
       {% endfor %}
     </div>
