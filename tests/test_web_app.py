@@ -1051,3 +1051,33 @@ def test_event_detail_history_shows_sim_only_rows_when_no_book_quoted(db_path: P
     assert "1.42" in body
     # The history row's ts shows up
     assert "2026-05-22T19:30:00Z" in body or "2026-05-22T19:31:30Z" in body
+
+
+def test_events_fragment_hides_placeholder_events_with_empty_names(db_path: Path):
+    """Defensive: an event whose row was only ever populated via a
+    sentinel write (home='' AND away='') must NOT show on the upcoming
+    page. Without this filter, stale-process timeouts produced ghost
+    cards with no team names and no odds — observed for events like
+    33818403 when a pre-fix scraper kept writing resolver-timeout
+    sentinels."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    # Add a placeholder event (sentinel-style) alongside the fixture's
+    # real E1 event.
+    conn.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES ('GHOST', '', '', '2026-05-22T19:00:00Z')",
+    )
+    conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+        "fetch_status, fetch_error) "
+        "VALUES ('2026-05-21T10:05:00Z', 'GHOST', 'betpawa', 'UPCOMING', "
+        "'http_error', 'resolver/collector timed out')",
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events?status=upcoming")
+    body = r.text
+    # Real fixture event still shows.
+    assert 'data-event-id="E1"' in body
+    # Ghost is hidden.
+    assert 'data-event-id="GHOST"' not in body

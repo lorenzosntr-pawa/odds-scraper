@@ -73,6 +73,13 @@ def get_events_by_status(
           ON s.event_id = l.event_id
          AND s.ts_utc  = l.max_ts
         WHERE s.status = :db_status
+          -- Defensive: hide events whose `events` row was only created
+          -- via a sentinel snapshot (writer's upsert inserts with
+          -- home='', away='' on first contact, then patches the
+          -- placeholders when real data arrives). An event with empty
+          -- home AND away never saw a successful collector tick — it's
+          -- noise on the upcoming page.
+          AND e.home != '' AND e.away != ''
           {cutoff_clause}
           {country_clause}
           {league_clause}
