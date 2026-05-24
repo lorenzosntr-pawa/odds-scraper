@@ -7,7 +7,12 @@ from pathlib import Path
 
 CSV_COLUMNS = (
     "run_id", "event_id", "home", "away", "kickoff_utc",
-    "snapshot_id", "ts_utc", "basis_used",
+    "snapshot_id", "ts_utc",
+    # Per-tick state from the snapshots table — makes the CSV readable
+    # without cross-referencing the DB. `status` flags the regime
+    # (UPCOMING / STARTED / ENDED); minute + score apply when in-play.
+    "status", "match_minute", "score_home", "score_away",
+    "basis_used",
     "lambda_home", "lambda_away",
     "our_p_home_1", "our_p_away_1",
     "our_1up_home_fair", "our_1up_home_capped",
@@ -39,7 +44,9 @@ def write_run_csv(
         """
         SELECT
             r.run_id, r.event_id, e.home, e.away, e.kickoff_utc,
-            r.snapshot_id, r.ts_utc, r.basis_used,
+            r.snapshot_id, r.ts_utc,
+            s.status, s.match_minute, s.score_home, s.score_away,
+            r.basis_used,
             r.lambda_home, r.lambda_away,
             r.our_p_home_1, r.our_p_away_1,
             r.our_1up_home_fair, r.our_1up_home_capped,
@@ -57,6 +64,10 @@ def write_run_csv(
             r.bw_2up_home_odds,  r.bw_2up_away_odds
         FROM pricer_results r
         JOIN events e ON e.id = r.event_id
+        -- LEFT JOIN: the snapshot row should always exist (FK), but
+        -- if a manual cleanup ever deleted it, NULL is better than
+        -- dropping the result row from the CSV.
+        LEFT JOIN snapshots s ON s.id = r.snapshot_id
         WHERE r.run_id = ?
         ORDER BY r.event_id, r.ts_utc
         """,
