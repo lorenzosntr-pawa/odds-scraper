@@ -473,3 +473,109 @@ async def test_watchdog_ended_sentinel_carries_last_score(monkeypatch):
     assert all(s.status == EventStatus.ENDED for s in last_batch)
     assert all(s.score_home == 2 and s.score_away == 1 for s in last_batch)
     assert all(s.match_minute == 89 for s in last_batch)
+
+
+async def test_status_poll_timeout_writes_sentinel_and_continues(monkeypatch):
+    """When the BP status poll hangs past poll_timeout_seconds the
+    watcher must give up that attempt, log, and fall through to the
+    sentinel-on-None-detail branch — no more 90-minute silences."""
+    import asyncio
+    monkeypatch.setattr(
+        "odds_scraper.watcher.asyncio.sleep", AsyncMock(return_value=None),
+    )
+
+    call = {"n": 0}
+    # asyncio.Event().wait() blocks until set — never affected by the
+    # asyncio.sleep monkeypatch above. asyncio.wait_for cancels the
+    # underlying task on timeout.
+    forever = asyncio.Event()
+
+    async def hanging_then_ok(_id):
+        call["n"] += 1
+        if call["n"] == 1:
+            await forever.wait()
+        return _detail(ended=True)
+    cfg_short_timeout = WatcherConfig(
+        prematch_seconds=600, live_seconds=90,
+        status_retry_backoff_seconds=(0, 0, 0),
+        watchdog_after_kickoff_seconds=10800,
+        poll_timeout_seconds=1,
+    )
+    bp_client = AsyncMock()
+    bp_client.get_event_detail.side_effect = hanging_then_ok
+    collector = AsyncMock()
+    collector.collect.return_value = _snap_list(EventStatus.ENDED)
+    writer = MagicMock()
+    writer.append = AsyncMock()
+    writer.append_pricer_live = AsyncMock(return_value=False)
+    resolver = AsyncMock(return_value=(
+        {Bookmaker.SPORTYBET: "sr:match:1",
+         Bookmaker.BET9JA: "b9j-7",
+         Bookmaker.BETWAY: "sr:match:1"},
+        "sr:match:1", ""))
+
+    watcher = EventWatcher(
+        "33660318", cfg_short_timeout, bp_client, collector, writer, resolver,
+    )
+    # The whole test must finish quickly — if the timeout doesn't fire,
+    # `forever.wait()` blocks indefinitely. Cap the run.
+    await asyncio.wait_for(watcher.run(), timeout=10.0)
+
+    # The first poll attempt timed out (log warning); the retry budget
+    # then succeeded with the ENDED detail (call #2 doesn't hang) and
+    # the watcher exited. Proof: more than one get_event_detail call,
+    # and the watcher returned without hanging.
+    assert call["n"] >= 2
+
+
+async def test_resolver_timeout_writes_sentinel_and_continues(cfg, monkeypatch):
+    """A resolver/collector hang must also time out and write a sentinel
+    instead of blocking the watcher loop indefinitely."""
+    import asyncio
+    monkeypatch.setattr(
+        "odds_scraper.watcher.asyncio.sleep", AsyncMock(return_value=None),
+    )
+    # cfg has poll_timeout_seconds default = 30; override to 1 for speed.
+    fast_cfg = WatcherConfig(
+        prematch_seconds=cfg.prematch_seconds,
+        live_seconds=cfg.live_seconds,
+        status_retry_backoff_seconds=cfg.status_retry_backoff_seconds,
+        watchdog_after_kickoff_seconds=cfg.watchdog_after_kickoff_seconds,
+        live_lead_seconds=cfg.live_lead_seconds,
+        poll_timeout_seconds=1,
+    )
+
+    statuses = iter([_detail(live=False), _detail(ended=True)])
+    bp_client = AsyncMock()
+    bp_client.get_event_detail.side_effect = lambda _id: next(statuses)
+    collector = AsyncMock()
+    collector.collect.return_value = _snap_list(EventStatus.ENDED)
+    writer = MagicMock()
+    writer.append = AsyncMock()
+    writer.append_pricer_live = AsyncMock(return_value=False)
+
+    call = {"n": 0}
+    forever = asyncio.Event()
+
+    async def hanging_resolver(_detail):
+        call["n"] += 1
+        if call["n"] == 1:
+            await forever.wait()
+        return ({Bookmaker.SPORTYBET: "sr:match:1",
+                 Bookmaker.BET9JA: "b9j-7",
+                 Bookmaker.BETWAY: "sr:match:1"},
+                "sr:match:1", "")
+
+    watcher = EventWatcher(
+        "33660318", fast_cfg, bp_client, collector, writer, hanging_resolver,
+    )
+    await watcher.run()
+
+    # The first iteration's resolver hung past timeout — a sentinel
+    # with the timeout reason should have been written. Second
+    # iteration's detail is ENDED so the watcher exits.
+    errors = []
+    for c in writer.append.call_args_list:
+        for snap in c.args[0]:
+            errors.append(snap.fetch_error)
+    assert any("timed out" in e for e in errors)
