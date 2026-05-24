@@ -183,3 +183,43 @@ def test_run_simulation_skips_snapshot_with_zero_odds(db, tmp_path):
     # Run survived; only the good event produced a result.
     assert "GOOD" in event_ids
     assert "BAD" not in event_ids
+
+
+def test_run_simulation_handles_many_snapshots_without_in_clause_limit(db, tmp_path):
+    """SQLite caps the number of `?` placeholders in a single query
+    (`SQLITE_LIMIT_VARIABLE_NUMBER`, 999 in older builds). The previous
+    runner used `WHERE id IN (?, ?, ...)` across all selected snapshots
+    which broke once Lorenzo ran the simulator across his ~17k-snapshot
+    DB. Seed enough snapshots to be well over the limit and prove the
+    run completes."""
+    # Seed one event with 1500 snapshots (well over the 999 default).
+    db.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES ('BIG', 'A', 'B', '2026-05-22T18:30:00Z')",
+    )
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 5, 21, 0, 0, tzinfo=timezone.utc)
+    rows = []
+    for i in range(1500):
+        ts = (base + timedelta(seconds=i * 90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows.append((ts,))
+    db.executemany(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
+        "VALUES (?, 'BIG', 'betpawa', 'UPCOMING', 'ok')",
+        rows,
+    )
+
+    default = configs.load_default(db)
+    # Should NOT raise "too many SQL variables".
+    run_id = runner.run_simulation(
+        db, config=default, coverage="all",
+        scope={"status": "upcoming", "country": "", "league": "",
+               "date": "", "search": ""},
+        csv_dir=tmp_path / "sim",
+    )
+    summary = db.execute(
+        "SELECT n_events, n_rows FROM pricer_runs WHERE id = ?", (run_id,),
+    ).fetchone()
+    # No prices were seeded so engine inputs are missing — n_rows=0
+    # but the run completes (no exception).
+    assert summary["n_rows"] == 0
