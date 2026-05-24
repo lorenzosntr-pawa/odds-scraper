@@ -46,7 +46,8 @@ def test_schema_v5_creates_pricer_live_results(tmp_path: Path):
         "SELECT name FROM sqlite_master WHERE type='table'"
     )}
     assert "pricer_live_results" in tables
-    assert SCHEMA_VERSION == 5
+    # v5 must still apply on any later schema version.
+    assert SCHEMA_VERSION >= 5
 
 
 def test_compute_and_write_inserts_row(tmp_path: Path):

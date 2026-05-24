@@ -147,6 +147,20 @@ def _score_for_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> tuple[int
     return (int(row["score_home"]), int(row["score_away"]))
 
 
+_PROGRESS_BATCH = 50  # update n_done after every N processed ticks
+
+
+def is_run_in_progress(conn: sqlite3.Connection) -> bool:
+    """True iff any pricer_runs row currently has state='running'.
+
+    Used by the POST /simulator/runs route to refuse a second run
+    while one is already in flight."""
+    row = conn.execute(
+        "SELECT 1 FROM pricer_runs WHERE state = 'running' LIMIT 1"
+    ).fetchone()
+    return row is not None
+
+
 def run_simulation(
     conn: sqlite3.Connection,
     *,
@@ -157,77 +171,103 @@ def run_simulation(
 ) -> int:
     """Execute a simulation run, persist rows + CSV, return new run id.
 
+    The pricer_runs row is inserted IMMEDIATELY with state='running'
+    so the simulator page's progress poller can see the run start.
+    `n_done` updates every PROGRESS_BATCH ticks; on success the row
+    flips to state='done' with the final n_rows, csv_path, and
+    finished_at; on exception it flips to state='failed' (the
+    exception propagates to the caller so background-task plumbing
+    can log it).
+
     `coverage` in {'all', 'latest', 'prematch', 'live'}.
-    `scope` carries the filter selections so a run can be reproduced later.
+    `scope` carries the filter selections so a run can be reproduced.
     """
     snapshots = _select_snapshot_ids(conn, coverage, scope)
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cur = conn.execute(
+        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
+        "n_events, n_rows, csv_path, state, n_total, n_done, started_at) "
+        "VALUES (?, ?, ?, ?, 0, 0, '', 'running', ?, 0, ?)",
+        (now_iso, config.id, coverage, json.dumps(scope),
+         len(snapshots), now_iso),
+    )
+    run_id = cur.lastrowid
+
     if not snapshots:
-        # Still record the run — n_rows=0 surfaces in the history UI.
-        return _record_empty_run(conn, config, coverage, scope, csv_dir)
+        return _finish_empty_run(conn, run_id, csv_dir)
 
+    try:
+        return _execute_run(conn, run_id, config, snapshots, csv_dir)
+    except Exception:
+        conn.execute(
+            "UPDATE pricer_runs SET state = 'failed', finished_at = ? WHERE id = ?",
+            (datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), run_id),
+        )
+        raise
+
+
+def _execute_run(
+    conn: sqlite3.Connection,
+    run_id: int,
+    config: config_mod.Profile,
+    snapshots: list[tuple[int, str, str]],
+    csv_dir: Path,
+) -> int:
     overrides = config_mod.coefficients_to_engine_overrides(config.coefficients)
-
-    snapshot_ids = [snap_id for (snap_id, _ev, _ts) in snapshots]
     snap_meta: dict[int, tuple[str, str]] = {
         snap_id: (ev, ts) for (snap_id, ev, ts) in snapshots
     }
+    snapshot_ids = [snap_id for (snap_id, _ev, _ts) in snapshots]
 
     results: list[tuple] = []
     seen_events: set[str] = set()
 
     with with_coefficients(overrides):
-        for snap_id in snapshot_ids:
+        for i, snap_id in enumerate(snapshot_ids):
             event_id, ts_utc = snap_meta[snap_id]
             prices_by_book = _load_tick_prices(conn, event_id, ts_utc)
             engine_inputs, basis = input_extract.extract(prices_by_book)
-            if engine_inputs is None:
-                continue
-            engine_inputs["score"] = _score_for_snapshot(conn, snap_id)
-            try:
-                res = engine.price_early_payout_markets(**engine_inputs)
-            except Exception as exc:  # noqa: BLE001
-                # Engine assumes well-formed inputs (e.g. source_odds > 0
-                # for the cap step). The input filter drops obvious cases
-                # but some live snapshots carry residual oddities — skip
-                # this snapshot rather than killing the whole run.
-                log.warning(
-                    "engine crashed on event=%s ts=%s — skipping (%s)",
-                    event_id, ts_utc, exc,
+            if engine_inputs is not None:
+                engine_inputs["score"] = _score_for_snapshot(conn, snap_id)
+                try:
+                    res = engine.price_early_payout_markets(**engine_inputs)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "engine crashed on event=%s ts=%s — skipping (%s)",
+                        event_id, ts_utc, exc,
+                    )
+                else:
+                    quoted = {
+                        book: _extract_quoted_up(prices_by_book.get(book, []))
+                        for book in ("betpawa", "sportybet", "bet9ja", "betway")
+                    }
+                    results.append((
+                        snap_id, event_id, ts_utc, basis,
+                        res["lambda_home"], res["lambda_away"],
+                        res["p_home_1"], res["p_away_1"],
+                        res["market_1up"]["home_fair"],   res["market_1up"]["home_margin"],
+                        res["market_1up"]["away_fair"],   res["market_1up"]["away_margin"],
+                        res["p_home_2"], res["p_away_2"],
+                        res["market_2up"]["home_fair"],   res["market_2up"]["home_margin"],
+                        res["market_2up"]["away_fair"],   res["market_2up"]["away_margin"],
+                        quoted["betpawa"]["1up_home"],   quoted["betpawa"]["1up_away"],
+                        quoted["betpawa"]["2up_home"],   quoted["betpawa"]["2up_away"],
+                        quoted["sportybet"]["1up_home"], quoted["sportybet"]["1up_away"],
+                        quoted["sportybet"]["2up_home"], quoted["sportybet"]["2up_away"],
+                        quoted["bet9ja"]["1up_home"],    quoted["bet9ja"]["1up_away"],
+                        quoted["bet9ja"]["2up_home"],    quoted["bet9ja"]["2up_away"],
+                        quoted["betway"]["1up_home"],    quoted["betway"]["1up_away"],
+                        quoted["betway"]["2up_home"],    quoted["betway"]["2up_away"],
+                    ))
+                    seen_events.add(event_id)
+            # Heartbeat: write n_done every PROGRESS_BATCH so the
+            # status endpoint shows live progress.
+            if (i + 1) % _PROGRESS_BATCH == 0:
+                conn.execute(
+                    "UPDATE pricer_runs SET n_done = ? WHERE id = ?",
+                    (i + 1, run_id),
                 )
-                continue
-            quoted = {
-                book: _extract_quoted_up(prices_by_book.get(book, []))
-                for book in ("betpawa", "sportybet", "bet9ja", "betway")
-            }
-            results.append((
-                snap_id, event_id, ts_utc, basis,
-                res["lambda_home"], res["lambda_away"],
-                res["p_home_1"], res["p_away_1"],
-                res["market_1up"]["home_fair"],   res["market_1up"]["home_margin"],
-                res["market_1up"]["away_fair"],   res["market_1up"]["away_margin"],
-                res["p_home_2"], res["p_away_2"],
-                res["market_2up"]["home_fair"],   res["market_2up"]["home_margin"],
-                res["market_2up"]["away_fair"],   res["market_2up"]["away_margin"],
-                quoted["betpawa"]["1up_home"],   quoted["betpawa"]["1up_away"],
-                quoted["betpawa"]["2up_home"],   quoted["betpawa"]["2up_away"],
-                quoted["sportybet"]["1up_home"], quoted["sportybet"]["1up_away"],
-                quoted["sportybet"]["2up_home"], quoted["sportybet"]["2up_away"],
-                quoted["bet9ja"]["1up_home"],    quoted["bet9ja"]["1up_away"],
-                quoted["bet9ja"]["2up_home"],    quoted["bet9ja"]["2up_away"],
-                quoted["betway"]["1up_home"],    quoted["betway"]["1up_away"],
-                quoted["betway"]["2up_home"],    quoted["betway"]["2up_away"],
-            ))
-            seen_events.add(event_id)
 
-    # Create run row first to get the id (needed for filename + FK).
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    cur = conn.execute(
-        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
-        "n_events, n_rows, csv_path) VALUES (?, ?, ?, ?, ?, ?, '')",
-        (now_iso, config.id, coverage, json.dumps(scope),
-         len(seen_events), len(results)),
-    )
-    run_id = cur.lastrowid
     csv_path = f"sim/run_{run_id:04d}.csv"
 
     # 35 columns total: run_id + 34 from each `results` tuple. Build the
@@ -249,27 +289,29 @@ def run_simulation(
         f"INSERT INTO pricer_results ({_RESULT_COLS}) VALUES ({placeholders})",
         [(run_id, *row) for row in results],
     )
+    finished_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn.execute(
-        "UPDATE pricer_runs SET csv_path = ? WHERE id = ?", (csv_path, run_id),
+        "UPDATE pricer_runs "
+        "SET csv_path = ?, state = 'done', n_events = ?, n_rows = ?, "
+        "    n_done = n_total, finished_at = ? "
+        "WHERE id = ?",
+        (csv_path, len(seen_events), len(results), finished_iso, run_id),
     )
     csv_export.write_run_csv(conn, run_id, csv_dir / f"run_{run_id:04d}.csv")
     return run_id
 
 
-def _record_empty_run(
-    conn: sqlite3.Connection, config: config_mod.Profile,
-    coverage: str, scope: dict, csv_dir: Path,
+def _finish_empty_run(
+    conn: sqlite3.Connection, run_id: int, csv_dir: Path,
 ) -> int:
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    cur = conn.execute(
-        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
-        "n_events, n_rows, csv_path) VALUES (?, ?, ?, ?, 0, 0, '')",
-        (now_iso, config.id, coverage, json.dumps(scope)),
-    )
-    run_id = cur.lastrowid
+    """Mark a pre-inserted run row as done when the scope had 0 snapshots."""
     csv_path = f"sim/run_{run_id:04d}.csv"
+    finished_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn.execute(
-        "UPDATE pricer_runs SET csv_path = ? WHERE id = ?", (csv_path, run_id),
+        "UPDATE pricer_runs "
+        "SET csv_path = ?, state = 'done', finished_at = ? "
+        "WHERE id = ?",
+        (csv_path, finished_iso, run_id),
     )
     csv_export.write_run_csv(conn, run_id, csv_dir / f"run_{run_id:04d}.csv")
     return run_id

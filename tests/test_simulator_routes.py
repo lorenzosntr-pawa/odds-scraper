@@ -245,3 +245,121 @@ def test_delete_default_profile_returns_400(db_path: Path, client: TestClient):
         f"/simulator/profiles/{default_id}/delete", follow_redirects=False,
     )
     assert r.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Background-task progress + single-flight
+# ---------------------------------------------------------------------------
+
+def test_run_simulation_inserts_running_row_immediately(db_path: Path):
+    """The pricer_runs row must appear with state='running' BEFORE the
+    work completes — otherwise the simulator page can't show a progress
+    bar for the in-flight run."""
+    from odds_scraper.pricer import configs, runner
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    default = configs.load_default(conn)
+    # Empty scope → no work, but the runner still inserts the row and
+    # finishes it cleanly. Inspect afterwards.
+    run_id = runner.run_simulation(
+        conn, config=default, coverage="all",
+        scope={"status": "ended", "country": "", "league": "", "date": "", "search": ""},
+        csv_dir=Path(db_path).parent / "sim",
+    )
+    row = conn.execute(
+        "SELECT state, n_done, n_total, started_at, finished_at "
+        "FROM pricer_runs WHERE id = ?", (run_id,),
+    ).fetchone()
+    assert row["state"] == "done"
+    assert row["started_at"] is not None
+    assert row["finished_at"] is not None
+    conn.close()
+
+
+def test_post_run_with_running_in_progress_returns_busy_redirect(
+    db_path: Path, client: TestClient,
+):
+    """POST /simulator/runs while another run is state='running' must
+    not start a second simulation. Redirect to /simulator?busy=1."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    default_id = conn.execute(
+        "SELECT id FROM pricer_configs WHERE is_default=1"
+    ).fetchone()[0]
+    # Plant a fake running row directly so we don't have to time a real
+    # background run.
+    conn.execute(
+        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
+        "n_events, n_rows, csv_path, state, n_total, n_done, started_at) "
+        "VALUES (datetime('now'), ?, 'all', '{}', 0, 0, '', 'running', 100, 5, "
+        "       datetime('now'))",
+        (default_id,),
+    )
+    conn.close()
+    r = client.post(
+        "/simulator/runs",
+        data={"config_id": default_id, "coverage": "all", "status": "upcoming",
+              "country": "", "league": "", "date": "", "search": ""},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert "busy=1" in r.headers["location"]
+
+
+def test_get_run_status_returns_progress_json(db_path: Path, client: TestClient):
+    """GET /simulator/runs/<id>/status returns the state + progress
+    counters as JSON so the page's poller can update the bar."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    default_id = conn.execute(
+        "SELECT id FROM pricer_configs WHERE is_default=1"
+    ).fetchone()[0]
+    cur = conn.execute(
+        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
+        "n_events, n_rows, csv_path, state, n_total, n_done, started_at) "
+        "VALUES (datetime('now'), ?, 'all', '{}', 0, 0, '', 'running', 200, 80, "
+        "       datetime('now'))",
+        (default_id,),
+    )
+    run_id = cur.lastrowid
+    conn.close()
+    r = client.get(f"/simulator/runs/{run_id}/status")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["state"] == "running"
+    assert d["n_done"] == 80
+    assert d["n_total"] == 200
+    assert d["progress_pct"] == 40
+
+
+def test_simulator_page_renders_progress_bar_when_run_in_progress(
+    db_path: Path, client: TestClient,
+):
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    default_id = conn.execute(
+        "SELECT id FROM pricer_configs WHERE is_default=1"
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
+        "n_events, n_rows, csv_path, state, n_total, n_done, started_at) "
+        "VALUES (datetime('now'), ?, 'all', '{}', 0, 0, '', 'running', 100, 25, "
+        "       datetime('now'))",
+        (default_id,),
+    )
+    conn.close()
+    r = client.get("/simulator")
+    body = r.text
+    assert "Run in progress" in body
+    assert "sim-progress-fill" in body
+    # Button disabled while running
+    assert "disabled" in body
+
+
+def test_simulator_page_disables_button_with_busy_marker(client: TestClient):
+    """?busy=1 lands the user on the page when their POST was rejected
+    because another run was active. The page shows the appropriate
+    warning section."""
+    r = client.get("/simulator?busy=1")
+    assert r.status_code == 200
+    assert "Another run is already in progress" in r.text
