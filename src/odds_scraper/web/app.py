@@ -194,6 +194,9 @@ class EventDetail:
     # order. Includes "sim" when the active market is 1UP or 2UP and
     # pricer_live_results carries OUR for any tick.
     history_books: tuple[str, ...]
+    # Status tab the user came from (via ?from=... on the detail link).
+    # The "← EVENTS" link uses this to send them back to the same tab.
+    from_status: str
 
 
 def create_app(db_path: Path) -> FastAPI:
@@ -231,11 +234,19 @@ def create_app(db_path: Path) -> FastAPI:
     register_pricer_routes(app, templates, db_path=db_path, conn=conn)
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
+    async def index(request: Request, status: str = Query("upcoming")):
+        # `status` lets the back link from the event detail page land
+        # on the same tab the user came from. Unknown values fall back
+        # to upcoming silently — keeps the URL forgiving.
+        if status not in queries.VALID_STATUSES:
+            status = "upcoming"
         country_league_index = queries.get_country_league_index(conn)
         return templates.TemplateResponse(
             request, "index.html",
-            {"country_league_index": country_league_index},
+            {
+                "country_league_index": country_league_index,
+                "initial_status": status,
+            },
         )
 
     @app.get("/events", response_class=HTMLResponse)
@@ -275,15 +286,20 @@ def create_app(db_path: Path) -> FastAPI:
         request: Request,
         event_id: str,
         market: str = Query(_DEFAULT_MARKET_SLUG),
+        from_: str = Query("upcoming", alias="from"),
     ):
         if market not in _PICKER_BY_SLUG:
             raise HTTPException(status_code=400,
                                 detail=f"unknown market {market!r}")
+        # Sanitize `from` so the back link can't be a hand-crafted
+        # arbitrary URL fragment.
+        if from_ not in queries.VALID_STATUSES:
+            from_ = "upcoming"
         ev_row = queries.get_event_meta(conn, event_id)
         if ev_row is None:
             raise HTTPException(status_code=404,
                                 detail=f"event {event_id!r} not found")
-        detail = _build_event_detail(conn, ev_row, market)
+        detail = _build_event_detail(conn, ev_row, market, from_status=from_)
         return templates.TemplateResponse(
             request, "event_detail.html", {"event": detail},
         )
@@ -400,7 +416,9 @@ def _build_event_view(row, price_rows) -> EventView:
     )
 
 
-def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
+def _build_event_detail(
+    conn, ev_row, market_slug: str, *, from_status: str = "upcoming",
+) -> EventDetail:
     """Build the detail-page view-model for one event + one selected market."""
     market_id, line, market_label = _PICKER_BY_SLUG[market_slug]
     sides = _sides_for(market_id)
@@ -529,4 +547,5 @@ def _build_event_detail(conn, ev_row, market_slug: str) -> EventDetail:
         line_pills=line_pills,
         history=history,
         history_books=history_books,
+        from_status=from_status,
     )
