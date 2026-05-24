@@ -535,7 +535,7 @@ async def test_resolver_timeout_writes_sentinel_and_continues(cfg, monkeypatch):
     monkeypatch.setattr(
         "odds_scraper.watcher.asyncio.sleep", AsyncMock(return_value=None),
     )
-    # cfg has poll_timeout_seconds default = 30; override to 1 for speed.
+    # cfg has resolver_timeout_seconds default = 90; override to 1 for speed.
     fast_cfg = WatcherConfig(
         prematch_seconds=cfg.prematch_seconds,
         live_seconds=cfg.live_seconds,
@@ -543,6 +543,7 @@ async def test_resolver_timeout_writes_sentinel_and_continues(cfg, monkeypatch):
         watchdog_after_kickoff_seconds=cfg.watchdog_after_kickoff_seconds,
         live_lead_seconds=cfg.live_lead_seconds,
         poll_timeout_seconds=1,
+        resolver_timeout_seconds=1,
     )
 
     statuses = iter([_detail(live=False), _detail(ended=True)])

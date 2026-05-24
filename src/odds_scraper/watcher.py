@@ -49,13 +49,20 @@ class WatcherConfig:
     # huge gaps. Kickoff-driven cadence guarantees we're already
     # polling every `live_seconds` when the whistle blows.
     live_lead_seconds: int = 300
-    # Hard timeout on each network call inside one tick (status poll +
-    # resolver + collector). bookieskit's underlying httpx client has
-    # no default timeout, so when a bookmaker API stalls the await
-    # never returns and the watcher sleeps indefinitely — observed in
-    # production as 90-minute wall-clock gaps right around kickoff.
-    # 30s is generous (normal call is <2s) but bounded.
+    # Hard timeout on the BP status poll inside one tick. bookieskit's
+    # underlying httpx client has no default timeout, so when BP stalls
+    # the await never returns and the watcher sleeps indefinitely —
+    # observed in production as 90-minute wall-clock gaps right around
+    # kickoff. 30s is generous (normal call is <2s) but bounded.
     poll_timeout_seconds: int = 30
+    # Hard timeout on the resolver+collector path (per tick). Higher
+    # than poll_timeout_seconds because the resolver lazily builds
+    # per-tournament prematch event maps for SB/B9J/BW on the first
+    # call; at startup with 100+ watchers all racing to resolve at
+    # once, the map builds queue up. 30s caused cascading timeouts
+    # right after restart — every event wrote an empty sentinel and
+    # the UI went blank. 90s lets the cascade settle.
+    resolver_timeout_seconds: int = 90
 
 
 def _utcnow() -> datetime:
@@ -117,11 +124,11 @@ class EventWatcher:
             try:
                 resolved, sr_id, genius_id = await asyncio.wait_for(
                     self._resolver(detail),
-                    timeout=self.cfg.poll_timeout_seconds,
+                    timeout=self.cfg.resolver_timeout_seconds,
                 )
                 rows = await asyncio.wait_for(
                     self._collector.collect(detail, resolved, sr_id, genius_id),
-                    timeout=self.cfg.poll_timeout_seconds,
+                    timeout=self.cfg.resolver_timeout_seconds,
                 )
                 await self._writer.append(rows)
                 self._log_tick_summary(rows)
@@ -150,7 +157,7 @@ class EventWatcher:
                 log.warning(
                     "resolver/collector timed out for %s after %ds — "
                     "writing sentinel and continuing",
-                    self.event_bp_id, self.cfg.poll_timeout_seconds,
+                    self.event_bp_id, self.cfg.resolver_timeout_seconds,
                 )
                 await self._writer.append(
                     self._sentinel_rows("resolver/collector timed out"),
