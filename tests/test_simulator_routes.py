@@ -262,7 +262,7 @@ def test_run_simulation_inserts_running_row_immediately(db_path: Path):
     # Empty scope → no work, but the runner still inserts the row and
     # finishes it cleanly. Inspect afterwards.
     run_id = runner.run_simulation(
-        conn, config=default, coverage="all",
+        conn, config=default, regime="any", density="all",
         scope={"status": "ended", "country": "", "league": "", "date": "", "search": ""},
         csv_dir=Path(db_path).parent / "sim",
     )
@@ -363,3 +363,24 @@ def test_simulator_page_disables_button_with_busy_marker(client: TestClient):
     r = client.get("/simulator?busy=1")
     assert r.status_code == 200
     assert "Another run is already in progress" in r.text
+
+
+def test_scope_preview_renders_event_and_snapshot_counts(db_path: Path, client: TestClient):
+    """GET /simulator/scope returns an HTML fragment with the counts —
+    used as an HTMX target so the user sees the scope size live."""
+    # Default fixture seeds 1 event + 1 snapshot.
+    r = client.get("/simulator/scope?regime=any&density=all")
+    assert r.status_code == 200
+    body = r.text
+    # Numbers + the literal labels — defensive against whitespace.
+    assert "events" in body
+    assert "ticks in scope" in body
+
+
+def test_simulator_form_has_regime_and_density_radios(client: TestClient):
+    r = client.get("/simulator")
+    body = r.text
+    for v in ("any", "prematch", "live"):
+        assert f'name="regime" value="{v}"' in body
+    for v in ("all", "latest"):
+        assert f'name="density" value="{v}"' in body

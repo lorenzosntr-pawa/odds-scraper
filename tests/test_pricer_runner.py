@@ -70,7 +70,7 @@ def test_run_simulation_writes_results_for_priced_snapshot(db, tmp_path):
     default = configs.load_default(db)
     run_id = runner.run_simulation(
         db, config=default,
-        coverage="all",
+        regime="any", density="all",
         scope={"status": "upcoming", "country": "", "league": "", "date": "", "search": ""},
         csv_dir=tmp_path / "sim",
     )
@@ -119,7 +119,7 @@ def test_run_simulation_coverage_latest_emits_one_row_per_event(db, tmp_path):
 
     default = configs.load_default(db)
     run_id = runner.run_simulation(
-        db, config=default, coverage="latest",
+        db, config=default, regime="any", density="latest",
         scope={"status": "upcoming", "country": "", "league": "", "date": "", "search": ""},
         csv_dir=tmp_path / "sim",
     )
@@ -172,7 +172,7 @@ def test_run_simulation_skips_snapshot_with_zero_odds(db, tmp_path):
 
     default = configs.load_default(db)
     run_id = runner.run_simulation(
-        db, config=default, coverage="all",
+        db, config=default, regime="any", density="all",
         scope={"status": "", "country": "", "league": "", "date": "", "search": ""},
         csv_dir=tmp_path / "sim",
     )
@@ -212,7 +212,7 @@ def test_run_simulation_handles_many_snapshots_without_in_clause_limit(db, tmp_p
     default = configs.load_default(db)
     # Should NOT raise "too many SQL variables".
     run_id = runner.run_simulation(
-        db, config=default, coverage="all",
+        db, config=default, regime="any", density="all",
         scope={"status": "upcoming", "country": "", "league": "",
                "date": "", "search": ""},
         csv_dir=tmp_path / "sim",
@@ -223,3 +223,85 @@ def test_run_simulation_handles_many_snapshots_without_in_clause_limit(db, tmp_p
     # No prices were seeded so engine inputs are missing — n_rows=0
     # but the run completes (no exception).
     assert summary["n_rows"] == 0
+
+
+def test_run_simulation_regime_density_orthogonal(db, tmp_path):
+    """prematch + latest must pick the most recent UPCOMING tick per
+    event, not the global head — which might be ENDED."""
+    # Event with 3 snapshots: 2 prematch + 1 live (head).
+    db.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES ('M', 'A', 'B', '2026-05-22T18:30:00Z')",
+    )
+    inserts = [
+        ("2026-05-22T17:00:00Z", "UPCOMING"),
+        ("2026-05-22T17:30:00Z", "UPCOMING"),  # latest prematch
+        ("2026-05-22T18:35:00Z", "STARTED"),
+    ]
+    snap_ids = {}
+    for ts, status in inserts:
+        cur = db.execute(
+            "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+            "score_home, score_away, fetch_status) "
+            "VALUES (?, 'M', 'betpawa', ?, 0, 0, 'ok')",
+            (ts, status),
+        )
+        snap_ids[ts] = cur.lastrowid
+        # Seed minimum engine inputs at each ts so the engine produces output.
+        for mid, line, side, odds, prob in [
+            ("1x2_ft", 0.0, "home", 1.85, 0.54),
+            ("1x2_ft", 0.0, "draw", 3.40, 0.29),
+            ("1x2_ft", 0.0, "away", 4.20, 0.17),
+            ("over_under_ft", 2.5, "over",  1.85, 0.55),
+            ("over_under_ft", 2.5, "under", 1.95, 0.45),
+            ("next_goal_ft", 1.0, "home", 1.85, 0.54),
+            ("next_goal_ft", 1.0, "none", 8.50, 0.12),
+            ("next_goal_ft", 1.0, "away", 3.50, 0.34),
+        ]:
+            db.execute(
+                "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+                "market_id, line, side, odds, probability) "
+                "VALUES (?, 'M', ?, 'betpawa', ?, ?, ?, ?, ?)",
+                (snap_ids[ts], ts, mid, line, side, odds, prob),
+            )
+
+    default = configs.load_default(db)
+    run_id = runner.run_simulation(
+        db, config=default, regime="prematch", density="latest",
+        scope={"country": "", "league": "", "date": "", "search": ""},
+        csv_dir=tmp_path / "sim",
+    )
+    rows = db.execute(
+        "SELECT ts_utc FROM pricer_results WHERE run_id = ?", (run_id,),
+    ).fetchall()
+    # Should pick exactly the latest UPCOMING tick.
+    assert len(rows) == 1
+    assert rows[0]["ts_utc"] == "2026-05-22T17:30:00Z"
+
+
+def test_count_scope_returns_event_and_snapshot_counts(db):
+    """count_scope powers the simulator page's live preview counter."""
+    db.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES ('CS', 'A', 'B', '2026-05-22T18:30:00Z')",
+    )
+    for ts, status in [
+        ("2026-05-22T16:00:00Z", "UPCOMING"),
+        ("2026-05-22T17:00:00Z", "UPCOMING"),
+        ("2026-05-22T18:35:00Z", "STARTED"),
+    ]:
+        db.execute(
+            "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
+            "VALUES (?, 'CS', 'betpawa', ?, 'ok')",
+            (ts, status),
+        )
+    n_ev, n_snap = runner.count_scope(
+        db, "any", "all",
+        {"country": "", "league": "", "date": "", "search": ""},
+    )
+    assert n_ev == 1 and n_snap == 3
+    n_ev2, n_snap2 = runner.count_scope(
+        db, "prematch", "latest",
+        {"country": "", "league": "", "date": "", "search": ""},
+    )
+    assert n_ev2 == 1 and n_snap2 == 1

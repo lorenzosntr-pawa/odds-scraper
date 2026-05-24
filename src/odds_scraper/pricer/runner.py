@@ -43,29 +43,35 @@ _BOOK_PREFIXES = {
 }
 
 
-def _select_snapshot_ids(
-    conn: sqlite3.Connection, coverage: str, scope: dict,
-) -> list[int]:
-    """Return distinct snapshot ids in scope, ordered by event_id then ts.
+VALID_REGIMES = ("any", "prematch", "live")
+VALID_DENSITIES = ("all", "latest")
 
-    coverage:
-      'all'      — every snapshot for events that match scope
-      'latest'   — only the most recent snapshot per event
+
+def _select_snapshot_ids(
+    conn: sqlite3.Connection,
+    regime: str,
+    density: str,
+    scope: dict,
+) -> list[tuple[int, str, str]]:
+    """Return [(snapshot_id, event_id, ts_utc), ...] for the run's scope.
+
+    `regime` filters snapshot-level status:
+      'any'      — no regime filter
       'prematch' — UPCOMING snapshots only
       'live'     — STARTED snapshots only
+
+    `density` picks the per-event sampling:
+      'all'      — every snapshot in scope
+      'latest'   — only the most recent snapshot per event WITHIN the
+                   regime, so e.g. (prematch, latest) picks the last
+                   pre-kickoff tick per event.
     """
-    status = scope.get("status") or ""
     where_extra: list[str] = []
     params: list = []
-    if coverage in ("prematch", "live"):
-        where_extra.append("s.status = ?")
-        params.append("UPCOMING" if coverage == "prematch" else "STARTED")
-    if status == "live":
-        where_extra.append("s.status = 'STARTED'")
-    elif status == "upcoming":
+    if regime == "prematch":
         where_extra.append("s.status = 'UPCOMING'")
-    elif status == "ended":
-        where_extra.append("s.status = 'ENDED'")
+    elif regime == "live":
+        where_extra.append("s.status = 'STARTED'")
     if scope.get("country"):
         where_extra.append("e.country_id = ?")
         params.append(scope["country"])
@@ -74,11 +80,21 @@ def _select_snapshot_ids(
         params.append(scope["league"])
     where_clause = " AND " + " AND ".join(where_extra) if where_extra else ""
 
-    if coverage == "latest":
+    if density == "latest":
+        # `latest` CTE is regime-aware: pick the MAX(ts_utc) per event
+        # AMONG snapshots that match the regime, not the global head
+        # which might be ENDED while the user asked for prematch.
+        regime_filter = ""
+        if regime == "prematch":
+            regime_filter = "WHERE status = 'UPCOMING'"
+        elif regime == "live":
+            regime_filter = "WHERE status = 'STARTED'"
         sql = f"""
             WITH latest AS (
                 SELECT event_id, MAX(ts_utc) AS max_ts
-                FROM snapshots GROUP BY event_id
+                FROM snapshots
+                {regime_filter}
+                GROUP BY event_id
             )
             SELECT DISTINCT s.id, s.event_id, s.ts_utc
             FROM snapshots s
@@ -95,10 +111,6 @@ def _select_snapshot_ids(
             WHERE 1=1 {where_clause}
             ORDER BY s.event_id, s.ts_utc
         """
-    # Return (id, event_id, ts_utc) tuples — the caller needs all three.
-    # The SQL already selects them; returning the full tuple avoids a
-    # second `WHERE id IN (...)` query that for large runs (thousands
-    # of snapshots) blows SQLite's variable-count limit.
     return [(row[0], row[1], row[2]) for row in conn.execute(sql, params).fetchall()]
 
 
@@ -150,6 +162,17 @@ def _score_for_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> tuple[int
 _PROGRESS_BATCH = 50  # update n_done after every N processed ticks
 
 
+def count_scope(
+    conn: sqlite3.Connection, regime: str, density: str, scope: dict,
+) -> tuple[int, int]:
+    """Quick (n_events, n_snapshots) preview for the simulator page.
+    Runs the same selection as `run_simulation` would but skips the
+    engine work. Used to surface "X events / Y ticks in scope" so the
+    user knows the size before hitting Run."""
+    snaps = _select_snapshot_ids(conn, regime, density, scope)
+    return len({ev for (_id, ev, _ts) in snaps}), len(snaps)
+
+
 def is_run_in_progress(conn: sqlite3.Connection) -> bool:
     """True iff any pricer_runs row currently has state='running'.
 
@@ -165,7 +188,8 @@ def run_simulation(
     conn: sqlite3.Connection,
     *,
     config: config_mod.Profile,
-    coverage: str,
+    regime: str = "any",
+    density: str = "all",
     scope: dict,
     csv_dir: Path,
 ) -> int:
@@ -179,16 +203,26 @@ def run_simulation(
     exception propagates to the caller so background-task plumbing
     can log it).
 
-    `coverage` in {'all', 'latest', 'prematch', 'live'}.
-    `scope` carries the filter selections so a run can be reproduced.
+    `regime`: 'any' / 'prematch' / 'live'. Filters snapshot status.
+    `density`: 'all' / 'latest'. Picks all matching snapshots or only
+    the latest per event within the regime.
+    `scope`: country / league / date / search filters.
+
+    Stored on the pricer_runs row in `coverage` (regime) + `density`
+    columns for History display.
     """
-    snapshots = _select_snapshot_ids(conn, coverage, scope)
+    if regime not in VALID_REGIMES:
+        raise ValueError(f"unknown regime {regime!r}")
+    if density not in VALID_DENSITIES:
+        raise ValueError(f"unknown density {density!r}")
+    snapshots = _select_snapshot_ids(conn, regime, density, scope)
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     cur = conn.execute(
-        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
-        "n_events, n_rows, csv_path, state, n_total, n_done, started_at) "
-        "VALUES (?, ?, ?, ?, 0, 0, '', 'running', ?, 0, ?)",
-        (now_iso, config.id, coverage, json.dumps(scope),
+        "INSERT INTO pricer_runs (created_at, config_id, coverage, density, "
+        "scope_json, n_events, n_rows, csv_path, state, n_total, n_done, "
+        "started_at) "
+        "VALUES (?, ?, ?, ?, ?, 0, 0, '', 'running', ?, 0, ?)",
+        (now_iso, config.id, regime, density, json.dumps(scope),
          len(snapshots), now_iso),
     )
     run_id = cur.lastrowid
