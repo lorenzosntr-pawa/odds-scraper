@@ -154,13 +154,18 @@ class EventWatcher:
                     rows, tick_score,
                 )
             except asyncio.TimeoutError:
+                # Skip writing a sentinel on resolver/collector timeout.
+                # The empty sentinel would become the head snapshot and
+                # blank out the home-page card; leaving the previous
+                # good tick as head keeps the UI populated until the
+                # next successful tick. The reaper only fires on
+                # STARTED + stale_head, so UPCOMING events that keep
+                # timing out won't be false-reaped. For STARTED events,
+                # head-staleness still triggers the reaper at 10 min.
                 log.warning(
                     "resolver/collector timed out for %s after %ds — "
-                    "writing sentinel and continuing",
+                    "skipping tick, previous head remains",
                     self.event_bp_id, self.cfg.resolver_timeout_seconds,
-                )
-                await self._writer.append(
-                    self._sentinel_rows("resolver/collector timed out"),
                 )
             except Exception:  # noqa: BLE001
                 log.exception("collector/writer crash for %s", self.event_bp_id)
