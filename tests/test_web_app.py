@@ -1016,3 +1016,38 @@ def test_event_detail_pill_links_preserve_from_param(client: TestClient):
     assert pill_hrefs, "expected at least one pill anchor on the detail page"
     for href in pill_hrefs:
         assert "from=live" in href, f"pill href missing from=live: {href}"
+
+
+def test_event_detail_history_shows_sim_only_rows_when_no_book_quoted(db_path: Path):
+    """Live event where neither BP nor SB quote 1UP/2UP (B9J/BW skipped
+    in live regime), but the engine still computed OUR from the basis
+    book's 1X2+OU+FTTS. The history table must still show those ticks
+    with the SIM column populated even though no book has prices."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    # Two live snapshots (no prices for 1UP/2UP), plus pricer_live_results
+    # rows for the same timestamps.
+    for ts in ("2026-05-22T19:30:00Z", "2026-05-22T19:31:30Z"):
+        cur = conn.execute(
+            "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+            "match_minute, score_home, score_away, fetch_status) "
+            "VALUES (?, 'E1', 'betpawa', 'STARTED', 33, 1, 0, 'ok')",
+            (ts,),
+        )
+        conn.execute(
+            "INSERT INTO pricer_live_results "
+            "(event_id, ts_utc, basis_used, "
+            " our_1up_home_capped, our_1up_away_capped, "
+            " our_p_home_1, our_p_away_1) VALUES "
+            "(?, ?, 'bp', 1.42, 4.05, 0.68, 0.21)",
+            ("E1", ts),
+        )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    r = client.get("/events/E1?market=1x2_1up_ft")
+    assert r.status_code == 200
+    body = r.text
+    # SIM column header AND at least one SIM cell with the computed odds.
+    assert 'data-bookmaker="sim"' in body
+    assert "1.42" in body
+    # The history row's ts shows up
+    assert "2026-05-22T19:30:00Z" in body or "2026-05-22T19:31:30Z" in body

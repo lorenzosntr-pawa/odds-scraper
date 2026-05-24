@@ -448,6 +448,33 @@ def _build_event_detail(
     our_by_ts = queries.get_our_history_for_event(
         conn, ev_row["id"], market_id,
     )
+    # If OUR has rows at timestamps that have NO prices for this market
+    # (typical for live 1UP / 2UP: BP/SB often don't quote them live,
+    # B9J/BW are skipped in the live regime, so the prices table is
+    # empty for that market — but the engine still computed OUR from
+    # the basis book's 1X2+OU+FTTS), backfill empty buckets so the row
+    # appears in the timeline carrying just SIM.
+    missing_ts = [ts for ts in our_by_ts if ts not in bucket]
+    if missing_ts:
+        placeholders = ",".join("?" * len(missing_ts))
+        meta_rows = conn.execute(
+            f"SELECT ts_utc, MAX(status) AS status, "
+            f"       MAX(match_minute) AS match_minute, "
+            f"       MAX(score_home) AS score_home, "
+            f"       MAX(score_away) AS score_away "
+            f"FROM snapshots WHERE event_id = ? AND ts_utc IN ({placeholders}) "
+            f"GROUP BY ts_utc",
+            (ev_row["id"], *missing_ts),
+        ).fetchall()
+        for m in meta_rows:
+            bucket[m["ts_utc"]] = {
+                "cells": {},
+                "minute": m["match_minute"],
+                "score_home": m["score_home"],
+                "score_away": m["score_away"],
+                "status": m["status"] or "",
+            }
+
     for ts, our in our_by_ts.items():
         sim_cells: dict[str, PriceCell] = {}
         if our["home_odds"] is not None:
