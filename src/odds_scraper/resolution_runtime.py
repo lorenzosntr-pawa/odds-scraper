@@ -56,6 +56,21 @@ class _Bet9jaPrematchMapCache:
                 self._built_at = now
                 log.info("bet9ja prematch map built: %d entries", len(self._mapping or {}))
                 return self._mapping or {}
+            except asyncio.CancelledError:
+                # Watcher's resolver-timeout cancelled us mid-build (the
+                # bet9ja walk legitimately takes >90s on cold start).
+                # Without recording a cooldown here the lock releases,
+                # the next event arrives, sees no cached mapping + no
+                # cooldown, and triggers ANOTHER full build that also
+                # gets cancelled — a 90s-per-event cascade. Set the
+                # cooldown then re-raise so the cancellation still
+                # propagates to the watcher's TimeoutError handler.
+                self._cooldown_until = now + 1800
+                log.warning(
+                    "bet9ja prematch map build cancelled mid-flight — "
+                    "30 min cooldown so other events don't pile up behind it",
+                )
+                raise
             except Exception as e:  # noqa: BLE001
                 # 30-minute cooldown after any failure to avoid hammering.
                 self._cooldown_until = now + 1800

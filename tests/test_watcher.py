@@ -528,14 +528,16 @@ async def test_status_poll_timeout_writes_sentinel_and_continues(monkeypatch):
     assert call["n"] >= 2
 
 
-async def test_resolver_timeout_writes_sentinel_and_continues(cfg, monkeypatch):
-    """A resolver/collector hang must also time out and write a sentinel
-    instead of blocking the watcher loop indefinitely."""
+async def test_resolver_timeout_skips_writing_sentinel(cfg, monkeypatch):
+    """A resolver/collector hang must time out (so the watcher doesn't
+    block forever) but must NOT write an empty sentinel snapshot —
+    that sentinel would become the head and blank out the card.
+    The previous-tick snapshot stays as head; the reaper catches
+    genuinely-dead watchers via its own 10-min staleness criterion."""
     import asyncio
     monkeypatch.setattr(
         "odds_scraper.watcher.asyncio.sleep", AsyncMock(return_value=None),
     )
-    # cfg has resolver_timeout_seconds default = 90; override to 1 for speed.
     fast_cfg = WatcherConfig(
         prematch_seconds=cfg.prematch_seconds,
         live_seconds=cfg.live_seconds,
@@ -570,13 +572,18 @@ async def test_resolver_timeout_writes_sentinel_and_continues(cfg, monkeypatch):
     watcher = EventWatcher(
         "33660318", fast_cfg, bp_client, collector, writer, hanging_resolver,
     )
-    await watcher.run()
+    await asyncio.wait_for(watcher.run(), timeout=10.0)
 
-    # The first iteration's resolver hung past timeout — a sentinel
-    # with the timeout reason should have been written. Second
-    # iteration's detail is ENDED so the watcher exits.
-    errors = []
+    # Walk every appended snapshot batch. No batch should carry a
+    # "resolver/collector timed out" sentinel — the timeout tick is
+    # silent in the snapshot stream. The ENDED batch on the second
+    # iteration still writes normally.
+    timed_out_writes = 0
     for c in writer.append.call_args_list:
         for snap in c.args[0]:
-            errors.append(snap.fetch_error)
-    assert any("timed out" in e for e in errors)
+            if "timed out" in (snap.fetch_error or ""):
+                timed_out_writes += 1
+    assert timed_out_writes == 0
+    # And we got at least one real snapshot (the ENDED tick).
+    assert writer.append.call_count >= 1
+    assert call["n"] >= 2
