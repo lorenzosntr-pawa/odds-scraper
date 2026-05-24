@@ -49,6 +49,13 @@ class WatcherConfig:
     # huge gaps. Kickoff-driven cadence guarantees we're already
     # polling every `live_seconds` when the whistle blows.
     live_lead_seconds: int = 300
+    # Hard timeout on each network call inside one tick (status poll +
+    # resolver + collector). bookieskit's underlying httpx client has
+    # no default timeout, so when a bookmaker API stalls the await
+    # never returns and the watcher sleeps indefinitely — observed in
+    # production as 90-minute wall-clock gaps right around kickoff.
+    # 30s is generous (normal call is <2s) but bounded.
+    poll_timeout_seconds: int = 30
 
 
 def _utcnow() -> datetime:
@@ -108,8 +115,14 @@ class EventWatcher:
                 self._last_status = status
 
             try:
-                resolved, sr_id, genius_id = await self._resolver(detail)
-                rows = await self._collector.collect(detail, resolved, sr_id, genius_id)
+                resolved, sr_id, genius_id = await asyncio.wait_for(
+                    self._resolver(detail),
+                    timeout=self.cfg.poll_timeout_seconds,
+                )
+                rows = await asyncio.wait_for(
+                    self._collector.collect(detail, resolved, sr_id, genius_id),
+                    timeout=self.cfg.poll_timeout_seconds,
+                )
                 await self._writer.append(rows)
                 self._log_tick_summary(rows)
                 # Carry forward the last observed minute/score from any
@@ -132,6 +145,15 @@ class EventWatcher:
                     rows[0].event_bp_id,
                     rows[0].ts_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     rows, tick_score,
+                )
+            except asyncio.TimeoutError:
+                log.warning(
+                    "resolver/collector timed out for %s after %ds — "
+                    "writing sentinel and continuing",
+                    self.event_bp_id, self.cfg.poll_timeout_seconds,
+                )
+                await self._writer.append(
+                    self._sentinel_rows("resolver/collector timed out"),
                 )
             except Exception:  # noqa: BLE001
                 log.exception("collector/writer crash for %s", self.event_bp_id)
@@ -194,7 +216,16 @@ class EventWatcher:
             if delay:
                 await asyncio.sleep(delay)
             try:
-                return await self._bp.get_event_detail(self.event_bp_id)
+                return await asyncio.wait_for(
+                    self._bp.get_event_detail(self.event_bp_id),
+                    timeout=self.cfg.poll_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                log.warning(
+                    "status poll for %s timed out after %ds (attempt %d)",
+                    self.event_bp_id, self.cfg.poll_timeout_seconds,
+                    attempt + 1,
+                )
             except Exception as e:  # noqa: BLE001
                 log.warning(
                     "status poll for %s failed (attempt %d): %s",
