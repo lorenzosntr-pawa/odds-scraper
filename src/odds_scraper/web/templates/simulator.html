@@ -10,6 +10,26 @@
     </div>
   </div>
 
+  {% if running_run %}
+    <div class="sim-section sim-running" data-run-id="{{ running_run.id }}">
+      <div class="sim-section-h">⟳ Run in progress — #{{ running_run.id }}</div>
+      <p class="filter-lbl" id="sim-progress-label">
+        {{ running_run.n_done }} / {{ running_run.n_total }} ticks processed
+      </p>
+      <div class="sim-progress-bar"><div class="sim-progress-fill" id="sim-progress-fill"
+            style="width: {% if running_run.n_total %}{{ (100 * running_run.n_done / running_run.n_total)|round|int }}{% else %}0{% endif %}%"></div></div>
+      <p class="filter-lbl" style="color:#888;margin-top:6px">
+        Run started at {{ running_run.started_at }}. The page will refresh
+        automatically when it finishes.
+      </p>
+    </div>
+  {% elif busy %}
+    <div class="sim-section" style="border-color:#fbbf24">
+      <div class="sim-section-h" style="color:#fbbf24">Another run is already in progress</div>
+      <p class="filter-lbl">Reload the page to see its progress.</p>
+    </div>
+  {% endif %}
+
   <form method="post" action="/simulator/runs" class="sim-form">
     <div class="sim-section">
       <div class="sim-section-h">1 · Event scope</div>
@@ -55,7 +75,11 @@
         <label><input type="radio" name="coverage" value="prematch"> prematch only</label>
         <label><input type="radio" name="coverage" value="live"> live only</label>
       </div>
-      <button type="submit" class="chip on" style="padding:6px 16px;cursor:pointer">Run simulation</button>
+      <button type="submit" class="chip on"
+              style="padding:6px 16px;cursor:pointer"
+              {% if running_run %}disabled title="another run is already in flight"{% endif %}>
+        Run simulation
+      </button>
     </div>
   </form>
 
@@ -99,5 +123,37 @@
   .sim-section { margin: 14px 0; padding: 10px; background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 4px; }
   .sim-section-h { color: #fbbf24; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
   .sim-form label { color: #d1d5db; font-size: 11px; margin-right: 8px; }
+  .sim-running { border-color: #fbbf24; }
+  .sim-progress-bar { width: 100%; height: 8px; background: #1a1a1a; border-radius: 4px; overflow: hidden; margin: 6px 0; }
+  .sim-progress-fill { height: 100%; background: #fbbf24; transition: width 1s linear; }
 </style>
+
+{% if running_run %}
+<script>
+  (function () {
+    const runId = {{ running_run.id }};
+    const fill  = document.getElementById('sim-progress-fill');
+    const label = document.getElementById('sim-progress-label');
+    let timer = null;
+    async function poll() {
+      try {
+        const r = await fetch(`/simulator/runs/${runId}/status`);
+        if (!r.ok) return;
+        const s = await r.json();
+        if (fill) fill.style.width = (s.progress_pct || 0) + '%';
+        if (label) label.textContent =
+          (s.n_done || 0) + ' / ' + (s.n_total || 0) + ' ticks processed';
+        if (s.state !== 'running') {
+          clearInterval(timer);
+          // Brief settle so the final tick paints, then refresh to show
+          // the new run in History.
+          setTimeout(() => location.reload(), 500);
+        }
+      } catch (e) { /* swallow, next tick retries */ }
+    }
+    timer = setInterval(poll, 2000);
+    poll();
+  })();
+</script>
+{% endif %}
 {% endblock %}

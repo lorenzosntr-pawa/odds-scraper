@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from odds_scraper.pricer import configs as config_mod, runner
+
+log = logging.getLogger(__name__)
 
 
 # Margin constants are stored as (slope, intercept) tuples. Form fields
@@ -31,16 +35,24 @@ def register_pricer_routes(
     csv_dir = db_path.parent / "sim"
 
     @app.get("/simulator", response_class=HTMLResponse)
-    async def simulator_page(request: Request):
+    async def simulator_page(request: Request, busy: int = 0):
         profiles = config_mod.list_profiles(conn)
         last_row = conn.execute(
-            "SELECT id, created_at, coverage, n_events, n_rows "
+            "SELECT id, created_at, coverage, n_events, n_rows, state, "
+            "       n_done, n_total "
             "FROM pricer_runs ORDER BY id DESC LIMIT 1",
         ).fetchone()
         last_run = dict(last_row) if last_row else None
+        # Running run drives the progress bar at the top of the page.
+        running_row = conn.execute(
+            "SELECT id, state, n_done, n_total, started_at "
+            "FROM pricer_runs WHERE state = 'running' "
+            "ORDER BY id DESC LIMIT 1",
+        ).fetchone()
+        running_run = dict(running_row) if running_row else None
         history_rows = conn.execute(
             "SELECT r.id, r.created_at, c.name AS profile_name, r.coverage, "
-            "       r.n_events, r.n_rows "
+            "       r.n_events, r.n_rows, r.state "
             "FROM pricer_runs r LEFT JOIN pricer_configs c ON c.id = r.config_id "
             "ORDER BY r.id DESC LIMIT 20"
         ).fetchall()
@@ -49,9 +61,38 @@ def register_pricer_routes(
             {
                 "profiles": profiles,
                 "last_run": last_run,
+                "running_run": running_run,
+                "busy": bool(busy),
                 "history": [dict(r) for r in history_rows],
             },
         )
+
+    # Serialises check + insert so two concurrent POSTs can't both
+    # slip past the "no running run" check and start parallel work.
+    post_lock = asyncio.Lock()
+
+    def _run_in_thread(
+        profile_id: int, coverage: str, scope: dict,
+    ) -> None:
+        """Runs in the default executor (a background thread). Each
+        invocation opens its own write connection so we don't share
+        sqlite handles across threads."""
+        write_conn = sqlite3.connect(str(db_path), isolation_level=None)
+        write_conn.row_factory = sqlite3.Row
+        try:
+            profile = config_mod.load_by_id(write_conn, profile_id)
+            if profile is None:
+                log.warning("background sim: profile %s vanished", profile_id)
+                return
+            try:
+                runner.run_simulation(
+                    write_conn, config=profile,
+                    coverage=coverage, scope=scope, csv_dir=csv_dir,
+                )
+            except Exception:
+                log.exception("background simulation crashed")
+        finally:
+            write_conn.close()
 
     @app.post("/simulator/runs")
     async def post_run(
@@ -65,21 +106,45 @@ def register_pricer_routes(
     ):
         if coverage not in ("all", "latest", "prematch", "live"):
             raise HTTPException(400, f"unknown coverage {coverage!r}")
-        write_conn = sqlite3.connect(str(db_path), isolation_level=None)
-        write_conn.row_factory = sqlite3.Row
-        try:
-            profile = config_mod.load_by_id(write_conn, config_id)
+        async with post_lock:
+            if runner.is_run_in_progress(conn):
+                # Another run is already executing — refuse politely and
+                # let the page show the progress bar of the existing run.
+                return RedirectResponse(url="/simulator?busy=1", status_code=303)
+            # Validate the config before spawning the task so the user
+            # gets immediate feedback on a bad profile id.
+            probe_conn = sqlite3.connect(str(db_path), isolation_level=None)
+            probe_conn.row_factory = sqlite3.Row
+            try:
+                profile = config_mod.load_by_id(probe_conn, config_id)
+            finally:
+                probe_conn.close()
             if profile is None:
                 raise HTTPException(400, f"unknown config_id {config_id}")
             scope = {"status": status, "country": country, "league": league,
                      "date": date, "search": search}
-            run_id = runner.run_simulation(
-                write_conn, config=profile,
-                coverage=coverage, scope=scope, csv_dir=csv_dir,
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(
+                None, _run_in_thread, config_id, coverage, scope,
             )
-        finally:
-            write_conn.close()
-        return RedirectResponse(url=f"/simulator#run-{run_id}", status_code=303)
+        return RedirectResponse(url="/simulator", status_code=303)
+
+    @app.get("/simulator/runs/{run_id}/status")
+    async def get_run_status(run_id: int):
+        row = conn.execute(
+            "SELECT state, n_done, n_total, n_rows, n_events, "
+            "       started_at, finished_at, csv_path "
+            "FROM pricer_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, f"no such run {run_id}")
+        d = dict(row)
+        d["progress_pct"] = (
+            int(100 * d["n_done"] / d["n_total"])
+            if d["n_total"] else (100 if d["state"] == "done" else 0)
+        )
+        return JSONResponse(d)
 
     @app.get("/simulator/profiles", response_class=HTMLResponse)
     async def profiles_page(request: Request):

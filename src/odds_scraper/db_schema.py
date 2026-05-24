@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Callable
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _BASE_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -206,6 +206,22 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     # scraped snapshots so the detail page can show OUR in the
     # historical timeline without re-running a simulator.
     5: lambda conn: _apply_v5_pricer_live_results(conn),
+    # v6: progress tracking + single-flight on pricer_runs.
+    #   state: 'running' | 'done' | 'failed' — the simulator UI uses it
+    #          to show a progress bar while a run is in flight and to
+    #          refuse a second POST while one is already running.
+    #   n_done / n_total: per-tick progress counters; the runner
+    #          updates n_done every batch_size ticks so the polling
+    #          status endpoint can show a percentage.
+    #   started_at / finished_at: wall-clock timestamps so the UI can
+    #          show "running for 12m" / "finished 3s ago".
+    6: lambda conn: _add_columns_if_missing(conn, "pricer_runs", [
+        ("state",       "TEXT NOT NULL DEFAULT 'done'"),
+        ("n_done",      "INTEGER NOT NULL DEFAULT 0"),
+        ("n_total",     "INTEGER NOT NULL DEFAULT 0"),
+        ("started_at",  "TEXT"),
+        ("finished_at", "TEXT"),
+    ]),
 }
 
 
