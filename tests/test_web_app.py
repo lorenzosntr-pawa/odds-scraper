@@ -217,7 +217,7 @@ def test_event_detail_active_line_pill_is_marked(db_path: Path):
     assert 'class="line-pill active"' in body
     # Line-pill for 2.5 does NOT.
     import re
-    m = re.search(r'href="/events/E1\?market=ou_2\.5"[^>]*class="line-pill([^"]*)"', body)
+    m = re.search(r'href="/events/E1\?market=ou_2\.5[^"]*"[^>]*class="line-pill([^"]*)"', body)
     assert m is not None
     assert "active" not in m.group(1)
 
@@ -995,3 +995,24 @@ def test_event_detail_unknown_from_sanitized_to_upcoming(client: TestClient):
     r = client.get("/events/E1?from=garbage")
     assert r.status_code == 200
     assert 'href="/?status=upcoming"' in r.text
+
+
+def test_event_detail_pill_links_preserve_from_param(client: TestClient):
+    """Clicking a market family or line pill on the detail page must
+    keep the `from` query param — otherwise the back link forgets which
+    tab the user came from after switching market.
+
+    Regression: user reported back-from-LIVE landing on UPCOMING after
+    clicking 1up/2up pills on a live event's detail page."""
+    r = client.get("/events/E1?from=live")
+    assert r.status_code == 200
+    body = r.text
+    # Every family pill anchor must include from=live
+    import re
+    pill_hrefs = re.findall(r'<a[^>]*class="family-pill[^"]*"[^>]*href="([^"]+)"', body)
+    pill_hrefs += re.findall(r'<a[^>]*class="line-pill[^"]*"[^>]*href="([^"]+)"', body)
+    # Anchor patterns may render in either order: href before class or class before href.
+    pill_hrefs += re.findall(r'<a[^>]*href="([^"]+)"[^>]*class="(?:family|line)-pill', body)
+    assert pill_hrefs, "expected at least one pill anchor on the detail page"
+    for href in pill_hrefs:
+        assert "from=live" in href, f"pill href missing from=live: {href}"
