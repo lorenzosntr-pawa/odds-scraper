@@ -15,6 +15,7 @@ class CadenceConfig:
     watchdog_after_kickoff_seconds: int
     live_lead_seconds: int = 300
     poll_timeout_seconds: int = 30
+    resolver_timeout_seconds: int = 90
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,9 @@ def load_config(path: Path | str) -> AppConfig:
             watchdog_after_kickoff_seconds=int(cad["watchdog_after_kickoff_seconds"]),
             live_lead_seconds=int(cad.get("live_lead_seconds", 300)),
             poll_timeout_seconds=int(cad.get("poll_timeout_seconds", 30)),
+            resolver_timeout_seconds=int(
+                cad.get("resolver_timeout_seconds", 90),
+            ),
         ),
         output=OutputConfig(
             db_path=str(out.get("db_path", "data/odds.db")),

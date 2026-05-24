@@ -41,12 +41,17 @@ cadence:
   # we don't miss the first 5-15 minutes of in-play while waiting for
   # BetPawa to flip its `live=true` status flag.
   live_lead_seconds: 300
-  # Hard timeout per network call inside one tick (status poll +
-  # resolver + collector). Without this the watcher can hang forever
-  # on a stalled bookmaker API — observed 90-min wall-clock gaps in
-  # production around kickoff when BP's API stalls during the live
-  # transition.
+  # Hard timeout on the BP status poll inside one tick. Without this
+  # the watcher can hang forever on a stalled BP API — observed 90-min
+  # wall-clock gaps around kickoff when BP's API stalls during the
+  # live transition.
   poll_timeout_seconds: 30
+  # Hard timeout on the resolver+collector path. Higher than the
+  # status poll because the resolver lazily builds per-tournament
+  # prematch event maps for SB/B9J/BW on the first call. At startup
+  # with 100+ watchers racing to resolve at once the map builds
+  # queue up; 90s lets that settle without sentinels cascading.
+  resolver_timeout_seconds: 90
   status_retry_backoff_seconds: [5, 15, 45]
   watchdog_after_kickoff_seconds: 10800
 output:
