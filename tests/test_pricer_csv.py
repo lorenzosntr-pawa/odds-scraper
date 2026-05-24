@@ -73,3 +73,47 @@ def test_write_run_csv_creates_dirs_and_handles_empty_run(db, tmp_path):
         lines = f.read().splitlines()
     assert len(lines) == 1  # header only
     assert "event_id" in lines[0]
+
+
+def test_write_run_csv_includes_tick_state(db, tmp_path):
+    """CSV must surface per-tick regime + minute + score so a reader can
+    interpret rows without joining back to the DB."""
+    cur = db.execute(
+        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
+        "n_events, n_rows, csv_path) "
+        "VALUES ('2026-05-23T10:00:00Z', 1, 'all', '{}', 1, 1, 'sim/run_0003.csv')",
+    )
+    run_id = cur.lastrowid
+    db.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES ('LIV', 'Liv', 'Ars', '2026-05-22T18:30:00Z')",
+    )
+    cur = db.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+        "match_minute, score_home, score_away, fetch_status) "
+        "VALUES ('2026-05-22T19:05:00Z', 'LIV', 'betpawa', 'STARTED', "
+        "34, 1, 0, 'ok')",
+    )
+    snap_id = cur.lastrowid
+    db.execute(
+        "INSERT INTO pricer_results (run_id, snapshot_id, event_id, ts_utc, "
+        "basis_used, our_2up_home_capped) "
+        "VALUES (?, ?, 'LIV', '2026-05-22T19:05:00Z', 'bp', 1.85)",
+        (run_id, snap_id),
+    )
+    out = tmp_path / "run_0003.csv"
+    csv_export.write_run_csv(db, run_id, out)
+    with open(out, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["status"] == "STARTED"
+    assert r["match_minute"] == "34"
+    assert r["score_home"] == "1"
+    assert r["score_away"] == "0"
+    # Header order — tick-state columns sit between ts_utc and basis_used.
+    with open(out, encoding="utf-8") as f:
+        header = f.readline().strip().split(",")
+    assert header.index("status") > header.index("ts_utc")
+    assert header.index("status") < header.index("basis_used")
