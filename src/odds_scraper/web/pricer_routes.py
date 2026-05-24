@@ -38,8 +38,8 @@ def register_pricer_routes(
     async def simulator_page(request: Request, busy: int = 0):
         profiles = config_mod.list_profiles(conn)
         last_row = conn.execute(
-            "SELECT id, created_at, coverage, n_events, n_rows, state, "
-            "       n_done, n_total "
+            "SELECT id, created_at, coverage, density, n_events, n_rows, "
+            "       state, n_done, n_total "
             "FROM pricer_runs ORDER BY id DESC LIMIT 1",
         ).fetchone()
         last_run = dict(last_row) if last_row else None
@@ -51,8 +51,8 @@ def register_pricer_routes(
         ).fetchone()
         running_run = dict(running_row) if running_row else None
         history_rows = conn.execute(
-            "SELECT r.id, r.created_at, c.name AS profile_name, r.coverage, "
-            "       r.n_events, r.n_rows, r.state "
+            "SELECT r.id, r.created_at, c.name AS profile_name, "
+            "       r.coverage, r.density, r.n_events, r.n_rows, r.state "
             "FROM pricer_runs r LEFT JOIN pricer_configs c ON c.id = r.config_id "
             "ORDER BY r.id DESC LIMIT 20"
         ).fetchall()
@@ -72,7 +72,7 @@ def register_pricer_routes(
     post_lock = asyncio.Lock()
 
     def _run_in_thread(
-        profile_id: int, coverage: str, scope: dict,
+        profile_id: int, regime: str, density: str, scope: dict,
     ) -> None:
         """Runs in the default executor (a background thread). Each
         invocation opens its own write connection so we don't share
@@ -87,7 +87,8 @@ def register_pricer_routes(
             try:
                 runner.run_simulation(
                     write_conn, config=profile,
-                    coverage=coverage, scope=scope, csv_dir=csv_dir,
+                    regime=regime, density=density,
+                    scope=scope, csv_dir=csv_dir,
                 )
             except Exception:
                 log.exception("background simulation crashed")
@@ -97,15 +98,17 @@ def register_pricer_routes(
     @app.post("/simulator/runs")
     async def post_run(
         config_id: int = Form(...),
-        coverage:  str = Form(...),
-        status:    str = Form(""),
+        regime:    str = Form("any"),
+        density:   str = Form("all"),
         country:   str = Form(""),
         league:    str = Form(""),
         date:      str = Form(""),
         search:    str = Form(""),
     ):
-        if coverage not in ("all", "latest", "prematch", "live"):
-            raise HTTPException(400, f"unknown coverage {coverage!r}")
+        if regime not in runner.VALID_REGIMES:
+            raise HTTPException(400, f"unknown regime {regime!r}")
+        if density not in runner.VALID_DENSITIES:
+            raise HTTPException(400, f"unknown density {density!r}")
         async with post_lock:
             if runner.is_run_in_progress(conn):
                 # Another run is already executing — refuse politely and
@@ -121,13 +124,33 @@ def register_pricer_routes(
                 probe_conn.close()
             if profile is None:
                 raise HTTPException(400, f"unknown config_id {config_id}")
-            scope = {"status": status, "country": country, "league": league,
+            scope = {"country": country, "league": league,
                      "date": date, "search": search}
             loop = asyncio.get_running_loop()
             loop.run_in_executor(
-                None, _run_in_thread, config_id, coverage, scope,
+                None, _run_in_thread, config_id, regime, density, scope,
             )
         return RedirectResponse(url="/simulator", status_code=303)
+
+    @app.get("/simulator/scope", response_class=HTMLResponse)
+    async def scope_preview(
+        regime: str = "any", density: str = "all",
+        country: str = "", league: str = "",
+        date: str = "", search: str = "",
+    ):
+        """Tiny HTMX-target endpoint: returns a single line like
+        '12 events · 3,400 ticks' so the form can show the size of
+        the scope as the user toggles radios."""
+        if regime not in runner.VALID_REGIMES or density not in runner.VALID_DENSITIES:
+            return HTMLResponse("<span class='filter-lbl'>invalid scope</span>")
+        scope = {"country": country, "league": league, "date": date, "search": search}
+        n_ev, n_snap = runner.count_scope(conn, regime, density, scope)
+        return HTMLResponse(
+            f'<span class="filter-lbl">'
+            f'<b style="color:#4ade80">{n_ev:,}</b> events &middot; '
+            f'<b style="color:#4ade80">{n_snap:,}</b> ticks in scope'
+            f'</span>'
+        )
 
     @app.get("/simulator/runs/{run_id}/status")
     async def get_run_status(run_id: int):

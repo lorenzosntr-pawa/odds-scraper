@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Callable
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _BASE_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -222,7 +222,24 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
         ("started_at",  "TEXT"),
         ("finished_at", "TEXT"),
     ]),
+    # v7: split the old one-shot "coverage" enum into two orthogonal
+    # dimensions — `coverage` now stores the regime (any/prematch/live,
+    # snapshot status filter); new `density` stores the per-event
+    # sampling (all / latest). Lets the user combine e.g. "prematch
+    # only, latest per event" which the previous single-radio shape
+    # couldn't express. Backfills existing rows so history stays
+    # readable: old 'all'/'latest' → regime='any' + density inferred;
+    # 'prematch'/'live' → keep as regime, density='all'.
+    7: lambda conn: _apply_v7_split_coverage(conn),
 }
+
+
+def _apply_v7_split_coverage(conn: sqlite3.Connection) -> None:
+    _add_columns_if_missing(conn, "pricer_runs", [
+        ("density", "TEXT NOT NULL DEFAULT 'all'"),
+    ])
+    conn.execute("UPDATE pricer_runs SET density = 'latest' WHERE coverage = 'latest'")
+    conn.execute("UPDATE pricer_runs SET coverage = 'any' WHERE coverage IN ('all', 'latest')")
 
 
 def _apply_v5_pricer_live_results(conn: sqlite3.Connection) -> None:

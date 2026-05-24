@@ -19,8 +19,7 @@
       <div class="sim-progress-bar"><div class="sim-progress-fill" id="sim-progress-fill"
             style="width: {% if running_run.n_total %}{{ (100 * running_run.n_done / running_run.n_total)|round|int }}{% else %}0{% endif %}%"></div></div>
       <p class="filter-lbl" style="color:#888;margin-top:6px">
-        Run started at {{ running_run.started_at }}. The page will refresh
-        automatically when it finishes.
+        Started {{ running_run.started_at }}. The page refreshes when it finishes.
       </p>
     </div>
   {% elif busy %}
@@ -32,27 +31,25 @@
 
   <form method="post" action="/simulator/runs" class="sim-form">
     <div class="sim-section">
-      <div class="sim-section-h">1 · Event scope</div>
-      <div class="filter-group">
-        <span class="filter-lbl">Status</span>
-        <label><input type="radio" name="status" value="upcoming" checked> upcoming</label>
-        <label><input type="radio" name="status" value="live"> live</label>
-        <label><input type="radio" name="status" value="ended"> ended</label>
-      </div>
+      <div class="sim-section-h">1 · Event scope <span class="filter-lbl">(filters which events to include)</span></div>
       <div class="filter-group">
         <span class="filter-lbl">Country</span>
-        <input class="filter-select" type="text" name="country" placeholder="country_id">
+        <input class="filter-select" type="text" name="country" placeholder="country_id"
+               hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="input changed delay:300ms">
         <span class="filter-lbl">League</span>
-        <input class="filter-select" type="text" name="league" placeholder="league_id">
+        <input class="filter-select" type="text" name="league" placeholder="league_id"
+               hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="input changed delay:300ms">
         <span class="filter-lbl">Date</span>
-        <input type="date" class="custom-hours" name="date">
+        <input type="date" class="custom-hours" name="date"
+               hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
         <span class="filter-lbl">Search</span>
-        <input class="search-input" type="search" name="search" placeholder="team">
+        <input class="search-input" type="search" name="search" placeholder="team"
+               hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="input changed delay:300ms">
       </div>
     </div>
 
     <div class="sim-section">
-      <div class="sim-section-h">2 · Config</div>
+      <div class="sim-section-h">2 · Config <span class="filter-lbl">(coefficient profile)</span></div>
       <div class="filter-group">
         <span class="filter-lbl">Profile</span>
         <select name="config_id" class="filter-select">
@@ -60,36 +57,63 @@
             <option value="{{ p.id }}">{{ p.name }}{% if p.is_default %} (default){% endif %}</option>
           {% endfor %}
         </select>
+        <a href="/simulator/profiles" class="filter-lbl" style="color:#fbbf24;margin-left:6px">Manage profiles →</a>
       </div>
-      <p class="filter-lbl" style="margin-top:6px;color:#888">
-        Need a different config? <a href="/simulator/profiles" style="color:#fbbf24">Manage profiles →</a>
-      </p>
     </div>
 
     <div class="sim-section">
-      <div class="sim-section-h">3 · Run</div>
-      <div class="filter-group">
-        <span class="filter-lbl">Coverage</span>
-        <label><input type="radio" name="coverage" value="all" checked> all snapshots</label>
-        <label><input type="radio" name="coverage" value="latest"> latest per event</label>
-        <label><input type="radio" name="coverage" value="prematch"> prematch only</label>
-        <label><input type="radio" name="coverage" value="live"> live only</label>
+      <div class="sim-section-h">3 · Run dimensions <span class="filter-lbl">(orthogonal — pick one in each group)</span></div>
+      <div class="sim-run-grid">
+        <div>
+          <div class="filter-lbl" style="margin-bottom:4px"><b>Regime</b> — snapshot status filter</div>
+          <div class="filter-group" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label><input type="radio" name="regime" value="any" checked
+                   hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>any</b> <span class="filter-lbl">— prematch + live + ended</span></label>
+            <label><input type="radio" name="regime" value="prematch"
+                   hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>prematch only</b> <span class="filter-lbl">— UPCOMING ticks</span></label>
+            <label><input type="radio" name="regime" value="live"
+                   hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>live only</b> <span class="filter-lbl">— STARTED ticks</span></label>
+          </div>
+        </div>
+        <div>
+          <div class="filter-lbl" style="margin-bottom:4px"><b>Density</b> — sampling per event</div>
+          <div class="filter-group" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label><input type="radio" name="density" value="all" checked
+                   hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>all snapshots</b> <span class="filter-lbl">— every tick in the regime</span></label>
+            <label><input type="radio" name="density" value="latest"
+                   hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>latest per event</b> <span class="filter-lbl">— last tick of the regime</span></label>
+          </div>
+        </div>
       </div>
-      <button type="submit" class="chip on"
-              style="padding:6px 16px;cursor:pointer"
-              {% if running_run %}disabled title="another run is already in flight"{% endif %}>
-        Run simulation
-      </button>
+
+      <div class="sim-run-bar">
+        <div id="scope-count" hx-get="/simulator/scope" hx-trigger="load" hx-include="closest form">
+          <span class="filter-lbl">computing scope…</span>
+        </div>
+        <button type="submit" class="chip on"
+                style="padding:6px 16px;cursor:pointer"
+                {% if running_run %}disabled title="another run is already in flight"{% endif %}>
+          Run simulation →
+        </button>
+      </div>
     </div>
   </form>
 
   <div class="sim-section">
-    <div class="sim-section-h">4 · Last run</div>
+    <div class="sim-section-h">Last run</div>
     {% if last_run %}
       <p class="filter-lbl">
-        Run #{{ last_run.id }} · {{ last_run.created_at }} · {{ last_run.coverage }} ·
-        {{ last_run.n_events }} events · {{ last_run.n_rows }} rows ·
-        <a href="/simulator/runs/{{ last_run.id }}/csv" style="color:#60a5fa">download CSV</a>
+        Run #{{ last_run.id }} · {{ last_run.created_at }}
+        · regime=<b>{{ last_run.coverage }}</b>
+        · density=<b>{{ last_run.density if last_run.density else 'all' }}</b>
+        · {{ last_run.n_events }} events · {{ last_run.n_rows }} rows
+        · state=<b>{{ last_run.state }}</b>
+        · <a href="/simulator/runs/{{ last_run.id }}/csv" style="color:#60a5fa">download CSV</a>
       </p>
     {% else %}
       <p class="filter-lbl">No runs yet.</p>
@@ -97,10 +121,14 @@
   </div>
 
   <div class="sim-section">
-    <div class="sim-section-h">5 · History</div>
-    <table class="history-table">
+    <div class="sim-section-h">History</div>
+    <table class="history-table" style="width:100%">
       <thead>
-        <tr><th>#</th><th>created</th><th>profile</th><th>coverage</th><th>events</th><th>rows</th><th>csv</th></tr>
+        <tr>
+          <th>#</th><th>created</th><th>profile</th>
+          <th>regime</th><th>density</th>
+          <th>events</th><th>rows</th><th>state</th><th>csv</th>
+        </tr>
       </thead>
       <tbody>
         {% for r in history %}
@@ -109,8 +137,10 @@
           <td>{{ r.created_at }}</td>
           <td>{{ r.profile_name }}</td>
           <td>{{ r.coverage }}</td>
+          <td>{{ r.density if r.density else 'all' }}</td>
           <td>{{ r.n_events }}</td>
           <td>{{ r.n_rows }}</td>
+          <td>{{ r.state }}</td>
           <td><a href="/simulator/runs/{{ r.id }}/csv" style="color:#60a5fa">csv</a></td>
         </tr>
         {% endfor %}
@@ -120,12 +150,30 @@
 </div>
 
 <style>
-  .sim-section { margin: 14px 0; padding: 10px; background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 4px; }
+  .sim-section { margin: 14px 0; padding: 10px 12px; background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 4px; }
   .sim-section-h { color: #fbbf24; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
   .sim-form label { color: #d1d5db; font-size: 11px; margin-right: 8px; }
   .sim-running { border-color: #fbbf24; }
   .sim-progress-bar { width: 100%; height: 8px; background: #1a1a1a; border-radius: 4px; overflow: hidden; margin: 6px 0; }
   .sim-progress-fill { height: 100%; background: #fbbf24; transition: width 1s linear; }
+  .sim-run-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-bottom: 12px;
+  }
+  .sim-run-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid #1a1a1a;
+    padding-top: 10px;
+    margin-top: 6px;
+  }
+  @media (max-width: 640px) {
+    .sim-run-grid { grid-template-columns: 1fr; }
+    .sim-run-bar { flex-direction: column; align-items: stretch; gap: 8px; }
+  }
 </style>
 
 {% if running_run %}
@@ -145,8 +193,6 @@
           (s.n_done || 0) + ' / ' + (s.n_total || 0) + ' ticks processed';
         if (s.state !== 'running') {
           clearInterval(timer);
-          // Brief settle so the final tick paints, then refresh to show
-          // the new run in History.
           setTimeout(() => location.reload(), 500);
         }
       } catch (e) { /* swallow, next tick retries */ }
