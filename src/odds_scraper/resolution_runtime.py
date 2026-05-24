@@ -32,50 +32,58 @@ _BET9JA_PREMATCH_MAP_TTL_SECONDS = 1800  # 30 min — events come and go slowly
 
 
 class _Bet9jaPrematchMapCache:
+    """Background-task variant. The previous lock-based version queued
+    every concurrent watcher behind the lock, and each watcher had its
+    own 90s resolver-timeout running in parallel — when the first
+    builder timed out, the next ~50 waiters had ALREADY exhausted their
+    timers waiting in line and all returned TimeoutError. The cooldown
+    didn't help because the lock was held while they cancelled.
+
+    This version decouples the build from the callers: the first `get`
+    that arrives kicks off the build as a `create_task` and returns
+    empty. Subsequent callers see the task in flight and also return
+    empty immediately — no queueing, no cascading timeouts. The next
+    cadence tick (10 min for prematch) picks up the warm cache once
+    the background task completes."""
+
     def __init__(self) -> None:
         self._mapping: dict[str, str] | None = None
         self._built_at: float = 0.0
-        self._lock = asyncio.Lock()
-        self._cooldown_until: float = 0.0  # back off after a 403
+        self._cooldown_until: float = 0.0
+        self._build_task: asyncio.Task | None = None
+
+    async def _do_build(self, client) -> None:
+        try:
+            log.info("building bet9ja prematch event map (one-shot, shared)")
+            mapping = await client.build_prematch_event_map(sport_id="1")
+            self._mapping = mapping or {}
+            self._built_at = time.monotonic()
+            log.info(
+                "bet9ja prematch map built: %d entries", len(self._mapping),
+            )
+        except asyncio.CancelledError:
+            # Background task itself was cancelled (process shutdown).
+            # Set cooldown so a re-entrant attempt right after restart
+            # doesn't immediately start another costly build.
+            self._cooldown_until = time.monotonic() + 1800
+            raise
+        except Exception as e:  # noqa: BLE001
+            self._cooldown_until = time.monotonic() + 1800
+            log.warning("bet9ja prematch map build failed: %s — 30 min cooldown", e)
 
     async def get(self, client) -> dict[str, str]:
-        async with self._lock:
-            now = time.monotonic()
-            if self._mapping is not None and (now - self._built_at) < _BET9JA_PREMATCH_MAP_TTL_SECONDS:
-                return self._mapping
-            if now < self._cooldown_until:
-                log.warning(
-                    "bet9ja prematch map cooldown in effect (%ds left), "
-                    "returning empty map",
-                    int(self._cooldown_until - now),
-                )
-                return {}
-            try:
-                log.info("building bet9ja prematch event map (one-shot, shared)")
-                self._mapping = await client.build_prematch_event_map(sport_id="1")
-                self._built_at = now
-                log.info("bet9ja prematch map built: %d entries", len(self._mapping or {}))
-                return self._mapping or {}
-            except asyncio.CancelledError:
-                # Watcher's resolver-timeout cancelled us mid-build (the
-                # bet9ja walk legitimately takes >90s on cold start).
-                # Without recording a cooldown here the lock releases,
-                # the next event arrives, sees no cached mapping + no
-                # cooldown, and triggers ANOTHER full build that also
-                # gets cancelled — a 90s-per-event cascade. Set the
-                # cooldown then re-raise so the cancellation still
-                # propagates to the watcher's TimeoutError handler.
-                self._cooldown_until = now + 1800
-                log.warning(
-                    "bet9ja prematch map build cancelled mid-flight — "
-                    "30 min cooldown so other events don't pile up behind it",
-                )
-                raise
-            except Exception as e:  # noqa: BLE001
-                # 30-minute cooldown after any failure to avoid hammering.
-                self._cooldown_until = now + 1800
-                log.warning("bet9ja prematch map build failed: %s — 30 min cooldown", e)
-                return {}
+        now = time.monotonic()
+        if self._mapping is not None and (now - self._built_at) < _BET9JA_PREMATCH_MAP_TTL_SECONDS:
+            return self._mapping
+        if now < self._cooldown_until:
+            return {}
+        # If no build is in flight, kick one off. Don't await it —
+        # return empty so the caller (and any concurrent callers)
+        # proceed immediately without bet9ja for this tick. Next
+        # cadence will see the cached result.
+        if self._build_task is None or self._build_task.done():
+            self._build_task = asyncio.create_task(self._do_build(client))
+        return {}
 
 
 _bet9ja_prematch_map = _Bet9jaPrematchMapCache()

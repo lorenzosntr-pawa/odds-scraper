@@ -34,6 +34,19 @@ def register_pricer_routes(
     import sqlite3
     csv_dir = db_path.parent / "sim"
 
+    def _open_write_conn() -> sqlite3.Connection:
+        """Per-request write connection with WAL-friendly pragmas.
+
+        busy_timeout=30s is the important one: the scraper's writer
+        process can be holding the SQLite reserved lock during its own
+        tick batch when we land. Without a generous timeout the
+        simulator inserts hit `database is locked` immediately.
+        """
+        c = sqlite3.connect(str(db_path), isolation_level=None)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA busy_timeout = 30000")
+        return c
+
     @app.get("/simulator", response_class=HTMLResponse)
     async def simulator_page(request: Request, busy: int = 0):
         profiles = config_mod.list_profiles(conn)
@@ -77,8 +90,7 @@ def register_pricer_routes(
         """Runs in the default executor (a background thread). Each
         invocation opens its own write connection so we don't share
         sqlite handles across threads."""
-        write_conn = sqlite3.connect(str(db_path), isolation_level=None)
-        write_conn.row_factory = sqlite3.Row
+        write_conn = _open_write_conn()
         try:
             profile = config_mod.load_by_id(write_conn, profile_id)
             if profile is None:
@@ -116,8 +128,7 @@ def register_pricer_routes(
                 return RedirectResponse(url="/simulator?busy=1", status_code=303)
             # Validate the config before spawning the task so the user
             # gets immediate feedback on a bad profile id.
-            probe_conn = sqlite3.connect(str(db_path), isolation_level=None)
-            probe_conn.row_factory = sqlite3.Row
+            probe_conn = _open_write_conn()
             try:
                 profile = config_mod.load_by_id(probe_conn, config_id)
             finally:
@@ -203,8 +214,7 @@ def register_pricer_routes(
                     coefficients[k] = float(raw)
                 except (TypeError, ValueError):
                     raise HTTPException(400, f"invalid value for {k}")
-        write_conn = sqlite3.connect(str(db_path), isolation_level=None)
-        write_conn.row_factory = sqlite3.Row
+        write_conn = _open_write_conn()
         try:
             try:
                 config_mod.create_profile(write_conn, name, coefficients)
@@ -220,8 +230,7 @@ def register_pricer_routes(
 
     @app.post("/simulator/profiles/{profile_id}/delete")
     async def delete_profile_route(profile_id: int):
-        write_conn = sqlite3.connect(str(db_path), isolation_level=None)
-        write_conn.row_factory = sqlite3.Row
+        write_conn = _open_write_conn()
         try:
             try:
                 config_mod.delete_profile(write_conn, profile_id)
