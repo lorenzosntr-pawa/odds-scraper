@@ -53,9 +53,12 @@
 
       <div class="profile-fields">
         <div class="profile-col">
-          <div class="profile-h">1UP</div>
+          <div class="profile-h">1UP margins</div>
           {% set fav = default_coefficients["ONEUP_FAVORITE_MARGIN"] %}
           {% set dog = default_coefficients["ONEUP_UNDERDOG_MARGIN"] %}
+          {% set tfav = default_coefficients["ONEUP_TRAILING_FAVORITE_MARGIN"] %}
+          {% set tdog = default_coefficients["ONEUP_TRAILING_UNDERDOG_MARGIN"] %}
+          <div class="profile-sub">Level score</div>
           <label>Favorite margin (slope, intercept)
             <input type="number" step="any" name="ONEUP_FAVORITE_MARGIN_slope" value="{{ fav[0] }}" required>
             <input type="number" step="any" name="ONEUP_FAVORITE_MARGIN_intercept" value="{{ fav[1] }}" required>
@@ -64,6 +67,16 @@
             <input type="number" step="any" name="ONEUP_UNDERDOG_MARGIN_slope" value="{{ dog[0] }}" required>
             <input type="number" step="any" name="ONEUP_UNDERDOG_MARGIN_intercept" value="{{ dog[1] }}" required>
           </label>
+          <div class="profile-sub">Trailing <span class="filter-lbl">(V2 only)</span></div>
+          <label>Trailing favorite margin (slope, intercept)
+            <input type="number" step="any" name="ONEUP_TRAILING_FAVORITE_MARGIN_slope" value="{{ tfav[0] }}" required>
+            <input type="number" step="any" name="ONEUP_TRAILING_FAVORITE_MARGIN_intercept" value="{{ tfav[1] }}" required>
+          </label>
+          <label>Trailing underdog margin (slope, intercept)
+            <input type="number" step="any" name="ONEUP_TRAILING_UNDERDOG_MARGIN_slope" value="{{ tdog[0] }}" required>
+            <input type="number" step="any" name="ONEUP_TRAILING_UNDERDOG_MARGIN_intercept" value="{{ tdog[1] }}" required>
+          </label>
+          <div class="profile-sub">Reductions</div>
           <label>Min guaranteed reduction
             <input type="number" step="any" name="ONEUP_MIN_GUARANTEED_REDUCTION"
                    value="{{ default_coefficients['ONEUP_MIN_GUARANTEED_REDUCTION'] }}" required>
@@ -149,6 +162,7 @@
   .profile-fields { display: flex; gap: 24px; margin-top: 12px; flex-wrap: wrap; }
   .profile-col { flex: 1; min-width: 320px; }
   .profile-h { color: #93c5fd; font-size: 11px; font-weight: 600; margin-bottom: 6px; }
+  .profile-sub { color: #6b7280; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin: 8px 0 3px 0; }
   .profile-col label {
     display: block;
     margin: 4px 0;

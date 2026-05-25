@@ -119,9 +119,21 @@ def run_simulation_dual(
     )
 
     engine_overrides = config_mod.coefficients_to_engine_overrides(config.coefficients)
+    # V1's engine.py doesn't define the V2-only trailing margins;
+    # with_v1_coefficients's getattr would crash on them. Strip before
+    # applying to V1 — engine_v2 gets the full dict.
+    engine_overrides_v1 = {
+        k: v for k, v in engine_overrides.items()
+        if k not in config_mod.V2_ONLY_TUNABLE_NAMES
+    }
     engine_overrides_b = (
         config_mod.coefficients_to_engine_overrides(config_b.coefficients)
         if config_b is not None else None
+    )
+    engine_overrides_b_v1 = (
+        {k: v for k, v in engine_overrides_b.items()
+         if k not in config_mod.V2_ONLY_TUNABLE_NAMES}
+        if engine_overrides_b is not None else None
     )
     rows: list[tuple] = []
     seen_events: set[str] = set()
@@ -152,7 +164,7 @@ def run_simulation_dual(
     # Both context managers active for Profile A's full duration — extras
     # are no-ops on the engine that isn't being called this run. For
     # Profile B (if set) the context flips mid-tick.
-    with with_v1_coefficients(engine_overrides), with_v2_coefficients(engine_overrides):
+    with with_v1_coefficients(engine_overrides_v1), with_v2_coefficients(engine_overrides):
         for i, t in enumerate(ticks):
             event_id = t["event_id"]
             ts_utc = t["ts_utc"]
@@ -184,7 +196,7 @@ def run_simulation_dual(
             r_v1_b = None
             r_v2_b = None
             if engine_overrides_b is not None:
-                with with_v1_coefficients(engine_overrides_b), \
+                with with_v1_coefficients(engine_overrides_b_v1), \
                      with_v2_coefficients(engine_overrides_b):
                     r_v1_b, r_v2_b = _run_engines(
                         {k: v for k, v in engine_inputs.items() if not k.startswith("_")}

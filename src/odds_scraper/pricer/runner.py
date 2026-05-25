@@ -245,6 +245,12 @@ def run_simulation(
     )
 
     overrides = config_mod.coefficients_to_engine_overrides(config.coefficients)
+    # V2-only tunables (e.g. ONEUP_TRAILING_*_MARGIN) live on engine_v2
+    # only; with_coefficients does getattr(engine, k) and would crash.
+    overrides = {
+        k: v for k, v in overrides.items()
+        if k not in config_mod.V2_ONLY_TUNABLE_NAMES
+    }
     rows: list[tuple] = []
     seen_events: set[str] = set()
 

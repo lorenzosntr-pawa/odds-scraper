@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 # arrive as separate `_slope` / `_intercept` inputs, joined here.
 _MARGIN_COEFFS = (
     "ONEUP_FAVORITE_MARGIN", "ONEUP_UNDERDOG_MARGIN",
+    "ONEUP_TRAILING_FAVORITE_MARGIN", "ONEUP_TRAILING_UNDERDOG_MARGIN",
     "TWOUP_FAVORITE_MARGIN", "TWOUP_UNDERDOG_MARGIN",
 )
 
@@ -420,15 +421,23 @@ def register_pricer_routes(
             raise HTTPException(400, "name is required")
         coefficients: dict = {}
         for k in config_mod.TUNABLE_NAMES:
+            is_v2_only = k in config_mod.V2_ONLY_TUNABLE_NAMES
             if k in _MARGIN_COEFFS:
                 slope_raw = form.get(f"{k}_slope")
                 inter_raw = form.get(f"{k}_intercept")
+                # V2-only fields absent from the form (e.g. older
+                # browser cache) fall back to defaults via
+                # _validate_and_fill rather than rejecting the submit.
+                if is_v2_only and (slope_raw is None or inter_raw is None):
+                    continue
                 try:
                     coefficients[k] = [float(slope_raw), float(inter_raw)]
                 except (TypeError, ValueError):
                     raise HTTPException(400, f"invalid value for {k}")
             else:
                 raw = form.get(k)
+                if is_v2_only and raw is None:
+                    continue
                 try:
                     coefficients[k] = float(raw)
                 except (TypeError, ValueError):

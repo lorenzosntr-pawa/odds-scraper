@@ -22,6 +22,13 @@ from typing import Dict, List, Optional, Tuple
 # ---- Coefficients (from FeatureProperties.java defaults) ----
 ONEUP_FAVORITE_MARGIN = (0.9969, 0.0313)
 ONEUP_UNDERDOG_MARGIN = (0.9799, 0.0400)
+# Trailing-only margin pair. The level-score margins above were fit
+# against probs in the 0.3–0.6 range; trailing-team probs sit around
+# 0.02–0.10, where the level intercept (~0.04) dominates the implied
+# prob and crushes offered odds. These mirror the 2UP defaults — same
+# small-prob regime — and only apply on the goal_difference != 0 branch.
+ONEUP_TRAILING_FAVORITE_MARGIN = (0.998, 0.010)
+ONEUP_TRAILING_UNDERDOG_MARGIN = (0.994, 0.014)
 ONEUP_FAVORITE_MODEL  = (-0.137308, 1.228176, 0.001221, 0.085310)  # (intercept, nextGoal, lambda, underdog)
 ONEUP_UNDERDOG_MODEL  = (0.006276, 0.909535, -0.009967, 0.094182)
 ONEUP_MIN_GUARANTEED_REDUCTION = 0.02
@@ -614,13 +621,15 @@ def price_early_payout_markets(
         home_1up_prob_raw = max(0.0, p_home + home_residual)
         away_1up_prob_raw = max(0.0, p_away + away_residual)
 
-        # Margin blend — same code path as the level-score branch.
+        # Trailing-specific margin pair (intercept ~0.014 vs level's 0.04).
+        # Trailing fair probs sit around 0.02–0.10, where the level
+        # intercept dominates the implied prob and crushes offered odds.
         if ONEUP_MARGIN_BLEND_ENABLED:
-            fav_margin_1up = _blend_margins(fav_weight, ONEUP_FAVORITE_MARGIN, ONEUP_UNDERDOG_MARGIN)
-            dog_margin_1up = _blend_margins(dog_weight, ONEUP_FAVORITE_MARGIN, ONEUP_UNDERDOG_MARGIN)
+            fav_margin_1up = _blend_margins(fav_weight, ONEUP_TRAILING_FAVORITE_MARGIN, ONEUP_TRAILING_UNDERDOG_MARGIN)
+            dog_margin_1up = _blend_margins(dog_weight, ONEUP_TRAILING_FAVORITE_MARGIN, ONEUP_TRAILING_UNDERDOG_MARGIN)
         else:
-            fav_margin_1up = ONEUP_FAVORITE_MARGIN
-            dog_margin_1up = ONEUP_UNDERDOG_MARGIN
+            fav_margin_1up = ONEUP_TRAILING_FAVORITE_MARGIN
+            dog_margin_1up = ONEUP_TRAILING_UNDERDOG_MARGIN
         home_margin_1up = fav_margin_1up if home_is_favorite else dog_margin_1up
         away_margin_1up = dog_margin_1up if home_is_favorite else fav_margin_1up
 
