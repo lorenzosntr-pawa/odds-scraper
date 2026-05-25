@@ -8,6 +8,13 @@ def _build_row(**overrides) -> tuple:
     """Build a row tuple in CSV_COLUMNS order. Defaults to a fully-populated
     row; callers override the few fields they want to assert on."""
     defaults = {
+        "engines": "v1",
+        "v2_p_home_1": "", "v2_p_away_1": "",
+        "v2_our_1up_home_fair": "", "v2_our_1up_home_capped": "", "v2_our_1up_home_capped_ev": "",
+        "v2_our_1up_away_fair": "", "v2_our_1up_away_capped": "", "v2_our_1up_away_capped_ev": "",
+        "v2_p_home_2": "", "v2_p_away_2": "",
+        "v2_our_2up_home_fair": "", "v2_our_2up_home_capped": "", "v2_our_2up_home_capped_ev": "",
+        "v2_our_2up_away_fair": "", "v2_our_2up_away_capped": "", "v2_our_2up_away_capped_ev": "",
         "snapshot_id": 1, "event_id": "E1",
         "home": "Home FC", "away": "Away FC",
         "kickoff_utc": "2026-05-22T18:30:00Z",
@@ -94,3 +101,26 @@ def test_write_csv_includes_tick_state(tmp_path: Path):
         header = f.readline().strip().split(",")
     assert header.index("status") > header.index("ts_utc")
     assert header.index("status") < header.index("basis_used")
+
+
+def test_csv_columns_include_engines_at_front_and_v2_block():
+    """V2 spec: leading `engines` column, then existing V1 layout, then
+    a v2 block after V1's OUR section but before bookmaker columns."""
+    cols = csv_export.CSV_COLUMNS
+    assert cols[0] == "engines"
+    # V1 OUR block — unchanged location.
+    assert "our_2up_away_capped_ev" in cols
+    # New v2 block — must appear strictly after V1's OUR block.
+    v1_end_idx = cols.index("our_2up_away_capped_ev")
+    for v2_col in (
+        "v2_p_home_1", "v2_p_away_1",
+        "v2_our_1up_home_fair", "v2_our_1up_home_capped", "v2_our_1up_home_capped_ev",
+        "v2_our_1up_away_fair", "v2_our_1up_away_capped", "v2_our_1up_away_capped_ev",
+        "v2_p_home_2", "v2_p_away_2",
+        "v2_our_2up_home_fair", "v2_our_2up_home_capped", "v2_our_2up_home_capped_ev",
+        "v2_our_2up_away_fair", "v2_our_2up_away_capped", "v2_our_2up_away_capped_ev",
+    ):
+        assert v2_col in cols, f"missing {v2_col}"
+        assert cols.index(v2_col) > v1_end_idx, f"{v2_col} comes before V1 OUR block"
+    # Bookmaker columns must still come after the v2 block.
+    assert cols.index("bp_p_1up_home") > cols.index("v2_our_2up_away_capped_ev")

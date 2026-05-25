@@ -6,6 +6,9 @@ from typing import Iterable
 
 
 CSV_COLUMNS = (
+    # Leading column so downstream joins can filter v1-only / v2-only
+    # rows trivially without parsing column suffixes.
+    "engines",
     "snapshot_id", "event_id",
     "home", "away", "kickoff_utc",
     "ts_utc",
@@ -23,6 +26,17 @@ CSV_COLUMNS = (
     "our_p_home_2", "our_p_away_2",
     "our_2up_home_fair", "our_2up_home_capped", "our_2up_home_capped_ev",
     "our_2up_away_fair", "our_2up_away_capped", "our_2up_away_capped_ev",
+    # ===== V2 engine block — same layout as V1's OUR block, prefixed v2_. =====
+    # Blank when only V1 ran; populated by runner_v2 when V2 (or 'both')
+    # is selected. Mirrors V1's *_capped_ev semantics (EV of V2's own
+    # probability vs V2's own capped odds — surfaces V2's embedded
+    # margin per selection).
+    "v2_p_home_1", "v2_p_away_1",
+    "v2_our_1up_home_fair", "v2_our_1up_home_capped", "v2_our_1up_home_capped_ev",
+    "v2_our_1up_away_fair", "v2_our_1up_away_capped", "v2_our_1up_away_capped_ev",
+    "v2_p_home_2", "v2_p_away_2",
+    "v2_our_2up_home_fair", "v2_our_2up_home_capped", "v2_our_2up_home_capped_ev",
+    "v2_our_2up_away_fair", "v2_our_2up_away_capped", "v2_our_2up_away_capped_ev",
     # BP / SB carry per-selection true prob + odds + EV. EV uses OUR
     # probability against the book's odds (`our_prob * book_odds - 1`)
     # — that's the actionable edge. The `*_p_*` column is the book's
