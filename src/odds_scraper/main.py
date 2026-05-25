@@ -173,6 +173,8 @@ async def _amain(config_path: Path) -> int:
         )
 
         bp_client = clients[Bookmaker.BETPAWA]
+        # priority_ids (always-include set) is bound here for the cap gate
+        # added in a follow-up commit. It's intentionally unused at this point.
         initial_ids, priority_ids = await resolve_event_ids(
             standalone_events=cfg.events,
             tournaments=cfg.tournaments,
@@ -225,6 +227,8 @@ async def _amain(config_path: Path) -> int:
                         else cfg.refresh_interval_when_idle_seconds
                     )
                     await asyncio.sleep(sleep_sec)
+                    # priority_ids will feed the cap gate in a follow-up
+                    # commit — currently unused.
                     current, priority_ids = await resolve_event_ids(
                         standalone_events=cfg.events,
                         tournaments=cfg.tournaments,
