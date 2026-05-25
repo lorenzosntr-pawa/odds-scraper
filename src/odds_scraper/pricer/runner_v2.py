@@ -79,6 +79,7 @@ def run_simulation_dual(
     scope: dict,
     csv_path: Path,
     engines: Sequence[str] = ("v1", "v2"),
+    config_b: Optional[config_mod.Profile] = None,
     on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> tuple[int, int]:
     """Iterate ticks once, call each selected engine, write a wide CSV.
@@ -87,6 +88,13 @@ def run_simulation_dual(
     empty or unknown selection. Lead state (`max_home_lead`,
     `max_away_lead`) is computed once per tick and reused by both
     engines so a downstream invariant comparison is apples-to-apples.
+
+    `config_b` is an optional second profile. When set, every selected
+    engine runs twice — once with `config`, once with `config_b` — and
+    the row carries both blocks (Profile A in the main columns, Profile
+    B in the `pB_*` columns). Bookmaker odds + devigged probs are
+    profile-independent so they're written once; only Profile B's EV
+    against the books is duplicated.
 
     Returns (n_events, n_rows) matching `runner.run_simulation`.
     """
@@ -111,12 +119,39 @@ def run_simulation_dual(
     )
 
     engine_overrides = config_mod.coefficients_to_engine_overrides(config.coefficients)
+    engine_overrides_b = (
+        config_mod.coefficients_to_engine_overrides(config_b.coefficients)
+        if config_b is not None else None
+    )
     rows: list[tuple] = []
     seen_events: set[str] = set()
     engines_cell = ",".join(eng)
+    profile_a_name = config.name
+    profile_b_name = config_b.name if config_b is not None else ""
 
-    # Both context managers active — extras are no-ops on the engine
-    # that isn't being called this run.
+    def _run_engines(inputs: dict) -> tuple[Optional[dict], Optional[dict]]:
+        """Call whichever engines are selected — caller's
+        `with_*_coefficients` context decides which profile's
+        coefficients are in force."""
+        r1 = None
+        r2 = None
+        if "v1" in eng:
+            try:
+                r1 = engine.price_early_payout_markets(**inputs)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("v1 engine crashed on event=%s ts=%s — skipping (%s)",
+                            inputs.get("_event_id"), inputs.get("_ts_utc"), exc)
+        if "v2" in eng:
+            try:
+                r2 = engine_v2.price_early_payout_markets(**inputs)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("v2 engine crashed on event=%s ts=%s — skipping (%s)",
+                            inputs.get("_event_id"), inputs.get("_ts_utc"), exc)
+        return r1, r2
+
+    # Both context managers active for Profile A's full duration — extras
+    # are no-ops on the engine that isn't being called this run. For
+    # Profile B (if set) the context flips mid-tick.
     with with_v1_coefficients(engine_overrides), with_v2_coefficients(engine_overrides):
         for i, t in enumerate(ticks):
             event_id = t["event_id"]
@@ -136,32 +171,42 @@ def run_simulation_dual(
             engine_inputs["max_home_lead"] = mh
             engine_inputs["max_away_lead"] = ma
 
-            r_v1 = None
-            r_v2 = None
-            if "v1" in eng:
-                try:
-                    r_v1 = engine.price_early_payout_markets(**engine_inputs)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("v1 engine crashed on event=%s ts=%s — skipping (%s)",
-                                event_id, ts_utc, exc)
-            if "v2" in eng:
-                try:
-                    r_v2 = engine_v2.price_early_payout_markets(**engine_inputs)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("v2 engine crashed on event=%s ts=%s — skipping (%s)",
-                                event_id, ts_utc, exc)
+            # Profile A in scope here (the outer with_*_coefficients
+            # blocks installed engine_overrides at loop entry).
+            engine_inputs["_event_id"] = event_id
+            engine_inputs["_ts_utc"] = ts_utc
+            r_v1, r_v2 = _run_engines(
+                {k: v for k, v in engine_inputs.items() if not k.startswith("_")}
+            )
 
-            # Skip the tick if every selected engine failed — writing a
-            # row with only metadata would be misleading.
-            if ("v1" in eng and r_v1 is None) and ("v2" in eng and r_v2 is None):
-                if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:
-                    on_progress(i + 1, n_total)
-                continue
-            if "v1" in eng and "v2" not in eng and r_v1 is None:
-                if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:
-                    on_progress(i + 1, n_total)
-                continue
-            if "v2" in eng and "v1" not in eng and r_v2 is None:
+            # Profile B (if set) flips the engine module constants briefly,
+            # runs both engines again, restores on exit.
+            r_v1_b = None
+            r_v2_b = None
+            if engine_overrides_b is not None:
+                with with_v1_coefficients(engine_overrides_b), \
+                     with_v2_coefficients(engine_overrides_b):
+                    r_v1_b, r_v2_b = _run_engines(
+                        {k: v for k, v in engine_inputs.items() if not k.startswith("_")}
+                    )
+
+            # Skip the tick if every selected engine failed for BOTH
+            # profiles — writing a row with only metadata would be misleading.
+            a_failed = (
+                ("v1" in eng and r_v1 is None) and ("v2" in eng and r_v2 is None)
+            ) or (
+                "v1" in eng and "v2" not in eng and r_v1 is None
+            ) or (
+                "v2" in eng and "v1" not in eng and r_v2 is None
+            )
+            b_failed = engine_overrides_b is not None and ((
+                ("v1" in eng and r_v1_b is None) and ("v2" in eng and r_v2_b is None)
+            ) or (
+                "v1" in eng and "v2" not in eng and r_v1_b is None
+            ) or (
+                "v2" in eng and "v1" not in eng and r_v2_b is None
+            ))
+            if a_failed and (engine_overrides_b is None or b_failed):
                 if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:
                     on_progress(i + 1, n_total)
                 continue
@@ -197,8 +242,33 @@ def run_simulation_dual(
             )
 
             lambdas_src = r_v1 if r_v1 is not None else r_v2
+
+            # Profile B's blocks. Same shape as Profile A's; the OUR
+            # blocks come from r_v1_b / r_v2_b, the BP/SB EV cells use
+            # Profile B's probability against the same book odds.
+            pB_v1_block = _our_block(
+                r_v1_b,
+                r_v1_b["p_home_1"] if r_v1_b else None,
+                r_v1_b["p_away_1"] if r_v1_b else None,
+                r_v1_b["p_home_2"] if r_v1_b else None,
+                r_v1_b["p_away_2"] if r_v1_b else None,
+            )
+            pB_v2_block = _our_block(
+                r_v2_b,
+                r_v2_b["p_home_1"] if r_v2_b else None,
+                r_v2_b["p_away_1"] if r_v2_b else None,
+                r_v2_b["p_home_2"] if r_v2_b else None,
+                r_v2_b["p_away_2"] if r_v2_b else None,
+            )
+            pB_ev_src = r_v1_b if r_v1_b is not None else r_v2_b
+            pB_p_h1 = pB_ev_src["p_home_1"] if pB_ev_src else None
+            pB_p_a1 = pB_ev_src["p_away_1"] if pB_ev_src else None
+            pB_p_h2 = pB_ev_src["p_home_2"] if pB_ev_src else None
+            pB_p_a2 = pB_ev_src["p_away_2"] if pB_ev_src else None
+
             rows.append((
                 engines_cell,
+                profile_a_name, profile_b_name,
                 t["snapshot_id"], event_id,
                 t["home"], t["away"], t["kickoff_utc"],
                 ts_utc,
@@ -220,6 +290,12 @@ def run_simulation_dual(
                 b9j["2up_home"][0], b9j["2up_away"][0],
                 bw["1up_home"][0],  bw["1up_away"][0],
                 bw["2up_home"][0],  bw["2up_away"][0],
+                *pB_v1_block,
+                *pB_v2_block,
+                _ev(pB_p_h1, bp["1up_home"][0]), _ev(pB_p_a1, bp["1up_away"][0]),
+                _ev(pB_p_h2, bp["2up_home"][0]), _ev(pB_p_a2, bp["2up_away"][0]),
+                _ev(pB_p_h1, sb["1up_home"][0]), _ev(pB_p_a1, sb["1up_away"][0]),
+                _ev(pB_p_h2, sb["2up_home"][0]), _ev(pB_p_a2, sb["2up_away"][0]),
             ))
             seen_events.add(event_id)
             if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:

@@ -503,6 +503,7 @@ def _plant_running(reg: RunRegistry, *, n_done: int, n_total: int) -> int:
     have to time a real background run."""
     rec = RunRecord(
         id=reg._next_id, state="running", profile_name="default",
+        profile_b_name="",
         regime="any", density="all", engines="v1,v2",
         started_at="2026-05-23T10:00:00Z",
         n_done=n_done, n_total=n_total,
@@ -776,7 +777,8 @@ def test_simulator_history_renders_engines_column(db_path, client):
     reg = _registry(client)
     rec = RunRecord(
         id=reg._next_id, state="done",
-        profile_name="default", regime="any", density="all",
+        profile_name="default", profile_b_name="",
+        regime="any", density="all",
         engines="v1,v2",
         started_at="2026-05-25T10:00:00Z",
         n_done=1, n_total=1, n_events=1, n_rows=1,
@@ -795,5 +797,4 @@ def test_simulator_profile_tooltip_mentions_engine_contract(client):
     contract explicit."""
     r = client.get("/simulator")
     body = r.text
-    assert "applies to whichever engine" in body.lower() or \
-           "applies to selected engine" in body.lower()
+    assert "profiles apply to whichever engine" in body.lower()

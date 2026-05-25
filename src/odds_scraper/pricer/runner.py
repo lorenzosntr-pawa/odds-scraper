@@ -284,8 +284,11 @@ def run_simulation(
                     cap_2h = res["market_2up"]["home_margin"]
                     cap_2a = res["market_2up"]["away_margin"]
                     rows.append((
-                        # V1-only runner — engines marker + V2 block stays blank.
+                        # V1-only runner — engines marker, profile A
+                        # from the active config, no profile B, V2 block
+                        # and pB_* blocks all blank.
                         "v1",
+                        config.name, "",
                         t["snapshot_id"], event_id,
                         t["home"], t["away"], t["kickoff_utc"],
                         ts_utc,
@@ -324,6 +327,9 @@ def run_simulation(
                         b9j["2up_home"][0], b9j["2up_away"][0],
                         bw["1up_home"][0],  bw["1up_away"][0],
                         bw["2up_home"][0],  bw["2up_away"][0],
+                        # Profile B blocks — V1 + V2 OUR (16+16) + BP/SB
+                        # EV (4+4) = 40 blanks in single-profile runs.
+                        *((""),) * 40,
                     ))
                     seen_events.add(event_id)
             if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:

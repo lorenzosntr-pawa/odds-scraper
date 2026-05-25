@@ -9,6 +9,11 @@ CSV_COLUMNS = (
     # Leading column so downstream joins can filter v1-only / v2-only
     # rows trivially without parsing column suffixes.
     "engines",
+    # Profile A is "the" profile used by every run; profile B is the
+    # optional comparison profile selected on the simulator page. When
+    # blank, the `pB_*` blocks at the bottom of the row are also blank
+    # and the run is a single-profile run.
+    "profile_a", "profile_b",
     "snapshot_id", "event_id",
     "home", "away", "kickoff_utc",
     "ts_utc",
@@ -55,6 +60,29 @@ CSV_COLUMNS = (
     "b9j_2up_home_odds", "b9j_2up_away_odds",
     "bw_1up_home_odds",  "bw_1up_away_odds",
     "bw_2up_home_odds",  "bw_2up_away_odds",
+    # ===== Profile B block — same layout as Profile A's OUR + BP/SB
+    # EV cells, prefixed `pB_`. Blank when no Profile B was selected.
+    # Bookmaker prob+odds are profile-independent so they stay in the
+    # main block; only EV is duplicated because EV = profile-B prob ×
+    # book odds. Same engine selection applies to both profiles, so
+    # the `pB_v2_*` cells are blank when engine=v1, mirroring the main
+    # `v2_*` cells. =====
+    "pB_our_p_home_1", "pB_our_p_away_1",
+    "pB_our_1up_home_fair", "pB_our_1up_home_capped", "pB_our_1up_home_capped_ev",
+    "pB_our_1up_away_fair", "pB_our_1up_away_capped", "pB_our_1up_away_capped_ev",
+    "pB_our_p_home_2", "pB_our_p_away_2",
+    "pB_our_2up_home_fair", "pB_our_2up_home_capped", "pB_our_2up_home_capped_ev",
+    "pB_our_2up_away_fair", "pB_our_2up_away_capped", "pB_our_2up_away_capped_ev",
+    "pB_v2_p_home_1", "pB_v2_p_away_1",
+    "pB_v2_our_1up_home_fair", "pB_v2_our_1up_home_capped", "pB_v2_our_1up_home_capped_ev",
+    "pB_v2_our_1up_away_fair", "pB_v2_our_1up_away_capped", "pB_v2_our_1up_away_capped_ev",
+    "pB_v2_p_home_2", "pB_v2_p_away_2",
+    "pB_v2_our_2up_home_fair", "pB_v2_our_2up_home_capped", "pB_v2_our_2up_home_capped_ev",
+    "pB_v2_our_2up_away_fair", "pB_v2_our_2up_away_capped", "pB_v2_our_2up_away_capped_ev",
+    "pB_bp_1up_home_ev", "pB_bp_1up_away_ev",
+    "pB_bp_2up_home_ev", "pB_bp_2up_away_ev",
+    "pB_sb_1up_home_ev", "pB_sb_1up_away_ev",
+    "pB_sb_2up_home_ev", "pB_sb_2up_away_ev",
 )
 
 

@@ -51,6 +51,7 @@ class RunRecord:
     id: int
     state: str  # 'running' | 'done' | 'failed'
     profile_name: str
+    profile_b_name: str  # empty when no profile B was selected
     regime: str
     density: str
     engines: str  # 'v1' | 'v2' | 'v1,v2'
@@ -82,7 +83,8 @@ class RunRegistry:
         self._lock = asyncio.Lock()
 
     async def acquire_id_if_idle(
-        self, *, profile_name: str, regime: str, density: str, engines: str,
+        self, *, profile_name: str, profile_b_name: str,
+        regime: str, density: str, engines: str,
     ) -> Optional[int]:
         """Allocate a new run id and a 'running' record, but only if no
         other run is currently in flight. Returns None when busy."""
@@ -93,7 +95,8 @@ class RunRegistry:
             self._next_id += 1
             self._runs[run_id] = RunRecord(
                 id=run_id, state="running",
-                profile_name=profile_name, regime=regime, density=density,
+                profile_name=profile_name, profile_b_name=profile_b_name,
+                regime=regime, density=density,
                 engines=engines,
                 started_at=_now_iso(),
             )
@@ -166,19 +169,31 @@ def register_pricer_routes(
     def _run_in_thread(
         run_id: int, profile_id: int, regime: str, density: str,
         scope: dict, csv_name: str, engine_choice: str,
+        profile_b_id: int,
     ) -> None:
         """Runs in the default executor (a background thread). The
         simulator no longer writes to the DB; results land in the CSV
         and progress lands in the in-memory registry. Dispatches to
-        the V1 runner (engine='v1') or the dual runner (v2 / both)."""
+        the V1 runner (engine='v1' AND profile_b_id == 0) or the dual
+        runner (V2 selected OR profile B selected — the dual runner is
+        the only one that knows how to emit `pB_*` columns)."""
         write_conn = _open_write_conn()
         try:
             profile = config_mod.load_by_id(write_conn, profile_id)
             if profile is None:
                 registry.mark_failed(run_id, error="profile vanished")
                 return
+            profile_b = None
+            if profile_b_id:
+                profile_b = config_mod.load_by_id(write_conn, profile_b_id)
+                if profile_b is None:
+                    registry.mark_failed(run_id, error="profile B vanished")
+                    return
             try:
-                if engine_choice == "v1":
+                # Single-profile V1-only path stays on the lean runner;
+                # anything else needs the dual runner (it owns the pB_*
+                # column writes and the engine-fanout logic).
+                if engine_choice == "v1" and profile_b is None:
                     n_events, n_rows = runner.run_simulation(
                         write_conn, config=profile,
                         regime=regime, density=density,
@@ -188,9 +203,14 @@ def register_pricer_routes(
                         ),
                     )
                 else:
-                    engines = ("v2",) if engine_choice == "v2" else ("v1", "v2")
+                    engines = (
+                        ("v1",) if engine_choice == "v1"
+                        else ("v2",) if engine_choice == "v2"
+                        else ("v1", "v2")
+                    )
                     n_events, n_rows = runner_v2.run_simulation_dual(
                         write_conn, config=profile,
+                        config_b=profile_b,
                         regime=regime, density=density,
                         scope=scope, csv_path=csv_dir / csv_name,
                         engines=engines,
@@ -231,6 +251,7 @@ def register_pricer_routes(
     @app.post("/simulator/runs")
     async def post_run(
         config_id: int = Form(...),
+        config_id_b: int = Form(0),
         regime:    str = Form("any"),
         density:   str = Form("all"),
         engine:    str = Form("both"),
@@ -250,12 +271,24 @@ def register_pricer_routes(
         probe_conn = _open_write_conn()
         try:
             profile = config_mod.load_by_id(probe_conn, config_id)
+            profile_b = (
+                config_mod.load_by_id(probe_conn, config_id_b)
+                if config_id_b else None
+            )
         finally:
             probe_conn.close()
         if profile is None:
             raise HTTPException(400, f"unknown config_id {config_id}")
+        if config_id_b and profile_b is None:
+            raise HTTPException(400, f"unknown config_id_b {config_id_b}")
+        if profile_b is not None and profile_b.id == profile.id:
+            raise HTTPException(
+                400, "config_id_b must differ from config_id",
+            )
         run_id = await registry.acquire_id_if_idle(
-            profile_name=profile.name, regime=regime, density=density,
+            profile_name=profile.name,
+            profile_b_name=(profile_b.name if profile_b else ""),
+            regime=regime, density=density,
             engines=engines_str,
         )
         if run_id is None:
@@ -270,6 +303,7 @@ def register_pricer_routes(
         loop.run_in_executor(
             None, _run_in_thread,
             run_id, config_id, regime, density, scope, csv_name, engine,
+            config_id_b,
         )
         return RedirectResponse(url="/simulator", status_code=303)
 

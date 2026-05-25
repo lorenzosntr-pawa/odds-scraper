@@ -107,17 +107,25 @@
     </div>
 
     <div class="sim-section">
-      <div class="sim-section-h">2 · Config <span class="filter-lbl">(coefficient profile)</span></div>
+      <div class="sim-section-h">2 · Config <span class="filter-lbl">(coefficient profile — optionally pick a second to A/B side-by-side)</span></div>
       <div class="filter-group">
-        <span class="filter-lbl">Profile</span>
+        <span class="filter-lbl">Profile A</span>
         <select name="config_id" class="filter-select">
+          {% for p in profiles %}
+            <option value="{{ p.id }}">{{ p.name }}{% if p.is_default %} (default){% endif %}</option>
+          {% endfor %}
+        </select>
+        <span class="filter-lbl" style="margin-left:12px">Profile B</span>
+        <select name="config_id_b" class="filter-select"
+                title="Optional: when set, every selected engine runs twice — once per profile — and the CSV carries both blocks (Profile A in main columns, Profile B in pB_* columns).">
+          <option value="0">(none — single-profile run)</option>
           {% for p in profiles %}
             <option value="{{ p.id }}">{{ p.name }}{% if p.is_default %} (default){% endif %}</option>
           {% endfor %}
         </select>
         <span class="filter-lbl" style="color:#888;margin-left:6px"
               title="Profiles apply to whichever engine version is selected. The default profile uses the latest engine defaults; custom profiles use the values they were saved with.">
-          (applies to selected engine ℹ)
+          ℹ
         </span>
         <a href="/simulator/profiles" class="filter-lbl" style="color:#fbbf24;margin-left:6px">Manage profiles →</a>
       </div>
@@ -182,7 +190,7 @@
     {% if last_run %}
       <p class="filter-lbl">
         Run #{{ last_run.id }} · started {{ last_run.started_at }}
-        · profile=<b>{{ last_run.profile_name }}</b>
+        · profile=<b>{{ last_run.profile_name }}</b>{% if last_run.profile_b_name %} vs <b>{{ last_run.profile_b_name }}</b>{% endif %}
         · regime=<b>{{ last_run.regime }}</b>
         · density=<b>{{ last_run.density }}</b>
         · {{ last_run.n_events }} events · {{ last_run.n_rows }} rows
@@ -216,7 +224,7 @@
         <tr>
           <td>{{ r.id }}</td>
           <td>{{ r.started_at }}</td>
-          <td>{{ r.profile_name }}</td>
+          <td>{{ r.profile_name }}{% if r.profile_b_name %} <span class="filter-lbl">vs</span> {{ r.profile_b_name }}{% endif %}</td>
           <td>{{ r.regime }}</td>
           <td>{{ r.density }}</td>
           <td>{{ r.engines }}</td>
