@@ -44,6 +44,17 @@ TWOUP_TRAILING_MAX_REDUCTION = 0.25
 TWOUP_DP_MAX_GOALS = 40
 TWOUP_DP_NEGLIGIBLE_TAIL = 1e-12
 
+# When enabled (default, matches Java behaviour), the favorite/underdog
+# margin pair is blended by favorite_strength so a borderline favorite
+# inherits some of the dog's wider margin. When disabled, the favorite
+# side gets FAVORITE_MARGIN flat and the dog gets UNDERDOG_MARGIN flat —
+# useful for profiles that want pure independent control of the two
+# margins without any cross-coupling.
+ONEUP_MARGIN_BLEND_ENABLED = True
+TWOUP_MARGIN_BLEND_ENABLED = True
+# Same toggle for the 2UP boost-coefficient blend.
+TWOUP_BOOST_BLEND_ENABLED = True
+
 # ---- Constants from LambdaCalculator.java ----
 LAMBDA_TOLERANCE = 1e-6
 LAMBDA_MAX = 10.0
@@ -432,6 +443,13 @@ def price_early_payout_markets(
     # When score != 0-0, the leading side is DEACTIVATED for 1UP (already triggered);
     # for 2UP, the leading side is deactivated only when |diff| >= 2.
     score: Tuple[int, int] = (0, 0),
+    # Max lead either side has held at any point during the match so far.
+    # Drives history-aware deactivation: the engine's score-based logic
+    # only knows the CURRENT diff, so a 1-0 → 1-1 match would otherwise
+    # re-price home 1UP (already triggered at 1-0). Defaults of 0 keep
+    # prematch / fresh-call behaviour unchanged.
+    max_home_lead: int = 0,
+    max_away_lead: int = 0,
 ) -> Dict:
     """
     Price 1UP and 2UP prematch (score = 0-0) markets following the Java
@@ -512,8 +530,12 @@ def price_early_payout_markets(
             home_1up_prob = max(0.0, blended_fav if home_is_favorite else blended_dog)
             away_1up_prob = max(0.0, blended_dog if home_is_favorite else blended_fav)
 
-            fav_margin_1up = _blend_margins(fav_weight, ONEUP_FAVORITE_MARGIN, ONEUP_UNDERDOG_MARGIN)
-            dog_margin_1up = _blend_margins(dog_weight, ONEUP_FAVORITE_MARGIN, ONEUP_UNDERDOG_MARGIN)
+            if ONEUP_MARGIN_BLEND_ENABLED:
+                fav_margin_1up = _blend_margins(fav_weight, ONEUP_FAVORITE_MARGIN, ONEUP_UNDERDOG_MARGIN)
+                dog_margin_1up = _blend_margins(dog_weight, ONEUP_FAVORITE_MARGIN, ONEUP_UNDERDOG_MARGIN)
+            else:
+                fav_margin_1up = ONEUP_FAVORITE_MARGIN
+                dog_margin_1up = ONEUP_UNDERDOG_MARGIN
             home_margin_1up = fav_margin_1up if home_is_favorite else dog_margin_1up
             away_margin_1up = dog_margin_1up if home_is_favorite else fav_margin_1up
 
@@ -555,16 +577,24 @@ def price_early_payout_markets(
         away_residual = max(0.0, p_away_ever - p_away_ever_wins)
 
         # Per-side boost coefficient (blended favorite/underdog)
-        fav_coeff = _blend_boost(fav_weight, TWOUP_FAVORITE_BOOST_COEFFICIENT, TWOUP_UNDERDOG_BOOST_COEFFICIENT)
-        dog_coeff = _blend_boost(dog_weight, TWOUP_FAVORITE_BOOST_COEFFICIENT, TWOUP_UNDERDOG_BOOST_COEFFICIENT)
+        if TWOUP_BOOST_BLEND_ENABLED:
+            fav_coeff = _blend_boost(fav_weight, TWOUP_FAVORITE_BOOST_COEFFICIENT, TWOUP_UNDERDOG_BOOST_COEFFICIENT)
+            dog_coeff = _blend_boost(dog_weight, TWOUP_FAVORITE_BOOST_COEFFICIENT, TWOUP_UNDERDOG_BOOST_COEFFICIENT)
+        else:
+            fav_coeff = TWOUP_FAVORITE_BOOST_COEFFICIENT
+            dog_coeff = TWOUP_UNDERDOG_BOOST_COEFFICIENT
         home_coeff = fav_coeff if home_is_favorite else dog_coeff
         away_coeff = dog_coeff if home_is_favorite else fav_coeff
 
         home_2up_prob = max(0.0, p_home + home_residual * home_coeff)
         away_2up_prob = max(0.0, p_away + away_residual * away_coeff)
 
-        fav_margin_2up = _blend_margins(fav_weight, TWOUP_FAVORITE_MARGIN, TWOUP_UNDERDOG_MARGIN)
-        dog_margin_2up = _blend_margins(dog_weight, TWOUP_FAVORITE_MARGIN, TWOUP_UNDERDOG_MARGIN)
+        if TWOUP_MARGIN_BLEND_ENABLED:
+            fav_margin_2up = _blend_margins(fav_weight, TWOUP_FAVORITE_MARGIN, TWOUP_UNDERDOG_MARGIN)
+            dog_margin_2up = _blend_margins(dog_weight, TWOUP_FAVORITE_MARGIN, TWOUP_UNDERDOG_MARGIN)
+        else:
+            fav_margin_2up = TWOUP_FAVORITE_MARGIN
+            dog_margin_2up = TWOUP_UNDERDOG_MARGIN
         home_margin_2up = fav_margin_2up if home_is_favorite else dog_margin_2up
         away_margin_2up = dog_margin_2up if home_is_favorite else fav_margin_2up
 
@@ -596,6 +626,20 @@ def price_early_payout_markets(
             )
             home_2up_fair_odds = home_2up_capped
             away_2up_fair_odds = away_2up_capped = away_2up_prob = None
+
+    # History-aware deactivation. The current-score logic above only
+    # knows the CURRENT diff, so a level / swung-back score (e.g. 1-1
+    # after going 1-0) would re-price markets that already triggered.
+    # Each side's market settles once its lead has reached the required
+    # margin at any point in the match.
+    if max_home_lead >= 1:
+        home_1up_prob = home_1up_fair_odds = home_1up_capped = None
+    if max_away_lead >= 1:
+        away_1up_prob = away_1up_fair_odds = away_1up_capped = None
+    if max_home_lead >= 2:
+        home_2up_prob = home_2up_fair_odds = home_2up_capped = None
+    if max_away_lead >= 2:
+        away_2up_prob = away_2up_fair_odds = away_2up_capped = None
 
     return {
         "lambda_home": lambda_home,

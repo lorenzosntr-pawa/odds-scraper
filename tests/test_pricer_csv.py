@@ -1,51 +1,50 @@
 import csv
-import sqlite3
 from pathlib import Path
 
-import pytest
-
-from odds_scraper.db_schema import init_schema
 from odds_scraper.pricer import csv_export
 
 
-@pytest.fixture
-def db(tmp_path: Path) -> sqlite3.Connection:
-    c = sqlite3.connect(str(tmp_path / "x.db"), isolation_level=None)
-    init_schema(c)
-    c.row_factory = sqlite3.Row
-    return c
+def _build_row(**overrides) -> tuple:
+    """Build a row tuple in CSV_COLUMNS order. Defaults to a fully-populated
+    row; callers override the few fields they want to assert on."""
+    defaults = {
+        "snapshot_id": 1, "event_id": "E1",
+        "home": "Home FC", "away": "Away FC",
+        "kickoff_utc": "2026-05-22T18:30:00Z",
+        "ts_utc": "2026-05-21T10:00:00Z",
+        "status": "UPCOMING", "match_minute": "", "score_home": "", "score_away": "",
+        "basis_used": "bp",
+        "lambda_home": 1.4, "lambda_away": 1.1,
+        "our_p_home_1": 0.55, "our_p_away_1": 0.32,
+        "our_1up_home_fair": 1.82, "our_1up_home_capped": 1.85,
+        "our_1up_home_capped_ev": -0.0175,
+        "our_1up_away_fair": 3.10, "our_1up_away_capped": 3.10,
+        "our_1up_away_capped_ev": -0.008,
+        "our_p_home_2": 0.65, "our_p_away_2": 0.41,
+        "our_2up_home_fair": 1.83, "our_2up_home_capped": 1.85,
+        "our_2up_home_capped_ev": -0.0175,
+        "our_2up_away_fair": 2.40, "our_2up_away_capped": 2.40,
+        "our_2up_away_capped_ev": -0.016,
+        "bp_p_1up_home": 0.54, "bp_1up_home_odds": 1.85, "bp_1up_home_ev": 0.0175,
+        "bp_p_1up_away": 0.32, "bp_1up_away_odds": 3.10, "bp_1up_away_ev": -0.008,
+        "bp_p_2up_home": 0.54, "bp_2up_home_odds": 1.83, "bp_2up_home_ev": 0.1895,
+        "bp_p_2up_away": 0.41, "bp_2up_away_odds": 2.40, "bp_2up_away_ev": -0.016,
+        "sb_p_1up_home": "", "sb_1up_home_odds": "", "sb_1up_home_ev": "",
+        "sb_p_1up_away": "", "sb_1up_away_odds": "", "sb_1up_away_ev": "",
+        "sb_p_2up_home": "", "sb_2up_home_odds": "", "sb_2up_home_ev": "",
+        "sb_p_2up_away": "", "sb_2up_away_odds": "", "sb_2up_away_ev": "",
+        "b9j_1up_home_odds": "", "b9j_1up_away_odds": "",
+        "b9j_2up_home_odds": "", "b9j_2up_away_odds": "",
+        "bw_1up_home_odds": "", "bw_1up_away_odds": "",
+        "bw_2up_home_odds": "", "bw_2up_away_odds": "",
+    }
+    defaults.update(overrides)
+    return tuple(defaults[c] for c in csv_export.CSV_COLUMNS)
 
 
-def _seed_one_run(conn: sqlite3.Connection) -> int:
-    cur = conn.execute(
-        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
-        "n_events, n_rows, csv_path) "
-        "VALUES ('2026-05-23T10:00:00Z', 1, 'all', '{}', 1, 1, 'sim/run_0001.csv')",
-    )
-    run_id = cur.lastrowid
-    conn.execute(
-        "INSERT INTO events (id, home, away, kickoff_utc) "
-        "VALUES ('E1', 'Home FC', 'Away FC', '2026-05-22T18:30:00Z')",
-    )
-    cur = conn.execute(
-        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status) "
-        "VALUES ('2026-05-21T10:00:00Z', 'E1', 'betpawa', 'UPCOMING', 'ok')",
-    )
-    snap_id = cur.lastrowid
-    conn.execute(
-        "INSERT INTO pricer_results (run_id, snapshot_id, event_id, ts_utc, "
-        "basis_used, our_p_home_2, our_2up_home_capped, bp_2up_home_odds) "
-        "VALUES (?, ?, 'E1', '2026-05-21T10:00:00Z', 'bp', 0.65, 1.85, 1.83)",
-        (run_id, snap_id),
-    )
-    return run_id
-
-
-def test_write_run_csv_emits_header_and_rows(db, tmp_path):
-    run_id = _seed_one_run(db)
+def test_write_csv_emits_header_and_rows(tmp_path: Path):
     out = tmp_path / "run_0001.csv"
-    csv_export.write_run_csv(db, run_id, out)
-
+    csv_export.write_csv(out, [_build_row()])
     with open(out, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
@@ -59,50 +58,28 @@ def test_write_run_csv_emits_header_and_rows(db, tmp_path):
     assert float(row["bp_2up_home_odds"]) == 1.83
 
 
-def test_write_run_csv_creates_dirs_and_handles_empty_run(db, tmp_path):
-    """An empty run (n_rows=0) still produces a CSV with just headers."""
-    cur = db.execute(
-        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
-        "n_events, n_rows, csv_path) "
-        "VALUES ('2026-05-23T10:00:00Z', 1, 'all', '{}', 0, 0, 'sim/run_0002.csv')",
-    )
-    run_id = cur.lastrowid
+def test_write_csv_creates_dirs_and_handles_empty_run(tmp_path: Path):
+    """An empty run still produces a CSV with just headers — and the
+    parent directory is created on demand so callers don't have to."""
     out = tmp_path / "sub" / "run_0002.csv"
-    csv_export.write_run_csv(db, run_id, out)
+    csv_export.write_csv(out, [])
     with open(out, encoding="utf-8") as f:
         lines = f.read().splitlines()
     assert len(lines) == 1  # header only
     assert "event_id" in lines[0]
 
 
-def test_write_run_csv_includes_tick_state(db, tmp_path):
+def test_write_csv_includes_tick_state(tmp_path: Path):
     """CSV must surface per-tick regime + minute + score so a reader can
     interpret rows without joining back to the DB."""
-    cur = db.execute(
-        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
-        "n_events, n_rows, csv_path) "
-        "VALUES ('2026-05-23T10:00:00Z', 1, 'all', '{}', 1, 1, 'sim/run_0003.csv')",
-    )
-    run_id = cur.lastrowid
-    db.execute(
-        "INSERT INTO events (id, home, away, kickoff_utc) "
-        "VALUES ('LIV', 'Liv', 'Ars', '2026-05-22T18:30:00Z')",
-    )
-    cur = db.execute(
-        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
-        "match_minute, score_home, score_away, fetch_status) "
-        "VALUES ('2026-05-22T19:05:00Z', 'LIV', 'betpawa', 'STARTED', "
-        "34, 1, 0, 'ok')",
-    )
-    snap_id = cur.lastrowid
-    db.execute(
-        "INSERT INTO pricer_results (run_id, snapshot_id, event_id, ts_utc, "
-        "basis_used, our_2up_home_capped) "
-        "VALUES (?, ?, 'LIV', '2026-05-22T19:05:00Z', 'bp', 1.85)",
-        (run_id, snap_id),
-    )
     out = tmp_path / "run_0003.csv"
-    csv_export.write_run_csv(db, run_id, out)
+    row = _build_row(
+        event_id="LIV", home="Liv", away="Ars",
+        kickoff_utc="2026-05-22T18:30:00Z",
+        ts_utc="2026-05-22T19:05:00Z",
+        status="STARTED", match_minute=34, score_home=1, score_away=0,
+    )
+    csv_export.write_csv(out, [row])
     with open(out, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = list(reader)

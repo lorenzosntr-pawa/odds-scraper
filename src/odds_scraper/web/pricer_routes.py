@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from odds_scraper.pricer import configs as config_mod, runner
+
+from . import queries
 
 log = logging.getLogger(__name__)
 
@@ -21,54 +26,174 @@ _MARGIN_COEFFS = (
 )
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@dataclass
+class RunRecord:
+    """Per-process record of a simulator run. The simulator no longer
+    persists to the database — it just produces a CSV. Progress and
+    history are kept in this in-memory registry for the lifetime of
+    the web app process.
+
+    The CSV file on disk outlives the registry; if the user restarts
+    the web app, old runs disappear from the History list but their
+    CSVs remain on disk at `data/sim/<csv_name>`.
+    """
+    id: int
+    state: str  # 'running' | 'done' | 'failed'
+    profile_name: str
+    regime: str
+    density: str
+    started_at: str
+    n_done: int = 0
+    n_total: int = 0
+    n_events: int = 0
+    n_rows: int = 0
+    csv_name: str = ""
+    finished_at: Optional[str] = None
+    error: str = ""
+
+    def progress_pct(self) -> int:
+        if self.n_total:
+            return int(100 * self.n_done / self.n_total)
+        return 100 if self.state == "done" else 0
+
+
+class RunRegistry:
+    """Thread/async-safe registry of simulator runs. `create` runs in
+    the asyncio loop under a lock to serialise the single-flight
+    check + id allocation; `update_progress`, `mark_done`, and
+    `mark_failed` are called from the worker thread and rely on the
+    GIL for atomic dict updates."""
+
+    def __init__(self) -> None:
+        self._runs: dict[int, RunRecord] = {}
+        self._next_id: int = 1
+        self._lock = asyncio.Lock()
+
+    async def acquire_id_if_idle(
+        self, *, profile_name: str, regime: str, density: str,
+    ) -> Optional[int]:
+        """Allocate a new run id and a 'running' record, but only if no
+        other run is currently in flight. Returns None when busy."""
+        async with self._lock:
+            if any(r.state == "running" for r in self._runs.values()):
+                return None
+            run_id = self._next_id
+            self._next_id += 1
+            self._runs[run_id] = RunRecord(
+                id=run_id, state="running",
+                profile_name=profile_name, regime=regime, density=density,
+                started_at=_now_iso(),
+            )
+            return run_id
+
+    def is_any_running(self) -> bool:
+        return any(r.state == "running" for r in self._runs.values())
+
+    def get(self, run_id: int) -> Optional[RunRecord]:
+        return self._runs.get(run_id)
+
+    def list_recent(self, limit: int = 20) -> list[RunRecord]:
+        return sorted(self._runs.values(), key=lambda r: r.id, reverse=True)[:limit]
+
+    def update_progress(self, run_id: int, n_done: int, n_total: int) -> None:
+        r = self._runs.get(run_id)
+        if r is None:
+            return
+        r.n_done = n_done
+        r.n_total = n_total
+
+    def mark_done(
+        self, run_id: int, *, n_events: int, n_rows: int, csv_name: str,
+    ) -> None:
+        r = self._runs.get(run_id)
+        if r is None:
+            return
+        r.state = "done"
+        r.n_events = n_events
+        r.n_rows = n_rows
+        r.csv_name = csv_name
+        r.n_done = r.n_total
+        r.finished_at = _now_iso()
+
+    def mark_failed(self, run_id: int, *, error: str) -> None:
+        r = self._runs.get(run_id)
+        if r is None:
+            return
+        r.state = "failed"
+        r.error = error
+        r.finished_at = _now_iso()
+
+
 def register_pricer_routes(
     app: FastAPI, templates: Jinja2Templates,
     *, db_path: Path, conn,
 ) -> None:
-    """Attach /simulator + /simulator/runs + /simulator/runs/<id>/csv to `app`.
-
-    `conn` is the read-only connection used by the rest of the app. The
-    simulator needs a writeable connection per request to insert run
-    rows; we open one fresh inside the POST handler.
-    """
+    """Attach /simulator routes to `app`. `conn` is the long-lived
+    read-only connection. The simulator's writeable connections are
+    only for reading prices/snapshots (the runner doesn't write back),
+    plus the profile-management CRUD."""
     import sqlite3
+
     csv_dir = db_path.parent / "sim"
+    registry = RunRegistry()
+    app.state.run_registry = registry
+    app.state.sim_csv_dir = csv_dir
 
     def _open_write_conn() -> sqlite3.Connection:
-        """Per-request write connection with WAL-friendly pragmas.
-
-        busy_timeout=30s is the important one: the scraper's writer
-        process can be holding the SQLite reserved lock during its own
-        tick batch when we land. Without a generous timeout the
-        simulator inserts hit `database is locked` immediately.
-        """
         c = sqlite3.connect(str(db_path), isolation_level=None)
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA busy_timeout = 30000")
         return c
 
+    def _csv_filename(run_id: int, started_at: str) -> str:
+        # Use a sortable filename so a directory listing reads naturally.
+        ts = started_at.replace(":", "-")
+        return f"run_{run_id:04d}_{ts}.csv"
+
+    def _run_in_thread(
+        run_id: int, profile_id: int, regime: str, density: str,
+        scope: dict, csv_name: str,
+    ) -> None:
+        """Runs in the default executor (a background thread). The
+        simulator no longer writes to the DB; results land in the CSV
+        and progress lands in the in-memory registry."""
+        write_conn = _open_write_conn()
+        try:
+            profile = config_mod.load_by_id(write_conn, profile_id)
+            if profile is None:
+                registry.mark_failed(run_id, error="profile vanished")
+                return
+            try:
+                n_events, n_rows = runner.run_simulation(
+                    write_conn, config=profile,
+                    regime=regime, density=density,
+                    scope=scope, csv_path=csv_dir / csv_name,
+                    on_progress=lambda done, total: registry.update_progress(
+                        run_id, done, total,
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.exception("background simulation crashed")
+                registry.mark_failed(run_id, error=f"{type(exc).__name__}: {exc}")
+                return
+            registry.mark_done(
+                run_id, n_events=n_events, n_rows=n_rows, csv_name=csv_name,
+            )
+        finally:
+            write_conn.close()
+
     @app.get("/simulator", response_class=HTMLResponse)
     async def simulator_page(request: Request, busy: int = 0):
         profiles = config_mod.list_profiles(conn)
-        last_row = conn.execute(
-            "SELECT id, created_at, coverage, density, n_events, n_rows, "
-            "       state, n_done, n_total "
-            "FROM pricer_runs ORDER BY id DESC LIMIT 1",
-        ).fetchone()
-        last_run = dict(last_row) if last_row else None
-        # Running run drives the progress bar at the top of the page.
-        running_row = conn.execute(
-            "SELECT id, state, n_done, n_total, started_at "
-            "FROM pricer_runs WHERE state = 'running' "
-            "ORDER BY id DESC LIMIT 1",
-        ).fetchone()
-        running_run = dict(running_row) if running_row else None
-        history_rows = conn.execute(
-            "SELECT r.id, r.created_at, c.name AS profile_name, "
-            "       r.coverage, r.density, r.n_events, r.n_rows, r.state "
-            "FROM pricer_runs r LEFT JOIN pricer_configs c ON c.id = r.config_id "
-            "ORDER BY r.id DESC LIMIT 20"
-        ).fetchall()
+        recent = registry.list_recent(20)
+        running_run = next(
+            (r for r in recent if r.state == "running"), None,
+        )
+        last_run = recent[0] if recent else None
         return templates.TemplateResponse(
             request, "simulator.html",
             {
@@ -76,36 +201,10 @@ def register_pricer_routes(
                 "last_run": last_run,
                 "running_run": running_run,
                 "busy": bool(busy),
-                "history": [dict(r) for r in history_rows],
+                "history": recent,
+                "country_league_index": queries.get_country_league_index(conn),
             },
         )
-
-    # Serialises check + insert so two concurrent POSTs can't both
-    # slip past the "no running run" check and start parallel work.
-    post_lock = asyncio.Lock()
-
-    def _run_in_thread(
-        profile_id: int, regime: str, density: str, scope: dict,
-    ) -> None:
-        """Runs in the default executor (a background thread). Each
-        invocation opens its own write connection so we don't share
-        sqlite handles across threads."""
-        write_conn = _open_write_conn()
-        try:
-            profile = config_mod.load_by_id(write_conn, profile_id)
-            if profile is None:
-                log.warning("background sim: profile %s vanished", profile_id)
-                return
-            try:
-                runner.run_simulation(
-                    write_conn, config=profile,
-                    regime=regime, density=density,
-                    scope=scope, csv_dir=csv_dir,
-                )
-            except Exception:
-                log.exception("background simulation crashed")
-        finally:
-            write_conn.close()
 
     @app.post("/simulator/runs")
     async def post_run(
@@ -114,6 +213,7 @@ def register_pricer_routes(
         density:   str = Form("all"),
         country:   str = Form(""),
         league:    str = Form(""),
+        event_id:  str = Form(""),
         date:      str = Form(""),
         search:    str = Form(""),
     ):
@@ -121,40 +221,41 @@ def register_pricer_routes(
             raise HTTPException(400, f"unknown regime {regime!r}")
         if density not in runner.VALID_DENSITIES:
             raise HTTPException(400, f"unknown density {density!r}")
-        async with post_lock:
-            if runner.is_run_in_progress(conn):
-                # Another run is already executing — refuse politely and
-                # let the page show the progress bar of the existing run.
-                return RedirectResponse(url="/simulator?busy=1", status_code=303)
-            # Validate the config before spawning the task so the user
-            # gets immediate feedback on a bad profile id.
-            probe_conn = _open_write_conn()
-            try:
-                profile = config_mod.load_by_id(probe_conn, config_id)
-            finally:
-                probe_conn.close()
-            if profile is None:
-                raise HTTPException(400, f"unknown config_id {config_id}")
-            scope = {"country": country, "league": league,
-                     "date": date, "search": search}
-            loop = asyncio.get_running_loop()
-            loop.run_in_executor(
-                None, _run_in_thread, config_id, regime, density, scope,
-            )
+        probe_conn = _open_write_conn()
+        try:
+            profile = config_mod.load_by_id(probe_conn, config_id)
+        finally:
+            probe_conn.close()
+        if profile is None:
+            raise HTTPException(400, f"unknown config_id {config_id}")
+        run_id = await registry.acquire_id_if_idle(
+            profile_name=profile.name, regime=regime, density=density,
+        )
+        if run_id is None:
+            # Another run is already executing — refuse politely and
+            # let the page show its progress bar.
+            return RedirectResponse(url="/simulator?busy=1", status_code=303)
+        rec = registry.get(run_id)
+        csv_name = _csv_filename(run_id, rec.started_at if rec else _now_iso())
+        scope = {"country": country, "league": league,
+                 "event_id": event_id, "date": date, "search": search}
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(
+            None, _run_in_thread,
+            run_id, config_id, regime, density, scope, csv_name,
+        )
         return RedirectResponse(url="/simulator", status_code=303)
 
     @app.get("/simulator/scope", response_class=HTMLResponse)
     async def scope_preview(
         regime: str = "any", density: str = "all",
         country: str = "", league: str = "",
-        date: str = "", search: str = "",
+        event_id: str = "", date: str = "", search: str = "",
     ):
-        """Tiny HTMX-target endpoint: returns a single line like
-        '12 events · 3,400 ticks' so the form can show the size of
-        the scope as the user toggles radios."""
         if regime not in runner.VALID_REGIMES or density not in runner.VALID_DENSITIES:
             return HTMLResponse("<span class='filter-lbl'>invalid scope</span>")
-        scope = {"country": country, "league": league, "date": date, "search": search}
+        scope = {"country": country, "league": league,
+                 "event_id": event_id, "date": date, "search": search}
         n_ev, n_snap = runner.count_scope(conn, regime, density, scope)
         return HTMLResponse(
             f'<span class="filter-lbl">'
@@ -163,22 +264,74 @@ def register_pricer_routes(
             f'</span>'
         )
 
+    @app.get("/simulator/options/events", response_class=HTMLResponse)
+    async def event_options(
+        country: str = "", league: str = "",
+        date: str = "", search: str = "",
+    ):
+        """HTML <option> list for the simulator's event picker. Filtered
+        by the same scope inputs as the run itself, so the picker only
+        offers events that would actually be in scope. HTMX target."""
+        clauses = ["country_name IS NOT NULL AND country_name != ''",
+                   "home != '' AND away != ''"]
+        params: list = []
+        if country:
+            clauses.append("country_id = ?"); params.append(country)
+        if league:
+            clauses.append("league_id = ?"); params.append(league)
+        if date:
+            clauses.append("DATE(kickoff_utc) = ?"); params.append(date)
+        if search:
+            clauses.append("(LOWER(home) LIKE ? OR LOWER(away) LIKE ?)")
+            like = f"%{search.lower()}%"
+            params.extend([like, like])
+        # Cap the list — a wide-open filter would otherwise dump every
+        # event in the DB into the dropdown.
+        sql = (
+            "SELECT id, home, away, kickoff_utc "
+            "FROM events WHERE " + " AND ".join(clauses) + " "
+            "ORDER BY kickoff_utc DESC LIMIT 500"
+        )
+        rows = conn.execute(sql, params).fetchall()
+        parts = ['<option value="">All matching events</option>']
+        for r in rows:
+            kickoff = (r["kickoff_utc"] or "")[:16].replace("T", " ")
+            label = f"{kickoff} · {r['home']} v {r['away']}"
+            parts.append(
+                f'<option value="{r["id"]}">{label}</option>'
+            )
+        return HTMLResponse("".join(parts))
+
     @app.get("/simulator/runs/{run_id}/status")
     async def get_run_status(run_id: int):
-        row = conn.execute(
-            "SELECT state, n_done, n_total, n_rows, n_events, "
-            "       started_at, finished_at, csv_path "
-            "FROM pricer_runs WHERE id = ?",
-            (run_id,),
-        ).fetchone()
-        if row is None:
+        r = registry.get(run_id)
+        if r is None:
             raise HTTPException(404, f"no such run {run_id}")
-        d = dict(row)
-        d["progress_pct"] = (
-            int(100 * d["n_done"] / d["n_total"])
-            if d["n_total"] else (100 if d["state"] == "done" else 0)
+        return JSONResponse({
+            "id": r.id, "state": r.state,
+            "n_done": r.n_done, "n_total": r.n_total,
+            "n_events": r.n_events, "n_rows": r.n_rows,
+            "started_at": r.started_at, "finished_at": r.finished_at,
+            "csv_name": r.csv_name, "error": r.error,
+            "progress_pct": r.progress_pct(),
+        })
+
+    @app.get("/simulator/runs/{run_id}/csv")
+    async def get_run_csv(run_id: int):
+        r = registry.get(run_id)
+        if r is None:
+            raise HTTPException(404, f"no such run {run_id}")
+        if not r.csv_name:
+            raise HTTPException(404, f"run {run_id} has no csv (still running?)")
+        full = csv_dir / r.csv_name
+        if not full.exists():
+            raise HTTPException(404, f"csv missing on disk for run {run_id}")
+        return FileResponse(
+            str(full), media_type="text/csv",
+            filename=f"pricer_{r.csv_name}",
         )
-        return JSONResponse(d)
+
+    # ----- profile management (unchanged) ---------------------------------
 
     @app.get("/simulator/profiles", response_class=HTMLResponse)
     async def profiles_page(request: Request):
@@ -193,9 +346,14 @@ def register_pricer_routes(
             },
         )
 
-    @app.post("/simulator/profiles")
-    async def create_profile_route(request: Request):
-        form = await request.form()
+    def _parse_profile_form(form) -> tuple[str, dict]:
+        """Pull (name, coefficients) out of the create/edit form. Raises
+        HTTPException(400) on missing name or non-numeric values so the
+        caller doesn't have to repeat the same try/except dance.
+
+        Boolean flag fields (FLAG_NAMES) are read as checkboxes: present
+        in the form = True, absent = False. Browsers don't submit
+        unchecked checkboxes, so absence is the signal."""
         name = (form.get("name") or "").strip()
         if not name:
             raise HTTPException(400, "name is required")
@@ -214,10 +372,53 @@ def register_pricer_routes(
                     coefficients[k] = float(raw)
                 except (TypeError, ValueError):
                     raise HTTPException(400, f"invalid value for {k}")
+        for k in config_mod.FLAG_NAMES:
+            coefficients[k] = k in form
+        return name, coefficients
+
+    @app.post("/simulator/profiles")
+    async def create_profile_route(request: Request):
+        form = await request.form()
+        name, coefficients = _parse_profile_form(form)
         write_conn = _open_write_conn()
         try:
             try:
                 config_mod.create_profile(write_conn, name, coefficients)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            except sqlite3.IntegrityError:
+                raise HTTPException(
+                    400, f"profile name {name!r} already exists",
+                )
+        finally:
+            write_conn.close()
+        return RedirectResponse(url="/simulator/profiles", status_code=303)
+
+    @app.get("/simulator/profiles/{profile_id}/edit", response_class=HTMLResponse)
+    async def edit_profile_page(request: Request, profile_id: int):
+        profile = config_mod.load_by_id(conn, profile_id)
+        if profile is None:
+            raise HTTPException(404, f"no such profile {profile_id}")
+        if profile.is_default:
+            raise HTTPException(400, "cannot edit the default profile")
+        return templates.TemplateResponse(
+            request, "profile_edit.html",
+            {
+                "profile": profile,
+                "margin_coeffs": _MARGIN_COEFFS,
+            },
+        )
+
+    @app.post("/simulator/profiles/{profile_id}")
+    async def edit_profile_route(request: Request, profile_id: int):
+        form = await request.form()
+        name, coefficients = _parse_profile_form(form)
+        write_conn = _open_write_conn()
+        try:
+            try:
+                config_mod.update_profile(
+                    write_conn, profile_id, name, coefficients,
+                )
             except ValueError as e:
                 raise HTTPException(400, str(e))
             except sqlite3.IntegrityError:
@@ -239,16 +440,3 @@ def register_pricer_routes(
         finally:
             write_conn.close()
         return RedirectResponse(url="/simulator/profiles", status_code=303)
-
-    @app.get("/simulator/runs/{run_id}/csv")
-    async def get_run_csv(run_id: int):
-        row = conn.execute(
-            "SELECT csv_path FROM pricer_runs WHERE id = ?", (run_id,),
-        ).fetchone()
-        if row is None:
-            raise HTTPException(404, f"no such run {run_id}")
-        full_path = db_path.parent / row["csv_path"]
-        if not full_path.exists():
-            raise HTTPException(404, f"csv missing on disk for run {run_id}")
-        return FileResponse(str(full_path), media_type="text/csv",
-                            filename=f"pricer_run_{run_id:04d}.csv")

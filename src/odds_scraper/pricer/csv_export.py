@@ -1,29 +1,42 @@
 from __future__ import annotations
 
 import csv
-import sqlite3
 from pathlib import Path
+from typing import Iterable
 
 
 CSV_COLUMNS = (
-    "run_id", "event_id", "home", "away", "kickoff_utc",
-    "snapshot_id", "ts_utc",
-    # Per-tick state from the snapshots table — makes the CSV readable
-    # without cross-referencing the DB. `status` flags the regime
-    # (UPCOMING / STARTED / ENDED); minute + score apply when in-play.
+    "snapshot_id", "event_id",
+    "home", "away", "kickoff_utc",
+    "ts_utc",
     "status", "match_minute", "score_home", "score_away",
     "basis_used",
     "lambda_home", "lambda_away",
+    # OUR engine output. `*_capped_ev` is the EV of OUR probability
+    # against OUR capped odds (= negative of the engine's embedded
+    # margin for that selection) — useful when BP isn't quoting and
+    # you want to see the simulated edge against the engine's own
+    # offer rather than nothing at all.
     "our_p_home_1", "our_p_away_1",
-    "our_1up_home_fair", "our_1up_home_capped",
-    "our_1up_away_fair", "our_1up_away_capped",
+    "our_1up_home_fair", "our_1up_home_capped", "our_1up_home_capped_ev",
+    "our_1up_away_fair", "our_1up_away_capped", "our_1up_away_capped_ev",
     "our_p_home_2", "our_p_away_2",
-    "our_2up_home_fair", "our_2up_home_capped",
-    "our_2up_away_fair", "our_2up_away_capped",
-    "bp_1up_home_odds",  "bp_1up_away_odds",
-    "bp_2up_home_odds",  "bp_2up_away_odds",
-    "sb_1up_home_odds",  "sb_1up_away_odds",
-    "sb_2up_home_odds",  "sb_2up_away_odds",
+    "our_2up_home_fair", "our_2up_home_capped", "our_2up_home_capped_ev",
+    "our_2up_away_fair", "our_2up_away_capped", "our_2up_away_capped_ev",
+    # BP / SB carry per-selection true prob + odds + EV. EV uses OUR
+    # probability against the book's odds (`our_prob * book_odds - 1`)
+    # — that's the actionable edge. The `*_p_*` column is the book's
+    # own devigged probability so the reader can compare OUR vs the
+    # book's view at a glance. B9J / BW have no devigged probability
+    # stored, so they remain odds-only.
+    "bp_p_1up_home", "bp_1up_home_odds", "bp_1up_home_ev",
+    "bp_p_1up_away", "bp_1up_away_odds", "bp_1up_away_ev",
+    "bp_p_2up_home", "bp_2up_home_odds", "bp_2up_home_ev",
+    "bp_p_2up_away", "bp_2up_away_odds", "bp_2up_away_ev",
+    "sb_p_1up_home", "sb_1up_home_odds", "sb_1up_home_ev",
+    "sb_p_1up_away", "sb_1up_away_odds", "sb_1up_away_ev",
+    "sb_p_2up_home", "sb_2up_home_odds", "sb_2up_home_ev",
+    "sb_p_2up_away", "sb_2up_away_odds", "sb_2up_away_ev",
     "b9j_1up_home_odds", "b9j_1up_away_odds",
     "b9j_2up_home_odds", "b9j_2up_away_odds",
     "bw_1up_home_odds",  "bw_1up_away_odds",
@@ -31,49 +44,13 @@ CSV_COLUMNS = (
 )
 
 
-def write_run_csv(
-    conn: sqlite3.Connection, run_id: int, out_path: Path,
-) -> None:
-    """Materialise pricer_results for `run_id` as a wide CSV.
+def write_csv(out_path: Path, rows: Iterable[tuple]) -> None:
+    """Materialise the run output to disk. Pure file IO — no DB roundtrip,
+    no temporary tables. Rows must be in `CSV_COLUMNS` order.
 
-    Joins event metadata (home, away, kickoff_utc) onto each row so the
-    CSV reads standalone — no DB needed downstream.
-    """
+    The header is always written (so an empty run still produces a
+    parseable file with column names)."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    rows = conn.execute(
-        """
-        SELECT
-            r.run_id, r.event_id, e.home, e.away, e.kickoff_utc,
-            r.snapshot_id, r.ts_utc,
-            s.status, s.match_minute, s.score_home, s.score_away,
-            r.basis_used,
-            r.lambda_home, r.lambda_away,
-            r.our_p_home_1, r.our_p_away_1,
-            r.our_1up_home_fair, r.our_1up_home_capped,
-            r.our_1up_away_fair, r.our_1up_away_capped,
-            r.our_p_home_2, r.our_p_away_2,
-            r.our_2up_home_fair, r.our_2up_home_capped,
-            r.our_2up_away_fair, r.our_2up_away_capped,
-            r.bp_1up_home_odds,  r.bp_1up_away_odds,
-            r.bp_2up_home_odds,  r.bp_2up_away_odds,
-            r.sb_1up_home_odds,  r.sb_1up_away_odds,
-            r.sb_2up_home_odds,  r.sb_2up_away_odds,
-            r.b9j_1up_home_odds, r.b9j_1up_away_odds,
-            r.b9j_2up_home_odds, r.b9j_2up_away_odds,
-            r.bw_1up_home_odds,  r.bw_1up_away_odds,
-            r.bw_2up_home_odds,  r.bw_2up_away_odds
-        FROM pricer_results r
-        JOIN events e ON e.id = r.event_id
-        -- LEFT JOIN: the snapshot row should always exist (FK), but
-        -- if a manual cleanup ever deleted it, NULL is better than
-        -- dropping the result row from the CSV.
-        LEFT JOIN snapshots s ON s.id = r.snapshot_id
-        WHERE r.run_id = ?
-        ORDER BY r.event_id, r.ts_utc
-        """,
-        (run_id,),
-    ).fetchall()
-
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(CSV_COLUMNS)

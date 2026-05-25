@@ -31,21 +31,79 @@
 
   <form method="post" action="/simulator/runs" class="sim-form">
     <div class="sim-section">
-      <div class="sim-section-h">1 · Event scope <span class="filter-lbl">(filters which events to include)</span></div>
-      <div class="filter-group">
+      <div class="sim-section-h">1 · Event scope <span class="filter-lbl">(narrow which events feed the run — leave blank to include everything)</span></div>
+
+      <div class="filter-group" style="flex-wrap:wrap;row-gap:10px">
         <span class="filter-lbl">Country</span>
-        <input class="filter-select" type="text" name="country" placeholder="country_id"
-               hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="input changed delay:300ms">
+        <select id="sim-country" name="country" class="filter-select"
+                hx-get="/simulator/scope" hx-include="closest form"
+                hx-target="#scope-count" hx-trigger="change">
+          <option value="">All</option>
+          {% for c in country_league_index %}
+            <option value="{{ c.country_id }}">{{ c.country_name }}</option>
+          {% endfor %}
+        </select>
+
         <span class="filter-lbl">League</span>
-        <input class="filter-select" type="text" name="league" placeholder="league_id"
-               hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="input changed delay:300ms">
+        <select id="sim-league" name="league" class="filter-select" disabled
+                hx-get="/simulator/scope" hx-include="closest form"
+                hx-target="#scope-count" hx-trigger="change">
+          <option value="">All</option>
+        </select>
+
         <span class="filter-lbl">Date</span>
         <input type="date" class="custom-hours" name="date"
-               hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+               hx-get="/simulator/scope" hx-include="closest form"
+               hx-target="#scope-count" hx-trigger="change">
+
         <span class="filter-lbl">Search</span>
-        <input class="search-input" type="search" name="search" placeholder="team"
-               hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="input changed delay:300ms">
+        <input class="search-input" type="search" name="search" placeholder="team name"
+               hx-get="/simulator/scope" hx-include="closest form"
+               hx-target="#scope-count" hx-trigger="input changed delay:300ms">
       </div>
+
+      <div class="filter-group" style="margin-top:10px">
+        <span class="filter-lbl">Match</span>
+        <select id="sim-event" name="event_id" class="filter-select"
+                style="flex:1;min-width:380px"
+                hx-get="/simulator/scope" hx-include="closest form"
+                hx-target="#scope-count" hx-trigger="change">
+          <option value="">All matching events</option>
+        </select>
+        <span class="filter-lbl" style="color:#888">
+          Picks one specific event after the filters above narrow the list.
+        </span>
+      </div>
+
+      <!-- Hidden HTMX-driven event-options loader. Triggers whenever
+           country/league/date/search change; swaps into #sim-event. -->
+      <div hx-get="/simulator/options/events"
+           hx-include="#sim-country, #sim-league, [name=date], [name=search]"
+           hx-target="#sim-event" hx-swap="innerHTML"
+           hx-trigger="change from:#sim-country,
+                       change from:#sim-league,
+                       change from:[name=date],
+                       input changed delay:300ms from:[name=search],
+                       load"
+           style="display:none"></div>
+
+      <script type="application/json" id="sim-country-league-index">
+        {
+          "items": [
+            {% for c in country_league_index %}
+              {
+                "country_id":   {{ c.country_id|tojson }},
+                "country_name": {{ c.country_name|tojson }},
+                "leagues": [
+                  {% for l in c.leagues %}
+                    {"league_id": {{ l.league_id|tojson }}, "league_name": {{ l.league_name|tojson }}}{% if not loop.last %},{% endif %}
+                  {% endfor %}
+                ]
+              }{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ]
+        }
+      </script>
     </div>
 
     <div class="sim-section">
@@ -108,24 +166,32 @@
     <div class="sim-section-h">Last run</div>
     {% if last_run %}
       <p class="filter-lbl">
-        Run #{{ last_run.id }} · {{ last_run.created_at }}
-        · regime=<b>{{ last_run.coverage }}</b>
-        · density=<b>{{ last_run.density if last_run.density else 'all' }}</b>
+        Run #{{ last_run.id }} · started {{ last_run.started_at }}
+        · profile=<b>{{ last_run.profile_name }}</b>
+        · regime=<b>{{ last_run.regime }}</b>
+        · density=<b>{{ last_run.density }}</b>
         · {{ last_run.n_events }} events · {{ last_run.n_rows }} rows
         · state=<b>{{ last_run.state }}</b>
-        · <a href="/simulator/runs/{{ last_run.id }}/csv" style="color:#60a5fa">download CSV</a>
+        {% if last_run.csv_name %}
+          · <a href="/simulator/runs/{{ last_run.id }}/csv" style="color:#60a5fa">download CSV</a>
+        {% endif %}
       </p>
     {% else %}
-      <p class="filter-lbl">No runs yet.</p>
+      <p class="filter-lbl">No runs yet in this process.</p>
     {% endif %}
+    <p class="filter-lbl" style="color:#888;margin-top:6px">
+      Run history is in-memory and resets when the web app restarts.
+      Past CSV files persist on disk at <code>data/sim/</code>.
+    </p>
   </div>
 
   <div class="sim-section">
-    <div class="sim-section-h">History</div>
+    <div class="sim-section-h">History (this session)</div>
+    {% if history %}
     <table class="history-table" style="width:100%">
       <thead>
         <tr>
-          <th>#</th><th>created</th><th>profile</th>
+          <th>#</th><th>started</th><th>profile</th>
           <th>regime</th><th>density</th>
           <th>events</th><th>rows</th><th>state</th><th>csv</th>
         </tr>
@@ -134,18 +200,25 @@
         {% for r in history %}
         <tr>
           <td>{{ r.id }}</td>
-          <td>{{ r.created_at }}</td>
+          <td>{{ r.started_at }}</td>
           <td>{{ r.profile_name }}</td>
-          <td>{{ r.coverage }}</td>
-          <td>{{ r.density if r.density else 'all' }}</td>
+          <td>{{ r.regime }}</td>
+          <td>{{ r.density }}</td>
           <td>{{ r.n_events }}</td>
           <td>{{ r.n_rows }}</td>
           <td>{{ r.state }}</td>
-          <td><a href="/simulator/runs/{{ r.id }}/csv" style="color:#60a5fa">csv</a></td>
+          <td>
+            {% if r.csv_name %}
+              <a href="/simulator/runs/{{ r.id }}/csv" style="color:#60a5fa">csv</a>
+            {% else %}—{% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    {% else %}
+      <p class="filter-lbl">No runs yet.</p>
+    {% endif %}
   </div>
 </div>
 
@@ -175,6 +248,43 @@
     .sim-run-bar { flex-direction: column; align-items: stretch; gap: 8px; }
   }
 </style>
+
+<script>
+  // Country → League cascade for the simulator's event-scope panel.
+  // Self-contained: no shared globals with the home-page cascade
+  // (different element ids, different storage scope).
+  (function () {
+    const countrySel = document.getElementById('sim-country');
+    const leagueSel  = document.getElementById('sim-league');
+    const dataTag    = document.getElementById('sim-country-league-index');
+    if (!countrySel || !leagueSel || !dataTag) return;
+    let index = [];
+    try { index = JSON.parse(dataTag.textContent).items || []; }
+    catch { index = []; }
+
+    function populateLeagues(country_id) {
+      leagueSel.innerHTML = '<option value="">All</option>';
+      if (!country_id) { leagueSel.disabled = true; return; }
+      const country = index.find(c => c.country_id === country_id);
+      if (!country) { leagueSel.disabled = true; return; }
+      for (const lg of country.leagues) {
+        const opt = document.createElement('option');
+        opt.value = lg.league_id;
+        opt.textContent = lg.league_name;
+        leagueSel.appendChild(opt);
+      }
+      leagueSel.disabled = country.leagues.length === 0;
+    }
+
+    countrySel.addEventListener('change', () => {
+      populateLeagues(countrySel.value);
+      // The league select changed shape — fire a change so the
+      // HTMX-bound event-options loader picks up the new league filter
+      // (which is now empty / 'All' after the country switch).
+      leagueSel.dispatchEvent(new Event('change', {bubbles: true}));
+    });
+  })();
+</script>
 
 {% if running_run %}
 <script>

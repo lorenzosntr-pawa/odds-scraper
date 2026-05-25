@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="p-3 max-w-screen-2xl mx-auto" data-page-title="Pricer Profiles">
+<div class="p-3 max-w-screen-2xl mx-auto" data-page-title="Edit Pricer Profile">
   <div class="flex justify-between border-b border-gray-900 pb-3 mb-3">
-    <div class="text-white font-semibold tracking-wider" title="Pricer Profiles">PRICER SIMULATOR</div>
+    <div class="text-white font-semibold tracking-wider" title="Edit Pricer Profile">PRICER SIMULATOR</div>
     <div class="flex gap-1">
       <a class="tab" href="/simulator">RUNS</a>
       <a class="tab active" href="/simulator/profiles">PROFILES</a>
@@ -11,51 +11,19 @@
   </div>
 
   <div class="sim-section">
-    <div class="sim-section-h">Existing profiles</div>
-    <table class="history-table" style="width:100%">
-      <thead>
-        <tr><th style="text-align:left">name</th><th>created</th><th>kind</th><th></th></tr>
-      </thead>
-      <tbody>
-        {% for p in profiles %}
-        <tr>
-          <td style="text-align:left">{{ p.name }}</td>
-          <td>{{ p.created_at }}</td>
-          <td>{% if p.is_default %}default (read-only){% else %}custom{% endif %}</td>
-          <td style="white-space:nowrap">
-            {% if not p.is_default %}
-              <a href="/simulator/profiles/{{ p.id }}/edit" class="chip"
-                 style="background:#0a1a1a;border:1px solid #60a5fa;color:#60a5fa;
-                        text-decoration:none;margin-right:6px">edit</a>
-              <form method="post"
-                    action="/simulator/profiles/{{ p.id }}/delete"
-                    style="display:inline"
-                    onsubmit="return confirm('Delete profile {{ p.name }}?');">
-                <button type="submit" class="chip"
-                        style="background:#3a0a0a;border:1px solid #fbbf24;color:#fbbf24;cursor:pointer">delete</button>
-              </form>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <div class="sim-section">
-    <div class="sim-section-h">Create new profile</div>
-    <form method="post" action="/simulator/profiles" class="sim-form">
+    <div class="sim-section-h">Edit profile <span class="filter-lbl">(custom · created {{ profile.created_at }})</span></div>
+    <form method="post" action="/simulator/profiles/{{ profile.id }}" class="sim-form">
       <div class="filter-group">
         <span class="filter-lbl">Profile name</span>
         <input class="search-input" type="text" name="name" required
-               placeholder="e.g. boost-85" autocomplete="off">
+               value="{{ profile.name }}" autocomplete="off">
       </div>
 
       <div class="profile-fields">
         <div class="profile-col">
           <div class="profile-h">1UP</div>
-          {% set fav = default_coefficients["ONEUP_FAVORITE_MARGIN"] %}
-          {% set dog = default_coefficients["ONEUP_UNDERDOG_MARGIN"] %}
+          {% set fav = profile.coefficients["ONEUP_FAVORITE_MARGIN"] %}
+          {% set dog = profile.coefficients["ONEUP_UNDERDOG_MARGIN"] %}
           <label>Favorite margin (slope, intercept)
             <input type="number" step="any" name="ONEUP_FAVORITE_MARGIN_slope" value="{{ fav[0] }}" required>
             <input type="number" step="any" name="ONEUP_FAVORITE_MARGIN_intercept" value="{{ fav[1] }}" required>
@@ -66,22 +34,22 @@
           </label>
           <label>Min guaranteed reduction
             <input type="number" step="any" name="ONEUP_MIN_GUARANTEED_REDUCTION"
-                   value="{{ default_coefficients['ONEUP_MIN_GUARANTEED_REDUCTION'] }}" required>
+                   value="{{ profile.coefficients['ONEUP_MIN_GUARANTEED_REDUCTION'] }}" required>
           </label>
           <label>Trailing reduction min
             <input type="number" step="any" name="ONEUP_TRAILING_MIN_REDUCTION"
-                   value="{{ default_coefficients['ONEUP_TRAILING_MIN_REDUCTION'] }}" required>
+                   value="{{ profile.coefficients['ONEUP_TRAILING_MIN_REDUCTION'] }}" required>
           </label>
           <label>Trailing reduction max
             <input type="number" step="any" name="ONEUP_TRAILING_MAX_REDUCTION"
-                   value="{{ default_coefficients['ONEUP_TRAILING_MAX_REDUCTION'] }}" required>
+                   value="{{ profile.coefficients['ONEUP_TRAILING_MAX_REDUCTION'] }}" required>
           </label>
         </div>
 
         <div class="profile-col">
           <div class="profile-h">2UP</div>
-          {% set fav2 = default_coefficients["TWOUP_FAVORITE_MARGIN"] %}
-          {% set dog2 = default_coefficients["TWOUP_UNDERDOG_MARGIN"] %}
+          {% set fav2 = profile.coefficients["TWOUP_FAVORITE_MARGIN"] %}
+          {% set dog2 = profile.coefficients["TWOUP_UNDERDOG_MARGIN"] %}
           <label>Favorite margin (slope, intercept)
             <input type="number" step="any" name="TWOUP_FAVORITE_MARGIN_slope" value="{{ fav2[0] }}" required>
             <input type="number" step="any" name="TWOUP_FAVORITE_MARGIN_intercept" value="{{ fav2[1] }}" required>
@@ -92,27 +60,27 @@
           </label>
           <label>Favorite boost coefficient
             <input type="number" step="any" name="TWOUP_FAVORITE_BOOST_COEFFICIENT"
-                   value="{{ default_coefficients['TWOUP_FAVORITE_BOOST_COEFFICIENT'] }}" required>
+                   value="{{ profile.coefficients['TWOUP_FAVORITE_BOOST_COEFFICIENT'] }}" required>
           </label>
           <label>Underdog boost coefficient
             <input type="number" step="any" name="TWOUP_UNDERDOG_BOOST_COEFFICIENT"
-                   value="{{ default_coefficients['TWOUP_UNDERDOG_BOOST_COEFFICIENT'] }}" required>
+                   value="{{ profile.coefficients['TWOUP_UNDERDOG_BOOST_COEFFICIENT'] }}" required>
           </label>
           <label>Favorite min guaranteed reduction
             <input type="number" step="any" name="TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION"
-                   value="{{ default_coefficients['TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION'] }}" required>
+                   value="{{ profile.coefficients['TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION'] }}" required>
           </label>
           <label>Underdog min guaranteed reduction
             <input type="number" step="any" name="TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION"
-                   value="{{ default_coefficients['TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION'] }}" required>
+                   value="{{ profile.coefficients['TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION'] }}" required>
           </label>
           <label>Trailing reduction min
             <input type="number" step="any" name="TWOUP_TRAILING_MIN_REDUCTION"
-                   value="{{ default_coefficients['TWOUP_TRAILING_MIN_REDUCTION'] }}" required>
+                   value="{{ profile.coefficients['TWOUP_TRAILING_MIN_REDUCTION'] }}" required>
           </label>
           <label>Trailing reduction max
             <input type="number" step="any" name="TWOUP_TRAILING_MAX_REDUCTION"
-                   value="{{ default_coefficients['TWOUP_TRAILING_MAX_REDUCTION'] }}" required>
+                   value="{{ profile.coefficients['TWOUP_TRAILING_MAX_REDUCTION'] }}" required>
           </label>
         </div>
       </div>
@@ -120,25 +88,34 @@
       <div class="profile-flags" style="margin-top:14px">
         <div class="profile-h">Blends</div>
         <label class="profile-flag">
-          <input type="checkbox" name="ONEUP_MARGIN_BLEND_ENABLED" checked>
+          <input type="checkbox" name="ONEUP_MARGIN_BLEND_ENABLED"
+                 {% if profile.coefficients.get("ONEUP_MARGIN_BLEND_ENABLED", True) %}checked{% endif %}>
           <b>1UP margin blend</b>
-          <span class="filter-lbl">— off → fav side uses fav margin flat, dog uses dog margin flat (no favorite-strength mixing)</span>
+          <span class="filter-lbl">— off → fav side uses fav margin flat, dog uses dog margin flat</span>
         </label>
         <label class="profile-flag">
-          <input type="checkbox" name="TWOUP_MARGIN_BLEND_ENABLED" checked>
+          <input type="checkbox" name="TWOUP_MARGIN_BLEND_ENABLED"
+                 {% if profile.coefficients.get("TWOUP_MARGIN_BLEND_ENABLED", True) %}checked{% endif %}>
           <b>2UP margin blend</b>
           <span class="filter-lbl">— same as above for 2UP margins</span>
         </label>
         <label class="profile-flag">
-          <input type="checkbox" name="TWOUP_BOOST_BLEND_ENABLED" checked>
+          <input type="checkbox" name="TWOUP_BOOST_BLEND_ENABLED"
+                 {% if profile.coefficients.get("TWOUP_BOOST_BLEND_ENABLED", True) %}checked{% endif %}>
           <b>2UP boost-coefficient blend</b>
           <span class="filter-lbl">— off → fav gets fav boost flat, dog gets dog boost flat</span>
         </label>
       </div>
 
-      <button type="submit" class="chip on" style="padding:6px 16px;cursor:pointer;margin-top:8px">
-        Create profile
-      </button>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button type="submit" class="chip on" style="padding:6px 16px;cursor:pointer">
+          Save changes
+        </button>
+        <a href="/simulator/profiles" class="chip"
+           style="padding:6px 16px;text-decoration:none;color:#d1d5db;border:1px solid #1a1a1a">
+          Cancel
+        </a>
+      </div>
     </form>
   </div>
 </div>

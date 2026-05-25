@@ -294,3 +294,134 @@ def test_poisson_at_least_basic():
 def test_trailing_selection_zero_lambda_returns_none():
     o, p = ep._trailing_selection(2.0, 0.5, 0.0, 1, 0.05, 0.25)
     assert o is None and p is None
+
+
+# ---- Max-lead deactivation (history-aware 1UP/2UP) ----
+
+def test_max_home_lead_1_deactivates_home_1up_at_level_score(balanced_match):
+    """A match that went 0-0 → 1-0 → 1-1 has home 1UP already triggered.
+    At current score (1,1) the engine would otherwise re-price home 1UP via
+    the level-score branch; passing max_home_lead=1 must keep it None."""
+    r = ep.price_early_payout_markets(
+        **balanced_match, score=(1, 1), max_home_lead=1,
+    )
+    assert r["market_1up"]["home_margin"] is None
+    assert r["market_1up"]["home_fair"] is None
+    assert r["p_home_1"] is None
+    # Away 1UP must still be priced — only home has settled.
+    assert r["market_1up"]["away_margin"] is not None
+
+
+def test_max_lead_both_deactivates_both_1up_at_level_score(balanced_match):
+    """Match went 0-0 → 1-0 → 1-1 → 1-2 → 2-2. Both 1UPs triggered."""
+    r = ep.price_early_payout_markets(
+        **balanced_match, score=(2, 2),
+        max_home_lead=1, max_away_lead=1,
+    )
+    assert r["market_1up"]["home_margin"] is None
+    assert r["market_1up"]["away_margin"] is None
+
+
+def test_max_home_lead_2_deactivates_home_2up(balanced_match):
+    """If home ever led by 2 (e.g. went 2-0 then conceded to 2-2),
+    home 2UP must stay None even at a level score."""
+    r = ep.price_early_payout_markets(
+        **balanced_match, score=(2, 2),
+        max_home_lead=2, max_away_lead=0,
+    )
+    assert r["market_2up"]["home_margin"] is None
+    # Away 2UP still active (away never led by 2)
+    assert r["market_2up"]["away_margin"] is not None
+
+
+def test_max_lead_defaults_preserve_prior_behavior(balanced_match):
+    """Default max_home_lead=0/max_away_lead=0 must match the pre-existing
+    prematch result — no silent regression for callers that don't pass them."""
+    r_old = ep.price_early_payout_markets(**balanced_match)
+    r_new = ep.price_early_payout_markets(
+        **balanced_match, max_home_lead=0, max_away_lead=0,
+    )
+    assert r_old["market_1up"]["home_margin"] == r_new["market_1up"]["home_margin"]
+    assert r_old["market_2up"]["home_margin"] == r_new["market_2up"]["home_margin"]
+
+
+def test_oneup_margin_blend_off_uses_favorite_margin_directly(balanced_match):
+    """With the 1UP margin blend disabled, the favorite side must take
+    `ONEUP_FAVORITE_MARGIN` exactly (no mixing toward the dog margin)
+    and the dog side takes `ONEUP_UNDERDOG_MARGIN` exactly. Uses a
+    borderline-favorite fixture — `_favorite_strength` saturates to 1.0
+    once either side reaches 50% so blending is already a no-op there."""
+    saved = ep.ONEUP_MARGIN_BLEND_ENABLED
+    try:
+        ep.ONEUP_MARGIN_BLEND_ENABLED = False
+        r_off = ep.price_early_payout_markets(**balanced_match)
+        ep.ONEUP_MARGIN_BLEND_ENABLED = True
+        r_on = ep.price_early_payout_markets(**balanced_match)
+    finally:
+        ep.ONEUP_MARGIN_BLEND_ENABLED = saved
+
+    p_h_1 = r_off["p_home_1"]
+    p_a_1 = r_off["p_away_1"]
+    home_is_fav = balanced_match["p_home_win"] >= balanced_match["p_away_win"]
+    home_margin = ep.ONEUP_FAVORITE_MARGIN if home_is_fav else ep.ONEUP_UNDERDOG_MARGIN
+    away_margin = ep.ONEUP_UNDERDOG_MARGIN if home_is_fav else ep.ONEUP_FAVORITE_MARGIN
+    expected_home_fair = ep._fair_prob_to_odds(p_h_1, home_margin)
+    expected_away_fair = ep._fair_prob_to_odds(p_a_1, away_margin)
+
+    assert r_off["market_1up"]["home_fair"] == pytest.approx(expected_home_fair, abs=1e-9)
+    assert r_off["market_1up"]["away_fair"] == pytest.approx(expected_away_fair, abs=1e-9)
+    assert r_off["market_1up"]["home_fair"] != pytest.approx(r_on["market_1up"]["home_fair"])
+
+
+def test_twoup_margin_blend_off_uses_favorite_margin_directly(balanced_match):
+    saved = ep.TWOUP_MARGIN_BLEND_ENABLED
+    try:
+        ep.TWOUP_MARGIN_BLEND_ENABLED = False
+        r_off = ep.price_early_payout_markets(**balanced_match)
+        ep.TWOUP_MARGIN_BLEND_ENABLED = True
+        r_on = ep.price_early_payout_markets(**balanced_match)
+    finally:
+        ep.TWOUP_MARGIN_BLEND_ENABLED = saved
+
+    p_h_2 = r_off["p_home_2"]
+    home_is_fav = balanced_match["p_home_win"] >= balanced_match["p_away_win"]
+    home_margin = ep.TWOUP_FAVORITE_MARGIN if home_is_fav else ep.TWOUP_UNDERDOG_MARGIN
+    expected_home_fair = ep._fair_prob_to_odds(p_h_2, home_margin)
+    assert r_off["market_2up"]["home_fair"] == pytest.approx(expected_home_fair, abs=1e-9)
+    assert r_off["market_2up"]["home_fair"] != pytest.approx(r_on["market_2up"]["home_fair"])
+
+
+def test_twoup_boost_blend_off_uses_favorite_boost_directly(balanced_match):
+    """With boost blend off, the favorite side's 2UP probability uses
+    `TWOUP_FAVORITE_BOOST_COEFFICIENT` flat instead of a blended value
+    — the on/off results must therefore differ."""
+    saved = ep.TWOUP_BOOST_BLEND_ENABLED
+    try:
+        ep.TWOUP_BOOST_BLEND_ENABLED = False
+        r_off = ep.price_early_payout_markets(**balanced_match)
+        ep.TWOUP_BOOST_BLEND_ENABLED = True
+        r_on = ep.price_early_payout_markets(**balanced_match)
+    finally:
+        ep.TWOUP_BOOST_BLEND_ENABLED = saved
+    assert r_off["p_home_2"] != pytest.approx(r_on["p_home_2"])
+
+
+def test_blend_flags_default_to_on_preserve_prior_behavior(strong_home_favorite):
+    """Brand-new behavioural contract: defaults must keep the original
+    blended math so legacy profile rows (with no flag fields) still
+    produce identical results to the engine before this change."""
+    assert ep.ONEUP_MARGIN_BLEND_ENABLED is True
+    assert ep.TWOUP_MARGIN_BLEND_ENABLED is True
+    assert ep.TWOUP_BOOST_BLEND_ENABLED is True
+
+
+def test_max_lead_does_not_resurrect_active_side(balanced_match):
+    """At score (1,0) with no prior history, home 1UP is None (current
+    leader) and away 1UP is priced via trailing. Passing max_home_lead=1
+    (consistent with current state) must not change those answers."""
+    r_no = ep.price_early_payout_markets(**balanced_match, score=(1, 0))
+    r_with = ep.price_early_payout_markets(
+        **balanced_match, score=(1, 0), max_home_lead=1,
+    )
+    assert r_no["market_1up"]["home_margin"] == r_with["market_1up"]["home_margin"]
+    assert r_no["market_1up"]["away_margin"] == r_with["market_1up"]["away_margin"]

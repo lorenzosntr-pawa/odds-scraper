@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(gh repo *)"
+      "Bash(gh repo *)",
+      "Bash(.venv\\\\Scripts\\\\pip.exe show *)",
+      "PowerShell(py *)",
+      "PowerShell($env:PATH -split ';' | Where-Object { $_ -match 'python|conda' }; Write-Host \"---\"; Get-ChildItem \"C:\\\\Users\\\\loren\\\\AppData\\\\Local\" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match 'python|conda|uv' | Select-Object FullName)",
+      "Read(//c/Users/loren/Desktop/betpawa/1UP_PR/SourceSportradar/**)",
+      "Read(//c/Users/loren/Desktop/betpawa/1UP_PR/**)",
+      "Bash(git -C \"C:/Users/loren/Desktop/betpawa/1UP_PR/SourceSportradar\" diff 10351fd1^..10351fd1 -- \"app/src/main/java/com/sportradar/service/config/FeatureProperties.java\")",
+      "Bash(git -C \"/c/Users/loren/Desktop/betpawa/1UP_PR/SourceSportradar\" diff 10351fd1^..10351fd1 -- \"app/src/main/java/com/sportradar/service/config/FeatureProperties.java\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

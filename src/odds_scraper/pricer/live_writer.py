@@ -14,7 +14,7 @@ import sqlite3
 from typing import Iterable
 
 from ..models import Snapshot
-from . import engine, inputs as input_extract
+from . import engine, inputs as input_extract, score_state
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ def compute_and_write(
     ts_utc: str,
     prices_by_book: dict[str, list[dict]],
     score: tuple[int, int] = (0, 0),
+    max_leads: tuple[int, int] | None = None,
 ) -> bool:
     """Run the engine on this tick's prices and persist the result.
 
@@ -51,11 +52,21 @@ def compute_and_write(
     repeat ticks at the same (event_id, ts_utc) via INSERT OR REPLACE.
     Never raises — engine crashes log a warning and return False, so a
     bad tick can't break the watcher's main loop.
+
+    `max_leads` is the (max_home_lead, max_away_lead) for this event up
+    to and including this tick. Omit to have the function query the DB
+    itself (correct for the hot path, where the snapshot is already
+    written). Pass explicitly when the caller is iterating many ticks
+    in bulk and wants to avoid a per-tick query (see `backfill_all`).
     """
     engine_inputs, basis = input_extract.extract(prices_by_book)
     if engine_inputs is None:
         return False
     engine_inputs["score"] = (int(score[0]), int(score[1]))
+    if max_leads is None:
+        max_leads = score_state.max_leads_so_far(conn, event_id)
+    engine_inputs["max_home_lead"] = max_leads[0]
+    engine_inputs["max_away_lead"] = max_leads[1]
     try:
         res = engine.price_early_payout_markets(**engine_inputs)
     except Exception as exc:  # noqa: BLE001
@@ -136,6 +147,11 @@ def backfill_all(conn: sqlite3.Connection) -> tuple[int, int]:
         """
     ).fetchall()
 
+    # Bulk lead lookup so the inner loop avoids a per-tick query.
+    leads_by_tick = score_state.max_leads_for_events(
+        conn, {t[0] for t in ticks},
+    )
+
     written = 0
     skipped = 0
     for ev_id, ts, sh, sa in ticks:
@@ -154,7 +170,10 @@ def backfill_all(conn: sqlite3.Connection) -> tuple[int, int]:
                 "probability": prob,
             })
         score = (int(sh), int(sa)) if sh is not None and sa is not None else (0, 0)
-        if compute_and_write(conn, ev_id, ts, prices_by_book, score):
+        leads = leads_by_tick.get((ev_id, ts), (0, 0))
+        if compute_and_write(
+            conn, ev_id, ts, prices_by_book, score, max_leads=leads,
+        ):
             written += 1
         else:
             skipped += 1

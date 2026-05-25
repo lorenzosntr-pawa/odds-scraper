@@ -57,6 +57,103 @@ def test_delete_default_raises(conn):
         configs.delete_profile(conn, default_id)
 
 
+def test_update_profile_replaces_name_and_coefficients(conn):
+    new_id = configs.create_profile(conn, "boost-85", configs.DEFAULT_COEFFICIENTS)
+    tweaked = dict(configs.DEFAULT_COEFFICIENTS)
+    tweaked["TWOUP_FAVORITE_BOOST_COEFFICIENT"] = 0.77
+    configs.update_profile(conn, new_id, "boost-77", tweaked)
+    reloaded = configs.load_by_id(conn, new_id)
+    assert reloaded.name == "boost-77"
+    assert reloaded.coefficients["TWOUP_FAVORITE_BOOST_COEFFICIENT"] == 0.77
+    # Untouched fields must keep their original values.
+    assert reloaded.coefficients["ONEUP_FAVORITE_MARGIN"] == [0.9969, 0.0313]
+
+
+def test_update_profile_refuses_default(conn):
+    default_id = configs.load_default(conn).id
+    with pytest.raises(ValueError, match="default"):
+        configs.update_profile(
+            conn, default_id, "default", configs.DEFAULT_COEFFICIENTS,
+        )
+
+
+def test_update_profile_rejects_unknown_coefficient_names(conn):
+    new_id = configs.create_profile(conn, "x", configs.DEFAULT_COEFFICIENTS)
+    bad = dict(configs.DEFAULT_COEFFICIENTS)
+    bad["BOGUS_KNOB"] = 1.0
+    with pytest.raises(ValueError, match="unknown coefficient"):
+        configs.update_profile(conn, new_id, "x", bad)
+
+
+def test_update_profile_rejects_missing_coefficient_names(conn):
+    new_id = configs.create_profile(conn, "x", configs.DEFAULT_COEFFICIENTS)
+    partial = dict(configs.DEFAULT_COEFFICIENTS)
+    del partial["TWOUP_FAVORITE_BOOST_COEFFICIENT"]
+    with pytest.raises(ValueError, match="missing coefficient"):
+        configs.update_profile(conn, new_id, "x", partial)
+
+
+def test_update_profile_unknown_id_raises(conn):
+    with pytest.raises(ValueError, match="no such profile"):
+        configs.update_profile(conn, 9999, "ghost", configs.DEFAULT_COEFFICIENTS)
+
+
+def test_legacy_profile_without_flags_loads_with_defaults(conn):
+    """A row written before flags existed must still round-trip — the
+    loader fills missing flag keys from DEFAULT_FLAGS so callers never
+    see an incomplete coefficients dict."""
+    import json as _json
+    # Bypass create_profile to write a row missing the flag fields,
+    # mimicking what's in the DB from before this change.
+    legacy = {k: v for k, v in configs.DEFAULT_COEFFICIENTS.items()
+              if k not in configs.FLAG_NAMES}
+    conn.execute(
+        "INSERT INTO pricer_configs (name, created_at, is_default, coefficients) "
+        "VALUES ('legacy', datetime('now'), 0, ?)",
+        (_json.dumps(legacy),),
+    )
+    pid = conn.execute(
+        "SELECT id FROM pricer_configs WHERE name='legacy'"
+    ).fetchone()[0]
+    p = configs.load_by_id(conn, pid)
+    for k, v in configs.DEFAULT_FLAGS.items():
+        assert p.coefficients[k] is v
+
+
+def test_create_profile_accepts_flags(conn):
+    over = dict(configs.DEFAULT_COEFFICIENTS)
+    over["ONEUP_MARGIN_BLEND_ENABLED"] = False
+    over["TWOUP_MARGIN_BLEND_ENABLED"] = False
+    new_id = configs.create_profile(conn, "no-blend", over)
+    loaded = configs.load_by_id(conn, new_id)
+    assert loaded.coefficients["ONEUP_MARGIN_BLEND_ENABLED"] is False
+    assert loaded.coefficients["TWOUP_MARGIN_BLEND_ENABLED"] is False
+    # Untouched flag falls through to its default.
+    assert loaded.coefficients["TWOUP_BOOST_BLEND_ENABLED"] is True
+
+
+def test_create_profile_fills_missing_flags_with_defaults(conn):
+    """Callers can omit flags entirely — backward-compat for clients
+    that don't know about them yet (e.g. an older form submission)."""
+    only_numeric = {k: v for k, v in configs.DEFAULT_COEFFICIENTS.items()
+                    if k not in configs.FLAG_NAMES}
+    new_id = configs.create_profile(conn, "numeric-only", only_numeric)
+    loaded = configs.load_by_id(conn, new_id)
+    for k, v in configs.DEFAULT_FLAGS.items():
+        assert loaded.coefficients[k] is v
+
+
+def test_engine_overrides_include_flags(conn):
+    """`coefficients_to_engine_overrides` must surface the flags so
+    `with_coefficients` can apply them on the engine module."""
+    overrides = configs.coefficients_to_engine_overrides({
+        **configs.DEFAULT_COEFFICIENTS,
+        "ONEUP_MARGIN_BLEND_ENABLED": False,
+    })
+    assert overrides["ONEUP_MARGIN_BLEND_ENABLED"] is False
+    assert overrides["TWOUP_MARGIN_BLEND_ENABLED"] is True
+
+
 def test_apply_to_engine_module_normalises_tuples(conn):
     """List values for tuple constants must round-trip back to tuples
     when applied to the engine module — engine.py reads tuples and the

@@ -10,7 +10,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from odds_scraper.models import MARKET_MANIFEST, MarketSpec
-from odds_scraper.pricer import engine, inputs as pricer_inputs
+from odds_scraper.pricer import (
+    engine, inputs as pricer_inputs, score_state as pricer_score_state,
+)
 
 from . import queries
 from .pricer_routes import register_pricer_routes
@@ -267,8 +269,17 @@ def create_app(db_path: Path) -> FastAPI:
         prices_by_event = queries.get_latest_prices_for_events(
             conn, [row["id"] for row in rows], scope="opened",
         )
+        # Bulk lookup of historical max-leads so the engine on each card
+        # can deactivate 1UP/2UP sides that already triggered earlier in
+        # the match (e.g. score 1-0 → 1-1 must keep home 1UP off).
+        latest_leads = pricer_score_state.max_leads_latest_for_events(
+            conn, {row["id"] for row in rows},
+        )
         events = [
-            _build_event_view(row, prices_by_event.get(row["id"], []))
+            _build_event_view(
+                row, prices_by_event.get(row["id"], []),
+                max_leads=latest_leads.get(row["id"], (0, 0)),
+            )
             for row in rows
         ]
         return templates.TemplateResponse(
@@ -307,7 +318,9 @@ def create_app(db_path: Path) -> FastAPI:
     return app
 
 
-def _build_event_view(row, price_rows) -> EventView:
+def _build_event_view(
+    row, price_rows, *, max_leads: tuple[int, int] = (0, 0),
+) -> EventView:
     """Card view: emit one MarketGroup per priced (market, line) tuple in the
     order set by _COLLAPSED_ORDER then _EXPANDER_MARKETS. Each group carries
     a stable group_key the JS layer uses to persist per-market collapse state.
@@ -381,6 +394,8 @@ def _build_event_view(row, price_rows) -> EventView:
     if engine_inputs is not None:
         score = (row["score_home"] or 0, row["score_away"] or 0)
         engine_inputs["score"] = (int(score[0]), int(score[1]))
+        engine_inputs["max_home_lead"] = max_leads[0]
+        engine_inputs["max_away_lead"] = max_leads[1]
         try:
             result = engine.price_early_payout_markets(**engine_inputs)
             our_1up_home = result["market_1up"]["home_margin"]

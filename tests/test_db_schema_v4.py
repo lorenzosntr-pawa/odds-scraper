@@ -13,8 +13,10 @@ def test_schema_v4_creates_pricer_tables(tmp_path: Path):
             "SELECT name FROM sqlite_master WHERE type='table'"
         )
     }
-    assert {"pricer_configs", "pricer_runs", "pricer_results"} <= tables
-    # v4 tables must still exist on any future schema version.
+    # pricer_configs survives — profiles persist across schema versions.
+    # pricer_runs and pricer_results were dropped in v8 (simulator
+    # writes CSV only, no DB rows), so they're not asserted here.
+    assert "pricer_configs" in tables
     assert SCHEMA_VERSION >= 4
 
 
@@ -33,13 +35,15 @@ def test_schema_v4_seeds_default_config(tmp_path: Path):
     assert coeffs["TWOUP_FAVORITE_BOOST_COEFFICIENT"] == 0.9
 
 
-def test_schema_v4_results_indexes(tmp_path: Path):
+def test_schema_v8_dropped_pricer_runs_and_results(tmp_path: Path):
+    """v8 removed the pricer_runs / pricer_results tables — the
+    simulator writes CSV files only now."""
     conn = sqlite3.connect(str(tmp_path / "x.db"), isolation_level=None)
     init_schema(conn)
-    idx_names = {
+    tables = {
         row[0] for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index'"
+            "SELECT name FROM sqlite_master WHERE type='table'"
         )
     }
-    assert "idx_pricer_results_run" in idx_names
-    assert "idx_pricer_results_event" in idx_names
+    assert "pricer_runs" not in tables
+    assert "pricer_results" not in tables

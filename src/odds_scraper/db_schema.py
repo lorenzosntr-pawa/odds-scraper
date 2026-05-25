@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Callable
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _BASE_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -231,7 +231,18 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     # readable: old 'all'/'latest' → regime='any' + density inferred;
     # 'prematch'/'live' → keep as regime, density='all'.
     7: lambda conn: _apply_v7_split_coverage(conn),
+    # v8: drop pricer_runs and pricer_results. The simulator now writes
+    # CSV files only — per-tick OUR is already in pricer_live_results
+    # (the authoritative on-tick record written by the scraper), so the
+    # run+results tables were duplicating that work and bloating the DB
+    # with rows the user actively didn't want there.
+    8: lambda conn: _apply_v8_drop_sim_tables(conn),
 }
+
+
+def _apply_v8_drop_sim_tables(conn: sqlite3.Connection) -> None:
+    conn.execute("DROP TABLE IF EXISTS pricer_results")
+    conn.execute("DROP TABLE IF EXISTS pricer_runs")
 
 
 def _apply_v7_split_coverage(conn: sqlite3.Connection) -> None:

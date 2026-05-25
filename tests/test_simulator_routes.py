@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from odds_scraper.db_schema import init_schema
 from odds_scraper.web.app import create_app
+from odds_scraper.web.pricer_routes import RunRecord, RunRegistry
 
 
 @pytest.fixture
@@ -22,16 +24,20 @@ def client(db_path: Path) -> TestClient:
     return TestClient(create_app(db_path=db_path))
 
 
+def _registry(client: TestClient) -> RunRegistry:
+    return client.app.state.run_registry
+
+
 def test_simulator_page_renders(client: TestClient):
     r = client.get("/simulator")
     assert r.status_code == 200
     assert "Pricer Simulator" in r.text
-    # Default profile is present in the selector
     assert "default" in r.text
-    # Coverage radio options
-    for cov in ("all", "latest", "prematch", "live"):
-        assert f'value="{cov}"' in r.text
-    # Run button
+    # Regime + density radios (the old single coverage radio was split).
+    for v in ("any", "prematch", "live"):
+        assert f'name="regime" value="{v}"' in r.text
+    for v in ("all", "latest"):
+        assert f'name="density" value="{v}"' in r.text
     assert "Run simulation" in r.text
 
 
@@ -72,7 +78,19 @@ def _seed_priced_event(db_path: Path):
     conn.close()
 
 
-def test_post_run_creates_row_and_csv(db_path: Path, client: TestClient):
+def _wait_for_run_done(reg: RunRegistry, run_id: int, timeout_s: float = 5.0):
+    """The route hands the run off to a background thread. Spin until
+    it finishes (or fails) so the assertions below see the final state."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        r = reg.get(run_id)
+        if r and r.state != "running":
+            return r
+        time.sleep(0.05)
+    raise AssertionError(f"run {run_id} did not finish within {timeout_s}s")
+
+
+def test_post_run_creates_record_and_csv(db_path: Path, client: TestClient):
     _seed_priced_event(db_path)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -83,28 +101,27 @@ def test_post_run_creates_row_and_csv(db_path: Path, client: TestClient):
     r = client.post(
         "/simulator/runs",
         data={
-            "config_id": default_id, "coverage": "all",
-            "status": "upcoming", "country": "", "league": "",
-            "date": "", "search": "",
+            "config_id": default_id, "regime": "any", "density": "all",
+            "country": "", "league": "", "date": "", "search": "",
         },
         follow_redirects=False,
     )
     assert r.status_code == 303
     assert "/simulator" in r.headers["location"]
-    # Check that a run + at least one result row + CSV file landed.
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    run = conn.execute(
-        "SELECT id, n_rows, csv_path FROM pricer_runs ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    assert run["n_rows"] == 1
-    csv_full = db_path.parent / run["csv_path"]
+    reg = _registry(client)
+    # Newest run is at the top of list_recent.
+    recent = reg.list_recent(1)
+    assert len(recent) == 1
+    run_id = recent[0].id
+    rec = _wait_for_run_done(reg, run_id)
+    assert rec.state == "done"
+    assert rec.n_rows == 1
+    csv_full = client.app.state.sim_csv_dir / rec.csv_name
     assert csv_full.exists()
-    n_result_rows = conn.execute(
-        "SELECT COUNT(*) FROM pricer_results WHERE run_id = ?", (run["id"],),
-    ).fetchone()[0]
-    assert n_result_rows == 1
-    conn.close()
+    # The CSV must include the seeded event_id (sanity-check that the
+    # run actually wrote data, not just an empty header).
+    body = csv_full.read_text(encoding="utf-8")
+    assert "E1" in body
 
 
 def test_get_run_csv_streams_file(db_path: Path, client: TestClient):
@@ -117,13 +134,13 @@ def test_get_run_csv_streams_file(db_path: Path, client: TestClient):
     conn.close()
     client.post(
         "/simulator/runs",
-        data={"config_id": default_id, "coverage": "all", "status": "upcoming",
+        data={"config_id": default_id, "regime": "any", "density": "all",
               "country": "", "league": "", "date": "", "search": ""},
         follow_redirects=False,
     )
-    conn = sqlite3.connect(str(db_path))
-    run_id = conn.execute("SELECT id FROM pricer_runs ORDER BY id DESC LIMIT 1").fetchone()[0]
-    conn.close()
+    reg = _registry(client)
+    run_id = reg.list_recent(1)[0].id
+    _wait_for_run_done(reg, run_id)
     r = client.get(f"/simulator/runs/{run_id}/csv")
     assert r.status_code == 200
     assert r.headers["content-type"] == "text/csv; charset=utf-8"
@@ -235,6 +252,236 @@ def test_delete_profile_removes_custom(db_path: Path, client: TestClient):
     assert gone is None
 
 
+def test_profiles_page_shows_edit_link_for_custom_profiles(
+    db_path: Path, client: TestClient,
+):
+    """Custom profiles must surface an edit link; the default profile
+    must NOT — it's read-only."""
+    # Seed a custom profile.
+    client.post(
+        "/simulator/profiles", data=_full_profile_form_data("to-edit"),
+        follow_redirects=False,
+    )
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    custom_id = conn.execute(
+        "SELECT id FROM pricer_configs WHERE name='to-edit'"
+    ).fetchone()["id"]
+    default_id = conn.execute(
+        "SELECT id FROM pricer_configs WHERE is_default=1"
+    ).fetchone()["id"]
+    conn.close()
+    r = client.get("/simulator/profiles")
+    body = r.text
+    assert f'href="/simulator/profiles/{custom_id}/edit"' in body
+    # Default row shows no edit link (the read-only contract).
+    assert f'href="/simulator/profiles/{default_id}/edit"' not in body
+
+
+def test_edit_profile_page_renders_with_current_values(
+    db_path: Path, client: TestClient,
+):
+    data = _full_profile_form_data("editable")
+    data["TWOUP_FAVORITE_BOOST_COEFFICIENT"] = "0.77"
+    client.post("/simulator/profiles", data=data, follow_redirects=False)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    pid = conn.execute(
+        "SELECT id FROM pricer_configs WHERE name='editable'"
+    ).fetchone()["id"]
+    conn.close()
+    r = client.get(f"/simulator/profiles/{pid}/edit")
+    assert r.status_code == 200
+    body = r.text
+    # Form must POST back to the same id and pre-populate the value
+    # the user just saved (so they can tweak from where they left off).
+    assert f'action="/simulator/profiles/{pid}"' in body
+    assert 'value="editable"' in body
+    assert 'value="0.77"' in body
+
+
+def test_edit_default_profile_returns_400(db_path: Path, client: TestClient):
+    """Default is read-only — both the GET edit page and the POST update
+    must refuse it."""
+    conn = sqlite3.connect(str(db_path))
+    default_id = conn.execute(
+        "SELECT id FROM pricer_configs WHERE is_default=1"
+    ).fetchone()[0]
+    conn.close()
+    r = client.get(f"/simulator/profiles/{default_id}/edit")
+    assert r.status_code == 400
+
+
+def test_edit_profile_persists_changes(db_path: Path, client: TestClient):
+    data = _full_profile_form_data("v1")
+    client.post("/simulator/profiles", data=data, follow_redirects=False)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    pid = conn.execute(
+        "SELECT id FROM pricer_configs WHERE name='v1'"
+    ).fetchone()["id"]
+    conn.close()
+
+    updated = _full_profile_form_data("v2-renamed")
+    updated["TWOUP_FAVORITE_BOOST_COEFFICIENT"] = "0.88"
+    r = client.post(
+        f"/simulator/profiles/{pid}", data=updated, follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/simulator/profiles"
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT name, coefficients FROM pricer_configs WHERE id=?", (pid,),
+    ).fetchone()
+    conn.close()
+    assert row["name"] == "v2-renamed"
+    import json as _json
+    coeffs = _json.loads(row["coefficients"])
+    assert coeffs["TWOUP_FAVORITE_BOOST_COEFFICIENT"] == 0.88
+
+
+def test_edit_default_profile_post_returns_400(db_path: Path, client: TestClient):
+    conn = sqlite3.connect(str(db_path))
+    default_id = conn.execute(
+        "SELECT id FROM pricer_configs WHERE is_default=1"
+    ).fetchone()[0]
+    conn.close()
+    r = client.post(
+        f"/simulator/profiles/{default_id}",
+        data=_full_profile_form_data("hijack"),
+        follow_redirects=False,
+    )
+    assert r.status_code == 400
+
+
+def test_edit_nonexistent_profile_returns_404(client: TestClient):
+    r = client.get("/simulator/profiles/99999/edit")
+    assert r.status_code == 404
+
+
+def test_create_profile_form_checks_flags_when_checkbox_present(
+    db_path: Path, client: TestClient,
+):
+    """Browsers send only the checked boxes; the parser must record
+    each *_ENABLED flag as True when present, False when absent."""
+    data = _full_profile_form_data("with-1up-blend-off")
+    # Only TWOUP flags present in the submission → 1UP blend stays off.
+    data["TWOUP_MARGIN_BLEND_ENABLED"] = "on"
+    data["TWOUP_BOOST_BLEND_ENABLED"] = "on"
+    r = client.post("/simulator/profiles", data=data, follow_redirects=False)
+    assert r.status_code == 303
+
+    import json as _json
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT coefficients FROM pricer_configs WHERE name='with-1up-blend-off'"
+    ).fetchone()
+    conn.close()
+    coeffs = _json.loads(row["coefficients"])
+    assert coeffs["ONEUP_MARGIN_BLEND_ENABLED"] is False
+    assert coeffs["TWOUP_MARGIN_BLEND_ENABLED"] is True
+    assert coeffs["TWOUP_BOOST_BLEND_ENABLED"] is True
+
+
+def test_create_profile_form_all_checkboxes_default_off_when_omitted(
+    db_path: Path, client: TestClient,
+):
+    """A form submission with NO flag fields at all is equivalent to
+    the user un-ticking every checkbox — all flags must persist as
+    False, never silently default to True."""
+    data = _full_profile_form_data("blends-off")
+    r = client.post("/simulator/profiles", data=data, follow_redirects=False)
+    assert r.status_code == 303
+    import json as _json
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT coefficients FROM pricer_configs WHERE name='blends-off'"
+    ).fetchone()
+    conn.close()
+    coeffs = _json.loads(row["coefficients"])
+    assert coeffs["ONEUP_MARGIN_BLEND_ENABLED"] is False
+    assert coeffs["TWOUP_MARGIN_BLEND_ENABLED"] is False
+    assert coeffs["TWOUP_BOOST_BLEND_ENABLED"] is False
+
+
+def test_edit_profile_page_pre_checks_enabled_flags(
+    db_path: Path, client: TestClient,
+):
+    """Saved-True flags must render with the `checked` attribute so the
+    edit form reflects current state, not the HTML default."""
+    data = _full_profile_form_data("mixed")
+    data["ONEUP_MARGIN_BLEND_ENABLED"] = "on"
+    # Leave TWOUP flags off → form will arrive without them → stored False.
+    client.post("/simulator/profiles", data=data, follow_redirects=False)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    pid = conn.execute(
+        "SELECT id FROM pricer_configs WHERE name='mixed'"
+    ).fetchone()["id"]
+    conn.close()
+    r = client.get(f"/simulator/profiles/{pid}/edit")
+    body = r.text
+    # Looking for the exact attribute the template emits — checked
+    # without quotes for the on flag, no `checked` for the off flags.
+    assert 'name="ONEUP_MARGIN_BLEND_ENABLED"\n' in body or \
+           'name="ONEUP_MARGIN_BLEND_ENABLED"\r\n' in body or \
+           'name="ONEUP_MARGIN_BLEND_ENABLED" ' in body
+    # Easier check: the checked attribute appears on the 1UP flag input
+    # (find the substring window around the name).
+    onep_pos = body.find('name="ONEUP_MARGIN_BLEND_ENABLED"')
+    twop_pos = body.find('name="TWOUP_MARGIN_BLEND_ENABLED"')
+    assert onep_pos != -1 and twop_pos != -1
+    # The `checked` keyword must appear inside the same <input ...> tag
+    # for ONEUP (on) but not for TWOUP (off).
+    onep_tag = body[body.rfind("<input", 0, onep_pos): body.find(">", onep_pos)]
+    twop_tag = body[body.rfind("<input", 0, twop_pos): body.find(">", twop_pos)]
+    assert "checked" in onep_tag
+    assert "checked" not in twop_tag
+
+
+def test_edit_profile_persists_flag_changes(db_path: Path, client: TestClient):
+    """End-to-end: a custom profile created with all blends on must be
+    editable to switch a blend off, and the change must round-trip."""
+    data = _full_profile_form_data("flags-test")
+    for f in ("ONEUP_MARGIN_BLEND_ENABLED",
+              "TWOUP_MARGIN_BLEND_ENABLED",
+              "TWOUP_BOOST_BLEND_ENABLED"):
+        data[f] = "on"
+    client.post("/simulator/profiles", data=data, follow_redirects=False)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    pid = conn.execute(
+        "SELECT id FROM pricer_configs WHERE name='flags-test'"
+    ).fetchone()["id"]
+    conn.close()
+
+    # Edit: turn the 2UP boost blend off (omit the field).
+    updated = _full_profile_form_data("flags-test")
+    updated["ONEUP_MARGIN_BLEND_ENABLED"] = "on"
+    updated["TWOUP_MARGIN_BLEND_ENABLED"] = "on"
+    # No TWOUP_BOOST_BLEND_ENABLED key → unchecked.
+    r = client.post(
+        f"/simulator/profiles/{pid}", data=updated, follow_redirects=False,
+    )
+    assert r.status_code == 303
+
+    import json as _json
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT coefficients FROM pricer_configs WHERE id=?", (pid,),
+    ).fetchone()
+    conn.close()
+    coeffs = _json.loads(row["coefficients"])
+    assert coeffs["ONEUP_MARGIN_BLEND_ENABLED"] is True
+    assert coeffs["TWOUP_MARGIN_BLEND_ENABLED"] is True
+    assert coeffs["TWOUP_BOOST_BLEND_ENABLED"] is False
+
+
 def test_delete_default_profile_returns_400(db_path: Path, client: TestClient):
     conn = sqlite3.connect(str(db_path))
     default_id = conn.execute(
@@ -248,32 +495,20 @@ def test_delete_default_profile_returns_400(db_path: Path, client: TestClient):
 
 
 # ---------------------------------------------------------------------------
-# Background-task progress + single-flight
+# In-memory registry: progress + single-flight
 # ---------------------------------------------------------------------------
 
-def test_run_simulation_inserts_running_row_immediately(db_path: Path):
-    """The pricer_runs row must appear with state='running' BEFORE the
-    work completes — otherwise the simulator page can't show a progress
-    bar for the in-flight run."""
-    from odds_scraper.pricer import configs, runner
-    conn = sqlite3.connect(str(db_path), isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    default = configs.load_default(conn)
-    # Empty scope → no work, but the runner still inserts the row and
-    # finishes it cleanly. Inspect afterwards.
-    run_id = runner.run_simulation(
-        conn, config=default, regime="any", density="all",
-        scope={"status": "ended", "country": "", "league": "", "date": "", "search": ""},
-        csv_dir=Path(db_path).parent / "sim",
+def _plant_running(reg: RunRegistry, *, n_done: int, n_total: int) -> int:
+    """Direct registry manipulation — bypasses the route so we don't
+    have to time a real background run."""
+    rec = RunRecord(
+        id=reg._next_id, state="running", profile_name="default",
+        regime="any", density="all", started_at="2026-05-23T10:00:00Z",
+        n_done=n_done, n_total=n_total,
     )
-    row = conn.execute(
-        "SELECT state, n_done, n_total, started_at, finished_at "
-        "FROM pricer_runs WHERE id = ?", (run_id,),
-    ).fetchone()
-    assert row["state"] == "done"
-    assert row["started_at"] is not None
-    assert row["finished_at"] is not None
-    conn.close()
+    reg._runs[rec.id] = rec
+    reg._next_id += 1
+    return rec.id
 
 
 def test_post_run_with_running_in_progress_returns_busy_redirect(
@@ -281,24 +516,17 @@ def test_post_run_with_running_in_progress_returns_busy_redirect(
 ):
     """POST /simulator/runs while another run is state='running' must
     not start a second simulation. Redirect to /simulator?busy=1."""
-    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    reg = _registry(client)
+    _plant_running(reg, n_done=5, n_total=100)
+    conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     default_id = conn.execute(
         "SELECT id FROM pricer_configs WHERE is_default=1"
     ).fetchone()[0]
-    # Plant a fake running row directly so we don't have to time a real
-    # background run.
-    conn.execute(
-        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
-        "n_events, n_rows, csv_path, state, n_total, n_done, started_at) "
-        "VALUES (datetime('now'), ?, 'all', '{}', 0, 0, '', 'running', 100, 5, "
-        "       datetime('now'))",
-        (default_id,),
-    )
     conn.close()
     r = client.post(
         "/simulator/runs",
-        data={"config_id": default_id, "coverage": "all", "status": "upcoming",
+        data={"config_id": default_id, "regime": "any", "density": "all",
               "country": "", "league": "", "date": "", "search": ""},
         follow_redirects=False,
     )
@@ -306,23 +534,11 @@ def test_post_run_with_running_in_progress_returns_busy_redirect(
     assert "busy=1" in r.headers["location"]
 
 
-def test_get_run_status_returns_progress_json(db_path: Path, client: TestClient):
+def test_get_run_status_returns_progress_json(client: TestClient):
     """GET /simulator/runs/<id>/status returns the state + progress
     counters as JSON so the page's poller can update the bar."""
-    conn = sqlite3.connect(str(db_path), isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    default_id = conn.execute(
-        "SELECT id FROM pricer_configs WHERE is_default=1"
-    ).fetchone()[0]
-    cur = conn.execute(
-        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
-        "n_events, n_rows, csv_path, state, n_total, n_done, started_at) "
-        "VALUES (datetime('now'), ?, 'all', '{}', 0, 0, '', 'running', 200, 80, "
-        "       datetime('now'))",
-        (default_id,),
-    )
-    run_id = cur.lastrowid
-    conn.close()
+    reg = _registry(client)
+    run_id = _plant_running(reg, n_done=80, n_total=200)
     r = client.get(f"/simulator/runs/{run_id}/status")
     assert r.status_code == 200
     d = r.json()
@@ -333,21 +549,10 @@ def test_get_run_status_returns_progress_json(db_path: Path, client: TestClient)
 
 
 def test_simulator_page_renders_progress_bar_when_run_in_progress(
-    db_path: Path, client: TestClient,
+    client: TestClient,
 ):
-    conn = sqlite3.connect(str(db_path), isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    default_id = conn.execute(
-        "SELECT id FROM pricer_configs WHERE is_default=1"
-    ).fetchone()[0]
-    conn.execute(
-        "INSERT INTO pricer_runs (created_at, config_id, coverage, scope_json, "
-        "n_events, n_rows, csv_path, state, n_total, n_done, started_at) "
-        "VALUES (datetime('now'), ?, 'all', '{}', 0, 0, '', 'running', 100, 25, "
-        "       datetime('now'))",
-        (default_id,),
-    )
-    conn.close()
+    reg = _registry(client)
+    _plant_running(reg, n_done=25, n_total=100)
     r = client.get("/simulator")
     body = r.text
     assert "Run in progress" in body
@@ -384,3 +589,99 @@ def test_simulator_form_has_regime_and_density_radios(client: TestClient):
         assert f'name="regime" value="{v}"' in body
     for v in ("all", "latest"):
         assert f'name="density" value="{v}"' in body
+
+
+def _seed_event_for_picker(
+    db_path: Path, ev_id: str, *,
+    home: str = "H", away: str = "A",
+    country_id: str = "288", country_name: str = "England",
+    league_id: str = "11965", league_name: str = "Premier League",
+    kickoff: str = "2026-05-25T18:00:00Z",
+) -> None:
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc, "
+        "country_id, country_name, league_id, league_name) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (ev_id, home, away, kickoff,
+         country_id, country_name, league_id, league_name),
+    )
+    conn.close()
+
+
+def test_simulator_page_lists_countries_from_db(db_path: Path, client: TestClient):
+    """The scope panel must render real countries from the DB instead of
+    a free-text input."""
+    _seed_event_for_picker(db_path, "E1")
+    r = client.get("/simulator")
+    body = r.text
+    assert 'id="sim-country"' in body
+    assert ">England<" in body
+    # Cascading league select starts disabled until a country is picked.
+    assert 'id="sim-league"' in body and "disabled" in body
+
+
+def test_event_options_filters_by_country(db_path: Path, client: TestClient):
+    _seed_event_for_picker(
+        db_path, "E1", country_id="288", country_name="England",
+    )
+    _seed_event_for_picker(
+        db_path, "E2", country_id="241", country_name="France",
+        league_id="999", league_name="Ligue 1",
+    )
+    r = client.get("/simulator/options/events?country=288")
+    body = r.text
+    assert 'value="E1"' in body
+    assert 'value="E2"' not in body
+    # The "All matching events" header option is always present.
+    assert 'value=""' in body
+
+
+def test_event_options_filters_by_search(db_path: Path, client: TestClient):
+    _seed_event_for_picker(db_path, "L", home="Liverpool", away="Arsenal")
+    _seed_event_for_picker(db_path, "C", home="Chelsea", away="Spurs")
+    r = client.get("/simulator/options/events?search=liverpool")
+    body = r.text
+    assert 'value="L"' in body
+    assert 'value="C"' not in body
+
+
+def test_event_options_filters_by_date(db_path: Path, client: TestClient):
+    _seed_event_for_picker(
+        db_path, "TODAY", kickoff="2026-05-25T18:00:00Z",
+    )
+    _seed_event_for_picker(
+        db_path, "TOMOR", kickoff="2026-05-26T18:00:00Z",
+    )
+    r = client.get("/simulator/options/events?date=2026-05-25")
+    body = r.text
+    assert 'value="TODAY"' in body
+    assert 'value="TOMOR"' not in body
+
+
+def test_post_run_accepts_event_id_in_scope(db_path: Path, client: TestClient):
+    """The event-picker selection must travel through POST /simulator/runs
+    so a run actually scopes down to one match."""
+    _seed_event_for_picker(db_path, "X")
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    default_id = conn.execute(
+        "SELECT id FROM pricer_configs WHERE is_default=1"
+    ).fetchone()["id"]
+    conn.close()
+    r = client.post(
+        "/simulator/runs",
+        data={
+            "config_id": default_id,
+            "regime": "any", "density": "all",
+            "country": "", "league": "", "event_id": "X",
+            "date": "", "search": "",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    reg = _registry(client)
+    rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
+    # No priced snapshot was seeded, so n_rows is 0 — but the run must
+    # have completed (state == 'done'), proving the scope was accepted.
+    assert rec.state == "done"
