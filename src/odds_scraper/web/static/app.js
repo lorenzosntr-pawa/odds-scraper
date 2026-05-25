@@ -68,28 +68,54 @@ function applyBodyTabClass() {
   document.body.classList.add(`tab-${status}`);
 }
 
+function _activateTab(status) {
+  // Idempotent: flip the .active class, mirror to body, sync filter
+  // controls from this tab's saved state, and fetch the matching
+  // fragment. Used by both tab clicks and the popstate handler so
+  // back/forward navigation behaves identically to a click.
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  const target = document.querySelector(`.tab[data-status="${status}"]`);
+  if (target) target.classList.add('active');
+  applyBodyTabClass();
+  applyCountryLeagueFromStorage();
+  applySearchInputFromStorage();
+  applyKickoffControlsFromStorage();
+  const stored = LS.load(filterKey('country_league_filter'),
+                         {country_id: '', league_id: ''});
+  const params = new URLSearchParams({
+    status,
+    country: stored.country_id || '',
+    league:  stored.league_id  || '',
+  });
+  window.htmx.ajax('GET', `/events?${params.toString()}`,
+                   {target: '#events-list', swap: 'outerHTML'});
+}
+
 function initTabs() {
   document.querySelectorAll('.tab[data-status]').forEach(t => {
     t.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
-      t.classList.add('active');
-      applyBodyTabClass();
-      // Sync every form control to the NEW tab's saved filter state
-      // BEFORE firing the HTMX request so the URL we send carries
-      // this tab's stored country/league (not the previous tab's).
-      applyCountryLeagueFromStorage();
-      applySearchInputFromStorage();
-      applyKickoffControlsFromStorage();
+      const status = t.dataset.status;
+      // Push the new URL so bookmarks, share-links, and browser
+      // back/forward work. Without this the URL stays whatever it was
+      // when the page loaded and the back link from event detail
+      // (which reads ?status=) lands on the wrong tab.
       const stored = LS.load(filterKey('country_league_filter'),
                              {country_id: '', league_id: ''});
-      const params = new URLSearchParams({
-        status:  t.dataset.status,
-        country: stored.country_id || '',
-        league:  stored.league_id  || '',
-      });
-      window.htmx.ajax('GET', `/events?${params.toString()}`,
-                       {target: '#events-list', swap: 'outerHTML'});
+      const urlParams = new URLSearchParams({status});
+      if (stored.country_id) urlParams.set('country', stored.country_id);
+      if (stored.league_id)  urlParams.set('league',  stored.league_id);
+      history.pushState({status}, '', `/?${urlParams.toString()}`);
+      _activateTab(status);
     });
+  });
+
+  // Back/forward navigates between tabs we pushed above. Re-derive
+  // the status from the URL and re-activate; pushState is NOT called
+  // again here (popstate already moved history).
+  window.addEventListener('popstate', () => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get('status') || 'upcoming';
+    _activateTab(status);
   });
 }
 
@@ -443,6 +469,23 @@ function applyAllCardState() {
 }
 
 function initEventDelegates() {
+  // Stale-swap guard. Polling (`hx-trigger="every Ns"` on the fragment)
+  // races with tab clicks and country/league filter changes — both
+  // target #events-list. Without a guard, a slow previous-tab poll can
+  // arrive after a new tab's fragment and silently clobber it (the
+  // .active tab indicator stays put but content reverts). Server tags
+  // every fragment with data-status="…" on its wrapper; if the incoming
+  // status doesn't match the currently active tab, drop the swap.
+  document.body.addEventListener('htmx:beforeSwap', evt => {
+    if (!evt.target || evt.target.id !== 'events-list') return;
+    const html = evt.detail && evt.detail.serverResponse;
+    if (typeof html !== 'string') return;
+    const m = html.match(/data-status="([^"]+)"/);
+    if (m && m[1] !== currentStatus()) {
+      evt.detail.shouldSwap = false;
+    }
+  });
+
   document.body.addEventListener('htmx:afterSwap', evt => {
     if (evt.target && evt.target.id === 'events-list') {
       // After a fragment swap, re-apply per-market collapse + chip/time/search state

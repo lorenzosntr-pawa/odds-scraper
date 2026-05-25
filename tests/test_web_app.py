@@ -67,6 +67,19 @@ def test_events_fragment_includes_polling_trigger(client: TestClient):
     assert 'hx-trigger="every 60s"' in r.text
 
 
+def test_events_fragment_wrapper_carries_data_status(client: TestClient):
+    """The #events-list wrapper must carry data-status="<status>" so the
+    client-side stale-swap guard can drop a fragment whose status no
+    longer matches the active tab (race between in-flight poll and a
+    fresh tab click). Without this attribute the guard is a no-op and
+    polling can clobber a just-switched tab."""
+    for status in ("upcoming", "live", "ended"):
+        r = client.get(f"/events?status={status}")
+        assert f'data-status="{status}"' in r.text, (
+            f"#events-list wrapper missing data-status for {status}"
+        )
+
+
 def test_events_card_links_to_detail_page(client: TestClient):
     r = client.get("/events?status=upcoming")
     assert 'href="/events/E1?from=upcoming"' in r.text
