@@ -164,3 +164,11 @@ def test_apply_to_engine_module_normalises_tuples(conn):
     assert overrides["ONEUP_FAVORITE_MARGIN"] == (0.9969, 0.0313)
     assert isinstance(overrides["ONEUP_FAVORITE_MARGIN"], tuple)
     assert overrides["TWOUP_FAVORITE_BOOST_COEFFICIENT"] == 0.9
+
+
+def test_default_coefficients_use_v2_dog_margin_intercept(conn):
+    """Schema-seeded default profile uses the V2 dog-margin intercept
+    (0.014). Custom profiles created before this change keep their
+    saved values — no implicit migration."""
+    default = configs.load_default(conn)
+    assert default.coefficients["TWOUP_UNDERDOG_MARGIN"] == [0.994, 0.014]

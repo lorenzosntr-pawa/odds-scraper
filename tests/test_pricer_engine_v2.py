@@ -106,3 +106,13 @@ def test_ever_leads_symmetry_under_team_swap():
     assert a[5] == pytest.approx(b[4])
     assert a[6] == pytest.approx(b[7])
     assert a[7] == pytest.approx(b[6])
+
+
+def test_v2_dog_margin_intercept_bumped():
+    """V2's TWOUP_UNDERDOG_MARGIN intercept is 0.014 (Java rewrite)."""
+    assert ep_v2.TWOUP_UNDERDOG_MARGIN == (0.994, 0.014)
+
+
+def test_v1_dog_margin_intercept_unchanged():
+    """V1 stays at 0.008 — V2 must not bleed into V1."""
+    assert ep_v1.TWOUP_UNDERDOG_MARGIN == (0.994, 0.008)
