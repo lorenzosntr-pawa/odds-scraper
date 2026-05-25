@@ -13,15 +13,20 @@ async def resolve_event_ids(
     standalone_events: Sequence[str],
     tournaments: Sequence[str],
     bp_client,
+    *,
+    global_sweep: bool = False,
+    sport_id: str = "2",
+    event_types: Sequence[str] = ("UPCOMING", "LIVE"),
 ) -> tuple[list[str], set[str]]:
     """One-shot: expand tournaments to event IDs, union with standalone IDs,
-    dedupe. Per-tournament failures are logged and skipped, not raised.
+    optionally append a global BP sweep, dedupe. Per-tournament failures
+    are logged and skipped, not raised.
 
     Returns `(ordered_ids, priority_ids)`. `ordered_ids` lists standalone
     IDs first in declared order, then tournament-expanded IDs sorted
-    lexicographically. `priority_ids` is the set of always-include IDs
-    (the union of both sources) — callers apply this when deciding which
-    IDs may bypass a concurrent-watcher cap.
+    lexicographically, then (when `global_sweep=True`) global-feed IDs
+    sorted by kickoff ASC. `priority_ids` is the always-include set
+    (standalone ∪ tournament-expanded) — global IDs are NOT in priority.
     """
     seen: set[str] = set()
     ordered: list[str] = []
@@ -52,6 +57,20 @@ async def resolve_event_ids(
 
     ordered.extend(sorted(tournament_ids))
     priority = set(ordered)
+
+    if global_sweep:
+        global_ids = await _fetch_global_event_ids(
+            bp_client, sport_id=sport_id, event_types=event_types,
+        )
+        new_global = [i for i in global_ids if i not in seen]
+        for i in new_global:
+            seen.add(i)
+        ordered.extend(new_global)
+        log.info(
+            "global sweep: %d events (%d new after dedup against priority)",
+            len(global_ids), len(new_global),
+        )
+
     return ordered, priority
 
 

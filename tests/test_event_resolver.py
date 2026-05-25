@@ -299,3 +299,63 @@ async def test_resolve_returns_priority_set_with_ordered_list():
     )
     assert ordered == ["77", "33", "44"]
     assert priority == {"77", "33", "44"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_appends_global_ids_when_sweep_enabled():
+    """global_sweep=True: priority IDs come first (standalone then tournament),
+    then global IDs sorted by startTime ASC, deduped against priority."""
+    client = AsyncMock()
+    async def get_events(tournament_id=None, sport_id="2",
+                         event_type="UPCOMING", skip=0, take=100):
+        if tournament_id == "11965" and event_type == "UPCOMING" and skip == 0:
+            return _events_response(["33", "44"])
+        if tournament_id == "11965" and event_type == "LIVE":
+            return _events_response([])
+        if tournament_id is None and event_type == "UPCOMING" and skip == 0:
+            # 44 overlaps tournament — must dedupe; "G2" sorts before "G1"
+            # by startTime so it should come first in the global block.
+            return _events_response_with_kickoff([
+                ("44", "2026-05-30T15:00:00Z"),
+                ("G1", "2026-06-10T15:00:00Z"),
+                ("G2", "2026-05-26T15:00:00Z"),
+            ])
+        if tournament_id is None and event_type == "LIVE":
+            return _events_response_with_kickoff([])
+        return _events_response([])
+    client.get_events.side_effect = get_events
+
+    ordered, priority = await resolve_event_ids(
+        standalone_events=["77"],
+        tournaments=["11965"],
+        bp_client=client,
+        global_sweep=True,
+        sport_id="2",
+        event_types=("UPCOMING", "LIVE"),
+    )
+    # Priority block first (standalone → tournament lexical), then global
+    # by kickoff ASC, with the overlapping "44" deduped out.
+    assert ordered == ["77", "33", "44", "G2", "G1"]
+    assert priority == {"77", "33", "44"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_sweep_disabled_matches_legacy_behavior():
+    """global_sweep=False (default): output identical to pre-feature
+    behavior. The global helper is not called."""
+    client = _make_bp_client({
+        ("11965", "UPCOMING", 0): _events_response(["1", "2"]),
+        ("11965", "LIVE", 0): _events_response([]),
+    })
+    ordered, priority = await resolve_event_ids(
+        standalone_events=["77"],
+        tournaments=["11965"],
+        bp_client=client,
+        # global_sweep defaults to False
+    )
+    assert ordered == ["77", "1", "2"]
+    assert priority == {"77", "1", "2"}
+    # Confirm the global path was not invoked — tournament_id=None never appeared.
+    for call in client.get_events.await_args_list:
+        assert call.kwargs.get("tournament_id") is not None or \
+               call.args and call.args[0] is not None
