@@ -36,7 +36,7 @@ def _make_bp_client(tournament_responses: dict) -> AsyncMock:
 @pytest.mark.asyncio
 async def test_standalone_only_returns_ids_in_declared_order():
     client = _make_bp_client({})
-    out = await resolve_event_ids(
+    out, _ = await resolve_event_ids(
         standalone_events=["33638734", "33583353"],
         tournaments=[],
         bp_client=client,
@@ -51,7 +51,7 @@ async def test_single_tournament_single_page():
         ("11965", "UPCOMING", 0): _events_response(["1", "2", "3"]),
         ("11965", "LIVE", 0): _events_response([]),
     })
-    out = await resolve_event_ids(
+    out, _ = await resolve_event_ids(
         standalone_events=[],
         tournaments=["11965"],
         bp_client=client,
@@ -65,7 +65,7 @@ async def test_upcoming_and_live_unioned_dedup_within_tournament():
         ("11965", "UPCOMING", 0): _events_response(["1", "2"]),
         ("11965", "LIVE", 0): _events_response(["2", "3"]),
     })
-    out = await resolve_event_ids(
+    out, _ = await resolve_event_ids(
         standalone_events=[],
         tournaments=["11965"],
         bp_client=client,
@@ -84,7 +84,7 @@ async def test_pagination_walks_until_partial_page():
         ("9", "UPCOMING", 200): _events_response(page3),
         ("9", "LIVE", 0): _events_response([]),
     })
-    out = await resolve_event_ids(
+    out, _ = await resolve_event_ids(
         standalone_events=[],
         tournaments=["9"],
         bp_client=client,
@@ -101,7 +101,7 @@ async def test_pagination_exactly_100_followed_by_empty():
         ("9", "UPCOMING", 100): _events_response([]),
         ("9", "LIVE", 0): _events_response([]),
     })
-    out = await resolve_event_ids(
+    out, _ = await resolve_event_ids(
         standalone_events=[],
         tournaments=["9"],
         bp_client=client,
@@ -125,7 +125,7 @@ async def test_one_tournament_failure_isolated_others_succeed(caplog):
     client.get_events.side_effect = get_events
 
     with caplog.at_level(logging.WARNING, logger="odds_scraper.event_resolver"):
-        out = await resolve_event_ids(
+        out, _ = await resolve_event_ids(
             standalone_events=[],
             tournaments=["OK1", "BROKEN", "OK2"],
             bp_client=client,
@@ -140,7 +140,7 @@ async def test_dedup_standalone_and_tournament_event():
         ("11965", "UPCOMING", 0): _events_response(["33", "44"]),
         ("11965", "LIVE", 0): _events_response([]),
     })
-    out = await resolve_event_ids(
+    out, _ = await resolve_event_ids(
         standalone_events=["33"],
         tournaments=["11965"],
         bp_client=client,
@@ -158,7 +158,7 @@ async def test_dedup_same_event_across_tournaments():
         ("B", "UPCOMING", 0): _events_response(["99", "200"]),
         ("B", "LIVE", 0): _events_response([]),
     })
-    out = await resolve_event_ids(
+    out, _ = await resolve_event_ids(
         standalone_events=[],
         tournaments=["A", "B"],
         bp_client=client,
@@ -170,7 +170,7 @@ async def test_dedup_same_event_across_tournaments():
 @pytest.mark.asyncio
 async def test_empty_inputs_returns_empty():
     client = _make_bp_client({})
-    out = await resolve_event_ids(
+    out, _ = await resolve_event_ids(
         standalone_events=[],
         tournaments=[],
         bp_client=client,
@@ -184,7 +184,7 @@ async def test_tournament_returning_empty_response_yields_no_events():
         ("X", "UPCOMING", 0): _events_response([]),
         ("X", "LIVE", 0): _events_response([]),
     })
-    out = await resolve_event_ids(
+    out, _ = await resolve_event_ids(
         standalone_events=[],
         tournaments=["X"],
         bp_client=client,
@@ -281,3 +281,21 @@ async def test_global_fetch_paginates_until_partial_page():
     )
     assert len(out) == 150
     assert set(out) == {str(i) for i in range(150)}
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_priority_set_with_ordered_list():
+    """resolve_event_ids returns (ordered_ids, priority_ids). priority_ids
+    is the union of standalone + tournament-expanded; ordered keeps the
+    'standalone declared order, then tournament IDs lexically' rule."""
+    client = _make_bp_client({
+        ("11965", "UPCOMING", 0): _events_response(["33", "44"]),
+        ("11965", "LIVE", 0): _events_response([]),
+    })
+    ordered, priority = await resolve_event_ids(
+        standalone_events=["77"],
+        tournaments=["11965"],
+        bp_client=client,
+    )
+    assert ordered == ["77", "33", "44"]
+    assert priority == {"77", "33", "44"}

@@ -173,7 +173,7 @@ async def _amain(config_path: Path) -> int:
         )
 
         bp_client = clients[Bookmaker.BETPAWA]
-        initial_ids = await resolve_event_ids(
+        initial_ids, priority_ids = await resolve_event_ids(
             standalone_events=cfg.events,
             tournaments=cfg.tournaments,
             bp_client=bp_client,
@@ -225,7 +225,7 @@ async def _amain(config_path: Path) -> int:
                         else cfg.refresh_interval_when_idle_seconds
                     )
                     await asyncio.sleep(sleep_sec)
-                    current = await resolve_event_ids(
+                    current, priority_ids = await resolve_event_ids(
                         standalone_events=cfg.events,
                         tournaments=cfg.tournaments,
                         bp_client=bp_client,

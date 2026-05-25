@@ -13,12 +13,15 @@ async def resolve_event_ids(
     standalone_events: Sequence[str],
     tournaments: Sequence[str],
     bp_client,
-) -> list[str]:
+) -> tuple[list[str], set[str]]:
     """One-shot: expand tournaments to event IDs, union with standalone IDs,
     dedupe. Per-tournament failures are logged and skipped, not raised.
 
-    Returns: standalone IDs first in declared order, then tournament-expanded
-    IDs sorted lexicographically. Deterministic ordering keeps logs stable.
+    Returns `(ordered_ids, priority_ids)`. `ordered_ids` lists standalone
+    IDs first in declared order, then tournament-expanded IDs sorted
+    lexicographically. `priority_ids` is the set of always-include IDs
+    (the union of both sources) — callers apply this when deciding which
+    IDs may bypass a concurrent-watcher cap.
     """
     seen: set[str] = set()
     ordered: list[str] = []
@@ -48,7 +51,8 @@ async def resolve_event_ids(
         )
 
     ordered.extend(sorted(tournament_ids))
-    return ordered
+    priority = set(ordered)
+    return ordered, priority
 
 
 async def _fetch_global_event_ids(
