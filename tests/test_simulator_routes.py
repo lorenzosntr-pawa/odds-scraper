@@ -503,7 +503,8 @@ def _plant_running(reg: RunRegistry, *, n_done: int, n_total: int) -> int:
     have to time a real background run."""
     rec = RunRecord(
         id=reg._next_id, state="running", profile_name="default",
-        regime="any", density="all", started_at="2026-05-23T10:00:00Z",
+        regime="any", density="all", engines="v1,v2",
+        started_at="2026-05-23T10:00:00Z",
         n_done=n_done, n_total=n_total,
     )
     reg._runs[rec.id] = rec
@@ -685,3 +686,76 @@ def test_post_run_accepts_event_id_in_scope(db_path: Path, client: TestClient):
     # No priced snapshot was seeded, so n_rows is 0 — but the run must
     # have completed (state == 'done'), proving the scope was accepted.
     assert rec.state == "done"
+
+
+# ---------------------------------------------------------------------------
+# Engine selector — V1 / V2 / both
+# ---------------------------------------------------------------------------
+
+def _default_id(db_path):
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    pid = conn.execute(
+        "SELECT id FROM pricer_configs WHERE is_default=1"
+    ).fetchone()["id"]
+    conn.close()
+    return pid
+
+
+def test_post_run_with_engine_v1_dispatches_v1_runner(db_path, client):
+    """`engine=v1` runs the existing single-engine runner — RunRecord
+    must record engines='v1' for downstream history filtering."""
+    r = client.post(
+        "/simulator/runs",
+        data={"config_id": _default_id(db_path),
+              "regime": "any", "density": "all", "engine": "v1",
+              "country": "", "league": "", "event_id": "",
+              "date": "", "search": ""},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    reg = _registry(client)
+    rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
+    assert rec.engines == "v1"
+
+
+def test_post_run_with_engine_v2_dispatches_dual_runner(db_path, client):
+    r = client.post(
+        "/simulator/runs",
+        data={"config_id": _default_id(db_path),
+              "regime": "any", "density": "all", "engine": "v2",
+              "country": "", "league": "", "event_id": "",
+              "date": "", "search": ""},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    reg = _registry(client)
+    rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
+    assert rec.engines == "v2"
+
+
+def test_post_run_with_engine_both_dispatches_dual_runner(db_path, client):
+    r = client.post(
+        "/simulator/runs",
+        data={"config_id": _default_id(db_path),
+              "regime": "any", "density": "all", "engine": "both",
+              "country": "", "league": "", "event_id": "",
+              "date": "", "search": ""},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    reg = _registry(client)
+    rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
+    assert rec.engines == "v1,v2"
+
+
+def test_post_run_with_unknown_engine_returns_400(db_path, client):
+    r = client.post(
+        "/simulator/runs",
+        data={"config_id": _default_id(db_path),
+              "regime": "any", "density": "all", "engine": "v9000",
+              "country": "", "league": "", "event_id": "",
+              "date": "", "search": ""},
+        follow_redirects=False,
+    )
+    assert r.status_code == 400

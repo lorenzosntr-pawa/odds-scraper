@@ -11,7 +11,14 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from odds_scraper.pricer import configs as config_mod, runner
+from odds_scraper.pricer import configs as config_mod, runner, runner_v2
+
+
+# Engine choice the simulator page can submit. "both" runs the dual
+# runner emitting v1_* + v2_* columns side-by-side. "v1" stays on the
+# pre-V2 runner (byte-identical column layout) for parity. "v2" runs
+# only V2 (V1 cells stay blank in the CSV).
+VALID_ENGINE_CHOICES = ("v1", "v2", "both")
 
 from . import queries
 
@@ -46,6 +53,7 @@ class RunRecord:
     profile_name: str
     regime: str
     density: str
+    engines: str  # 'v1' | 'v2' | 'v1,v2'
     started_at: str
     n_done: int = 0
     n_total: int = 0
@@ -74,7 +82,7 @@ class RunRegistry:
         self._lock = asyncio.Lock()
 
     async def acquire_id_if_idle(
-        self, *, profile_name: str, regime: str, density: str,
+        self, *, profile_name: str, regime: str, density: str, engines: str,
     ) -> Optional[int]:
         """Allocate a new run id and a 'running' record, but only if no
         other run is currently in flight. Returns None when busy."""
@@ -86,6 +94,7 @@ class RunRegistry:
             self._runs[run_id] = RunRecord(
                 id=run_id, state="running",
                 profile_name=profile_name, regime=regime, density=density,
+                engines=engines,
                 started_at=_now_iso(),
             )
             return run_id
@@ -156,11 +165,12 @@ def register_pricer_routes(
 
     def _run_in_thread(
         run_id: int, profile_id: int, regime: str, density: str,
-        scope: dict, csv_name: str,
+        scope: dict, csv_name: str, engine_choice: str,
     ) -> None:
         """Runs in the default executor (a background thread). The
         simulator no longer writes to the DB; results land in the CSV
-        and progress lands in the in-memory registry."""
+        and progress lands in the in-memory registry. Dispatches to
+        the V1 runner (engine='v1') or the dual runner (v2 / both)."""
         write_conn = _open_write_conn()
         try:
             profile = config_mod.load_by_id(write_conn, profile_id)
@@ -168,14 +178,26 @@ def register_pricer_routes(
                 registry.mark_failed(run_id, error="profile vanished")
                 return
             try:
-                n_events, n_rows = runner.run_simulation(
-                    write_conn, config=profile,
-                    regime=regime, density=density,
-                    scope=scope, csv_path=csv_dir / csv_name,
-                    on_progress=lambda done, total: registry.update_progress(
-                        run_id, done, total,
-                    ),
-                )
+                if engine_choice == "v1":
+                    n_events, n_rows = runner.run_simulation(
+                        write_conn, config=profile,
+                        regime=regime, density=density,
+                        scope=scope, csv_path=csv_dir / csv_name,
+                        on_progress=lambda done, total: registry.update_progress(
+                            run_id, done, total,
+                        ),
+                    )
+                else:
+                    engines = ("v2",) if engine_choice == "v2" else ("v1", "v2")
+                    n_events, n_rows = runner_v2.run_simulation_dual(
+                        write_conn, config=profile,
+                        regime=regime, density=density,
+                        scope=scope, csv_path=csv_dir / csv_name,
+                        engines=engines,
+                        on_progress=lambda done, total: registry.update_progress(
+                            run_id, done, total,
+                        ),
+                    )
             except Exception as exc:  # noqa: BLE001
                 log.exception("background simulation crashed")
                 registry.mark_failed(run_id, error=f"{type(exc).__name__}: {exc}")
@@ -211,6 +233,7 @@ def register_pricer_routes(
         config_id: int = Form(...),
         regime:    str = Form("any"),
         density:   str = Form("all"),
+        engine:    str = Form("both"),
         country:   str = Form(""),
         league:    str = Form(""),
         event_id:  str = Form(""),
@@ -221,6 +244,9 @@ def register_pricer_routes(
             raise HTTPException(400, f"unknown regime {regime!r}")
         if density not in runner.VALID_DENSITIES:
             raise HTTPException(400, f"unknown density {density!r}")
+        if engine not in VALID_ENGINE_CHOICES:
+            raise HTTPException(400, f"unknown engine {engine!r}")
+        engines_str = "v1" if engine == "v1" else ("v2" if engine == "v2" else "v1,v2")
         probe_conn = _open_write_conn()
         try:
             profile = config_mod.load_by_id(probe_conn, config_id)
@@ -230,6 +256,7 @@ def register_pricer_routes(
             raise HTTPException(400, f"unknown config_id {config_id}")
         run_id = await registry.acquire_id_if_idle(
             profile_name=profile.name, regime=regime, density=density,
+            engines=engines_str,
         )
         if run_id is None:
             # Another run is already executing — refuse politely and
@@ -242,7 +269,7 @@ def register_pricer_routes(
         loop = asyncio.get_running_loop()
         loop.run_in_executor(
             None, _run_in_thread,
-            run_id, config_id, regime, density, scope, csv_name,
+            run_id, config_id, regime, density, scope, csv_name, engine,
         )
         return RedirectResponse(url="/simulator", status_code=303)
 
