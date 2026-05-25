@@ -25,6 +25,13 @@ class OutputConfig:
 
 
 @dataclass(frozen=True)
+class GlobalSweepConfig:
+    enabled: bool = False
+    sport_id: str = "2"
+    event_types: tuple[str, ...] = ("UPCOMING", "LIVE")
+
+
+@dataclass(frozen=True)
 class AppConfig:
     country: str
     events: tuple[str, ...]
@@ -34,12 +41,15 @@ class AppConfig:
     cadence: CadenceConfig
     output: OutputConfig
     log_level: str
+    max_active_watchers: int = 500
+    global_sweep: GlobalSweepConfig = GlobalSweepConfig()
 
 
 def load_config(path: Path | str) -> AppConfig:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     cad = raw["cadence"]
     out = raw["output"]
+    sweep_raw = raw.get("global_sweep") or {}
     return AppConfig(
         country=str(raw["country"]),
         events=tuple(str(e) for e in (raw.get("events") or [])),
@@ -67,5 +77,13 @@ def load_config(path: Path | str) -> AppConfig:
         ),
         log_level=os.environ.get(
             "ODDS_SCRAPER_LOG_LEVEL", str(raw.get("log_level", "INFO")),
+        ),
+        max_active_watchers=int(raw.get("max_active_watchers", 500)),
+        global_sweep=GlobalSweepConfig(
+            enabled=bool(sweep_raw.get("enabled", False)),
+            sport_id=str(sweep_raw.get("sport_id", "2")),
+            event_types=tuple(
+                str(t) for t in (sweep_raw.get("event_types") or ("UPCOMING", "LIVE"))
+            ),
         ),
     )

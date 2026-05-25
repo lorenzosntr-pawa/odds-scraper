@@ -220,3 +220,49 @@ def test_old_csv_path_key_ignored(tmp_path: Path):
     cfg = load_config(p)
     assert cfg.output.db_path == "data/odds.db"
     assert not hasattr(cfg.output, "csv_path")
+
+
+_BASE_YAML = """\
+country: ng
+events: []
+tournaments: []
+cadence:
+  prematch_seconds: 600
+  live_seconds: 90
+  status_retry_backoff_seconds: [5, 15, 45]
+  watchdog_after_kickoff_seconds: 10800
+output:
+  db_path: data/odds.db
+  resolution_cache_path: data/resolution_cache.json
+"""
+
+
+def test_load_config_defaults_max_active_watchers_to_500(tmp_path: Path):
+    p = tmp_path / "config.yaml"
+    p.write_text(_BASE_YAML, encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.max_active_watchers == 500
+
+
+def test_load_config_defaults_global_sweep_disabled(tmp_path: Path):
+    p = tmp_path / "config.yaml"
+    p.write_text(_BASE_YAML, encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.global_sweep.enabled is False
+    assert cfg.global_sweep.sport_id == "2"
+    assert cfg.global_sweep.event_types == ("UPCOMING", "LIVE")
+
+
+def test_load_config_reads_global_sweep_block(tmp_path: Path):
+    p = tmp_path / "config.yaml"
+    p.write_text(_BASE_YAML + textwrap.dedent("""\
+        max_active_watchers: 250
+        global_sweep:
+          enabled: true
+          sport_id: "2"
+          event_types: [UPCOMING]
+    """), encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.max_active_watchers == 250
+    assert cfg.global_sweep.enabled is True
+    assert cfg.global_sweep.event_types == ("UPCOMING",)
