@@ -109,6 +109,46 @@ async def _reap_stuck_started_events(
     return len(rows)
 
 
+def _decide_spawns(
+    *,
+    ordered: list[str],
+    priority: set[str],
+    watched: set[str],
+    n_active: int,
+    max_active: int,
+) -> list[str]:
+    """Per-refresh spawn decision. Priority IDs always spawn regardless
+    of the cap; non-priority IDs spawn only while there's room.
+
+    Args:
+        ordered: resolver output (priority IDs first, then global by kickoff).
+        priority: always-include IDs (standalone + tournament-expanded).
+        watched: IDs already being watched OR queued for spawn this refresh.
+        n_active: current count of running watcher tasks.
+        max_active: configured soft cap on concurrent watchers.
+
+    Returns: the list of IDs to spawn this refresh, in the order to spawn
+    them. The cap is a NEW-non-priority gate — running watchers are never
+    evicted to make room.
+    """
+    to_spawn: list[str] = []
+    headroom = max(0, max_active - n_active)
+    for ev_id in ordered:
+        if ev_id in watched:
+            continue
+        if ev_id in priority:
+            # Priority IDs always spawn but still count toward the cap
+            # so non-priority IDs see reduced headroom.
+            to_spawn.append(ev_id)
+            if headroom > 0:
+                headroom -= 1
+            continue
+        if headroom > 0:
+            to_spawn.append(ev_id)
+            headroom -= 1
+    return to_spawn
+
+
 async def supervise_watcher(
     watcher, event_id: str, max_backoff_seconds: int = 300,
 ) -> None:
@@ -173,16 +213,20 @@ async def _amain(config_path: Path) -> int:
         )
 
         bp_client = clients[Bookmaker.BETPAWA]
-        # priority_ids (always-include set) is bound here for the cap gate
-        # added in a follow-up commit. It's intentionally unused at this point.
         initial_ids, priority_ids = await resolve_event_ids(
             standalone_events=cfg.events,
             tournaments=cfg.tournaments,
             bp_client=bp_client,
+            global_sweep=cfg.global_sweep.enabled,
+            sport_id=cfg.global_sweep.sport_id,
+            event_types=cfg.global_sweep.event_types,
         )
+        n_global_initial = len(initial_ids) - len(priority_ids)
         log.info(
-            "initial event set: %d (from %d standalone + %d tournaments)",
-            len(initial_ids), len(cfg.events), len(cfg.tournaments),
+            "initial event set: %d (priority=%d from %d standalone + %d tournaments; global=%d; cap=%d)",
+            len(initial_ids), len(priority_ids),
+            len(cfg.events), len(cfg.tournaments),
+            n_global_initial, cfg.max_active_watchers,
         )
 
         watched_ids: set[str] = set()
@@ -201,7 +245,13 @@ async def _amain(config_path: Path) -> int:
                 supervise_watcher(w, ev_id), name=f"watcher-{ev_id}",
             ))
 
-        for ev_id in initial_ids:
+        for ev_id in _decide_spawns(
+            ordered=initial_ids,
+            priority=priority_ids,
+            watched=watched_ids,
+            n_active=0,
+            max_active=cfg.max_active_watchers,
+        ):
             _spawn_watcher(ev_id)
 
         async def _refresh_loop():
@@ -227,22 +277,32 @@ async def _amain(config_path: Path) -> int:
                         else cfg.refresh_interval_when_idle_seconds
                     )
                     await asyncio.sleep(sleep_sec)
-                    # priority_ids will feed the cap gate in a follow-up
-                    # commit — currently unused.
                     current, priority_ids = await resolve_event_ids(
                         standalone_events=cfg.events,
                         tournaments=cfg.tournaments,
                         bp_client=bp_client,
+                        global_sweep=cfg.global_sweep.enabled,
+                        sport_id=cfg.global_sweep.sport_id,
+                        event_types=cfg.global_sweep.event_types,
                     )
-                    new_ids = [i for i in current if i not in watched_ids]
-                    if new_ids:
-                        log.info("refresh: spawning %d new watchers", len(new_ids))
-                        for ev_id in new_ids:
+                    to_spawn = _decide_spawns(
+                        ordered=current,
+                        priority=priority_ids,
+                        watched=watched_ids,
+                        n_active=len(tasks),
+                        max_active=cfg.max_active_watchers,
+                    )
+                    if to_spawn:
+                        log.info(
+                            "refresh: spawning %d new watchers (active=%d, cap=%d)",
+                            len(to_spawn), len(tasks), cfg.max_active_watchers,
+                        )
+                        for ev_id in to_spawn:
                             _spawn_watcher(ev_id)
                     else:
                         log.info(
-                            "refresh: no new events (active watchers: %d)",
-                            len(tasks),
+                            "refresh: no new events (active watchers: %d, cap=%d)",
+                            len(tasks), cfg.max_active_watchers,
                         )
                 except asyncio.CancelledError:
                     raise
