@@ -83,6 +83,49 @@ def test_probability_is_consumed_as_is_never_redevigged():
     assert result["p_away_win"] == 0.20
 
 
+def test_bp_suspended_side_uses_sb_for_that_side_only():
+    """BP suspended one 1x2 side (odds=0, prob still valid). The other
+    sides' BP odds remain in play; the suspended side falls back to SB
+    per-side. cap_source_* records which book the engine actually used
+    for each side's cap source."""
+    bp_prices = [
+        _row("1x2_ft", 0.0, "home", 100.0, 0.005),
+        _row("1x2_ft", 0.0, "draw", 22.79, 0.045),
+        _row("1x2_ft", 0.0, "away", 0.0,   0.95),  # suspended
+    ] + _full_ou("over_under_ft")
+    sb_prices = [
+        _row("1x2_ft", 0.0, "home", 150.0, 0.004),
+        _row("1x2_ft", 0.0, "draw", 14.0,  0.07),
+        _row("1x2_ft", 0.0, "away", 1.01,  0.95),
+    ] + _full_ou("over_under_ft")
+    result, _ = inputs.extract(
+        {"betpawa": bp_prices, "sportybet": sb_prices},
+    )
+    assert result["home_1x2_odds"] == 100.0  # BP's valid home odds
+    assert result["away_1x2_odds"] == 1.01   # filled from SB per-side
+    # Probabilities still come from BP (all-or-nothing on probs).
+    assert result["p_home_win"] == 0.005
+    assert result["p_away_win"] == 0.95
+    assert result["_cap_source_home"] == "bp"
+    assert result["_cap_source_away"] == "sb"
+
+
+def test_bp_suspended_side_no_sb_fallback_leaves_odds_none():
+    """When BP suspends a side and SB isn't present, that side's odds
+    arrive at the engine as None — the cap step degrades to floored-only
+    rather than rejecting the whole tick."""
+    bp_prices = [
+        _row("1x2_ft", 0.0, "home", 100.0, 0.005),
+        _row("1x2_ft", 0.0, "draw", 22.79, 0.045),
+        _row("1x2_ft", 0.0, "away", 0.0,   0.95),
+    ] + _full_ou("over_under_ft")
+    result, _ = inputs.extract({"betpawa": bp_prices})
+    assert result["home_1x2_odds"] == 100.0
+    assert result["away_1x2_odds"] is None
+    assert result["_cap_source_home"] == "bp"
+    assert result["_cap_source_away"] == ""
+
+
 def test_per_side_ou_kept_independent():
     """home_ou available from BP; away_ou only from SB — each list
     independently falls through, no cross-book merging within a list."""

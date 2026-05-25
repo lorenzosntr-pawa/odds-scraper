@@ -428,10 +428,12 @@ def price_early_payout_markets(
     p_home_win: float,
     p_draw: float,
     p_away_win: float,
-    # Original 1X2 decimal odds — used for cap step AND trailing-selection base when live
-    home_1x2_odds: float,
-    draw_1x2_odds: float,
-    away_1x2_odds: float,
+    # Original 1X2 decimal odds — used for cap step AND trailing-selection base when live.
+    # Per-side Optional: a suspended selection (BP returns odds=0) reaches us as None
+    # via inputs.extract; the cap handles None as "no source, floor to 1.01".
+    home_1x2_odds: Optional[float],
+    draw_1x2_odds: Optional[float],
+    away_1x2_odds: Optional[float],
     # O/U lines: lists of (line, over_prob) tuples (pre-devigged; no longer (line, over_odds, under_odds))
     total_ou: List[Tuple[float, float]],
     home_ou: List[Tuple[float, float]],

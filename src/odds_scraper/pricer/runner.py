@@ -173,6 +173,18 @@ def _ev(our_prob, book_odds):
     return our_prob * book_odds - 1.0
 
 
+def _book_1x2_odds(prices: list) -> tuple:
+    """`(home_odds, draw_odds, away_odds)` for one book's tick. Missing or
+    suspended sides become empty cells in the CSV so the reader can see
+    when a book closed that selection (BP returns odds=0 for suspended)."""
+    out = {"home": "", "draw": "", "away": ""}
+    for r in prices:
+        if r.get("market_id") == "1x2_ft" and r.get("side") in out:
+            o = r["odds"]
+            out[r["side"]] = o if o not in (None, 0, 0.0) else ""
+    return out["home"], out["draw"], out["away"]
+
+
 def _extract_quoted_up(prices: list) -> dict:
     """`{1up_home, 1up_away, 2up_home, 2up_away}` → `(odds, prob)` for
     one book's tick. Probability is the bookmaker's own devigged true
@@ -269,8 +281,13 @@ def run_simulation(
                 mh, ma = leads_by_tick.get((event_id, ts_utc), (0, 0))
                 engine_inputs["max_home_lead"] = mh
                 engine_inputs["max_away_lead"] = ma
+                # Strip private metadata (e.g. _cap_source_home) — those
+                # live on the inputs dict for the CSV layer, not the engine.
+                engine_kwargs = {
+                    k: v for k, v in engine_inputs.items() if not k.startswith("_")
+                }
                 try:
-                    res = engine.price_early_payout_markets(**engine_inputs)
+                    res = engine.price_early_payout_markets(**engine_kwargs)
                 except Exception as exc:  # noqa: BLE001
                     log.warning(
                         "engine crashed on event=%s ts=%s — skipping (%s)",
@@ -283,6 +300,10 @@ def run_simulation(
                     }
                     bp, sb = quoted["betpawa"], quoted["sportybet"]
                     b9j, bw = quoted["bet9ja"], quoted["betway"]
+                    bp_1x2_h, bp_1x2_d, bp_1x2_a = _book_1x2_odds(prices_by_book.get("betpawa", []))
+                    sb_1x2_h, sb_1x2_d, sb_1x2_a = _book_1x2_odds(prices_by_book.get("sportybet", []))
+                    cap_src_home = engine_inputs.get("_cap_source_home", "")
+                    cap_src_away = engine_inputs.get("_cap_source_away", "")
                     p_h1, p_a1 = res["p_home_1"], res["p_away_1"]
                     p_h2, p_a2 = res["p_home_2"], res["p_away_2"]
                     cap_1h = res["market_1up"]["home_margin"]
@@ -333,6 +354,11 @@ def run_simulation(
                         b9j["2up_home"][0], b9j["2up_away"][0],
                         bw["1up_home"][0],  bw["1up_away"][0],
                         bw["2up_home"][0],  bw["2up_away"][0],
+                        # 1x2 odds + which book the engine used per side
+                        # for the cap source.
+                        bp_1x2_h, bp_1x2_d, bp_1x2_a,
+                        sb_1x2_h, sb_1x2_d, sb_1x2_a,
+                        cap_src_home, cap_src_away,
                         # Profile B blocks — V1 + V2 OUR (16+16) + BP/SB
                         # EV (4+4) = 40 blanks in single-profile runs.
                         *((""),) * 40,

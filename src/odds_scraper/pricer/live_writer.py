@@ -67,8 +67,11 @@ def compute_and_write(
         max_leads = score_state.max_leads_so_far(conn, event_id)
     engine_inputs["max_home_lead"] = max_leads[0]
     engine_inputs["max_away_lead"] = max_leads[1]
+    # Private metadata keys (e.g. _cap_source_home) live on the inputs dict
+    # for the CSV layer's benefit but aren't engine kwargs — strip before call.
+    engine_kwargs = {k: v for k, v in engine_inputs.items() if not k.startswith("_")}
     try:
-        res = engine.price_early_payout_markets(**engine_inputs)
+        res = engine.price_early_payout_markets(**engine_kwargs)
     except Exception as exc:  # noqa: BLE001
         log.warning(
             "v1 engine crashed on event=%s ts=%s — skipping (%s)",
@@ -79,7 +82,7 @@ def compute_and_write(
     # crashes we don't abort the V1 write; we just leave the v2_*
     # cells null so the detail page can still render V1.
     try:
-        res_v2 = engine_v2.price_early_payout_markets(**engine_inputs)
+        res_v2 = engine_v2.price_early_payout_markets(**engine_kwargs)
     except Exception as exc:  # noqa: BLE001
         log.warning(
             "v2 engine crashed on event=%s ts=%s — leaving v2 cells null (%s)",

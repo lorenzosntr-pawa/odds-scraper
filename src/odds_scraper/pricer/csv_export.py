@@ -60,6 +60,14 @@ CSV_COLUMNS = (
     "b9j_2up_home_odds", "b9j_2up_away_odds",
     "bw_1up_home_odds",  "bw_1up_away_odds",
     "bw_2up_home_odds",  "bw_2up_away_odds",
+    # 1x2 odds used for the engine's cap step. `bp_1x2_*` / `sb_1x2_*`
+    # are the raw per-book quotes at this tick (so the reader can see
+    # when BP suspended a side). `cap_source_home` / `cap_source_away`
+    # name which book the engine actually used for each side's cap
+    # source (BP preferred; SB only when BP's side was suspended).
+    "bp_1x2_home_odds", "bp_1x2_draw_odds", "bp_1x2_away_odds",
+    "sb_1x2_home_odds", "sb_1x2_draw_odds", "sb_1x2_away_odds",
+    "cap_source_home",  "cap_source_away",
     # ===== Profile B block — same layout as Profile A's OUR + BP/SB
     # EV cells, prefixed `pB_`. Blank when no Profile B was selected.
     # Bookmaker prob+odds are profile-independent so they stay in the

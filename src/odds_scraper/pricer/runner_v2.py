@@ -23,6 +23,7 @@ from . import (
 from .runner import (
     VALID_REGIMES, VALID_DENSITIES, _PROGRESS_BATCH, _ev,
     _select_ticks, _load_tick_prices, _extract_quoted_up,
+    _book_1x2_odds,
     with_coefficients as with_v1_coefficients,
 )
 
@@ -37,10 +38,15 @@ def with_v2_coefficients(overrides: dict) -> Iterator[None]:
     """Mirror of `runner.with_coefficients` but targeting engine_v2.
     Necessary because the override mechanism setattrs on a module — if
     we used V1's with_coefficients on engine_v2, the wrong module would
-    be touched."""
-    saved = {k: getattr(engine_v2, k) for k in overrides}
+    be touched.
+
+    Tolerates V1-only override keys (e.g. ONEUP_TRAILING_MIN_REDUCTION) by
+    skipping any name engine_v2 doesn't define — V2 doesn't use those, so
+    they don't need to be settable on it."""
+    applicable = {k: v for k, v in overrides.items() if hasattr(engine_v2, k)}
+    saved = {k: getattr(engine_v2, k) for k in applicable}
     try:
-        for k, v in overrides.items():
+        for k, v in applicable.items():
             setattr(engine_v2, k, v)
         yield
     finally:
@@ -229,6 +235,10 @@ def run_simulation_dual(
             }
             bp, sb = quoted["betpawa"], quoted["sportybet"]
             b9j, bw = quoted["bet9ja"], quoted["betway"]
+            bp_1x2_h, bp_1x2_d, bp_1x2_a = _book_1x2_odds(prices_by_book.get("betpawa", []))
+            sb_1x2_h, sb_1x2_d, sb_1x2_a = _book_1x2_odds(prices_by_book.get("sportybet", []))
+            cap_src_home = engine_inputs.get("_cap_source_home", "")
+            cap_src_away = engine_inputs.get("_cap_source_away", "")
 
             # EV against bookmaker odds uses V1's prob when V1 ran;
             # otherwise V2's. V1 stays the engine-of-record for live EVs.
@@ -302,6 +312,9 @@ def run_simulation_dual(
                 b9j["2up_home"][0], b9j["2up_away"][0],
                 bw["1up_home"][0],  bw["1up_away"][0],
                 bw["2up_home"][0],  bw["2up_away"][0],
+                bp_1x2_h, bp_1x2_d, bp_1x2_a,
+                sb_1x2_h, sb_1x2_d, sb_1x2_a,
+                cap_src_home, cap_src_away,
                 *pB_v1_block,
                 *pB_v2_block,
                 _ev(pB_p_h1, bp["1up_home"][0]), _ev(pB_p_a1, bp["1up_away"][0]),

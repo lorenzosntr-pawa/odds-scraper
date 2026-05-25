@@ -20,16 +20,25 @@ def _is_valid_prob(v) -> bool:
 
 def _extract_1x2(prices: Iterable) -> Optional[dict]:
     """Return {'home': {'odds':_, 'prob':_}, 'draw': …, 'away': …} or None
-    if any side is missing or has invalid prob/odds. Treated as one input —
-    all three sides must come from the same book.
+    if any side's probability is missing/invalid. Treated as one input —
+    all three sides' probs must come from the same book so the engine's
+    favorite-strength math stays internally consistent.
+
+    A side's ODDS, however, may be None when that side is suspended
+    (BP returns odds=0 for a closed selection). The engine's cap step
+    accepts None as "no cap source for this side" and falls back to a
+    floor, so a suspended away side doesn't disqualify the whole book.
+    Cross-book per-side odds fallback happens in `extract()` so the cap
+    always lands on the closest-available 1x2 source.
     """
     out: dict = {}
     for r in prices:
         if r["market_id"] != "1x2_ft":
             continue
-        if not _is_valid_odds(r["odds"]) or not _is_valid_prob(r["probability"]):
+        if not _is_valid_prob(r["probability"]):
             continue
-        out[r["side"]] = {"odds": r["odds"], "prob": r["probability"]}
+        odds = r["odds"] if _is_valid_odds(r["odds"]) else None
+        out[r["side"]] = {"odds": odds, "prob": r["probability"]}
     if {"home", "draw", "away"} <= out.keys():
         return out
     return None
@@ -101,6 +110,27 @@ def extract(
     if one_x_two is None:
         return None, ""
 
+    # Per-side 1x2 odds cross-book fallback. The chosen book's
+    # `one_x_two` may have None on a suspended side; if the OTHER book
+    # has it valid, swap that in so the cap step still has a source.
+    # Track which book each side's odds came from so the CSV can
+    # surface `cap_source_home` / `cap_source_away`.
+    other = sb if "bp" in used_books and "sb" not in used_books else (
+        bp if "sb" in used_books and "bp" not in used_books else None
+    )
+    other_1x2 = _extract_1x2(other) if other is not None else None
+    chosen_book = "bp" if "bp" in used_books else ("sb" if "sb" in used_books else "")
+    other_book = "sb" if chosen_book == "bp" else ("bp" if chosen_book == "sb" else "")
+    cap_source: dict[str, str] = {}
+    for side in ("home", "draw", "away"):
+        if one_x_two[side]["odds"] is not None:
+            cap_source[side] = chosen_book
+        elif other_1x2 is not None and other_1x2[side]["odds"] is not None:
+            one_x_two[side]["odds"] = other_1x2[side]["odds"]
+            cap_source[side] = other_book
+        else:
+            cap_source[side] = ""
+
     total_ou = pick(_extract_ou, bp_args=("over_under_ft",),
                     sb_args=("over_under_ft",), nonempty=bool)
     home_ou  = pick(_extract_ou, bp_args=("home_over_under_ft",),
@@ -133,4 +163,8 @@ def extract(
         "away_ou":        away_ou,
         "ftts_home_prob": ftts["home"] if ftts else None,
         "ftts_away_prob": ftts["away"] if ftts else None,
+        # Private — stripped by runners before engine call. Lets the CSV
+        # surface which book each side's cap source actually came from.
+        "_cap_source_home": cap_source["home"],
+        "_cap_source_away": cap_source["away"],
     }, basis_used

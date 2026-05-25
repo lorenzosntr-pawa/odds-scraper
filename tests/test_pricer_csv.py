@@ -61,6 +61,9 @@ def _build_row(**overrides) -> tuple:
         "b9j_2up_home_odds": "", "b9j_2up_away_odds": "",
         "bw_1up_home_odds": "", "bw_1up_away_odds": "",
         "bw_2up_home_odds": "", "bw_2up_away_odds": "",
+        "bp_1x2_home_odds": "", "bp_1x2_draw_odds": "", "bp_1x2_away_odds": "",
+        "sb_1x2_home_odds": "", "sb_1x2_draw_odds": "", "sb_1x2_away_odds": "",
+        "cap_source_home": "", "cap_source_away": "",
     }
     defaults.update(overrides)
     return tuple(defaults[c] for c in csv_export.CSV_COLUMNS)

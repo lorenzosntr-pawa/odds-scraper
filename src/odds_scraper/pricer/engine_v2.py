@@ -6,13 +6,10 @@ that tracks {ever ±1, ever ±2} together. The 1UP trailing branch now
 uses inclusion-exclusion math identical in shape to 2UP, so the
 invariant P(1UP) ≥ P(2UP) ⇒ 1UP_odds ≤ 2UP_odds holds by construction.
 
-Two V1 constants — ONEUP_TRAILING_MIN_REDUCTION and
-ONEUP_TRAILING_MAX_REDUCTION — survive in this module so that
-profile.coefficients dicts produced by configs.py round-trip cleanly,
-but V2's 1UP trailing path does not reference them. They are dormant.
-
 Kept module-isolated from engine.py so that with_coefficients overrides
-on one engine never cross-contaminate the other.
+on one engine never cross-contaminate the other. V1-only override keys
+(e.g. ONEUP_TRAILING_MIN/MAX_REDUCTION) are silently skipped by
+runner_v2.with_v2_coefficients — V2 doesn't define or read them.
 """
 from __future__ import annotations
 
@@ -32,8 +29,6 @@ ONEUP_TRAILING_UNDERDOG_MARGIN = (0.994, 0.014)
 ONEUP_FAVORITE_MODEL  = (-0.137308, 1.228176, 0.001221, 0.085310)  # (intercept, nextGoal, lambda, underdog)
 ONEUP_UNDERDOG_MODEL  = (0.006276, 0.909535, -0.009967, 0.094182)
 ONEUP_MIN_GUARANTEED_REDUCTION = 0.02
-ONEUP_TRAILING_MIN_REDUCTION = 0.05
-ONEUP_TRAILING_MAX_REDUCTION = 0.25
 
 TWOUP_FAVORITE_MARGIN = (0.998, 0.010)
 TWOUP_UNDERDOG_MARGIN = (0.994, 0.014)
@@ -41,8 +36,6 @@ TWOUP_FAVORITE_BOOST_COEFFICIENT = 0.9
 TWOUP_UNDERDOG_BOOST_COEFFICIENT = 0.6
 TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION = 0.02
 TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION = 0.005
-TWOUP_TRAILING_MIN_REDUCTION = 0.05
-TWOUP_TRAILING_MAX_REDUCTION = 0.25
 
 TWOUP_DP_MAX_GOALS = 40
 TWOUP_DP_NEGLIGIBLE_TAIL = 1e-12
@@ -440,54 +433,18 @@ def _ever_leads_accumulate(state, offset, weight, accum):
                 if away_wins: accum[7] += weighted
 
 
-def _poisson_at_least(lam: float, k: int) -> float:
-    """P(N >= k) under Poisson(lam). Port of SyntheticMath.poissonAtLeast."""
-    if lam <= 0:
-        return 0.0 if k > 0 else 1.0
-    if k <= 0:
-        return 1.0
-    cdf = 0.0
-    exp_neg = math.exp(-lam)
-    factorial = 1.0
-    lambda_pow = 1.0
-    for i in range(k):
-        if i > 0:
-            factorial *= i
-            lambda_pow *= lam
-        cdf += (lambda_pow * exp_neg) / factorial
-    return 1.0 - cdf
-
-
-def _trailing_selection(
-    winner_odds: Optional[float],
-    winner_prob: Optional[float],
-    team_lambda: Optional[float],
-    goals_needed: int,
-    min_reduction: float,
-    max_reduction: float,
-) -> Tuple[Optional[float], Optional[float]]:
-    """Port of TrailingSelection.calculate. Returns (trailing_odds, boosted_prob), or (None, None)."""
-    if team_lambda is None or team_lambda <= 0:
-        return None, None
-    if winner_odds is None or winner_odds <= 0 or winner_prob is None or winner_prob <= 0:
-        return None, None
-    poisson_factor = _poisson_at_least(team_lambda, goals_needed)
-    reduction_factor = min_reduction + (1.0 - poisson_factor) * (max_reduction - min_reduction)
-    trailing_odds = winner_odds * (1.0 - reduction_factor)
-    boosted_prob = winner_prob + reduction_factor * (1.0 - winner_prob)
-    return trailing_odds, boosted_prob
-
-
 def price_early_payout_markets(
     *,
     # 1X2 — probabilities (pre-devigged) drive the math
     p_home_win: float,
     p_draw: float,
     p_away_win: float,
-    # Original 1X2 decimal odds — used for cap step AND trailing-selection base when live
-    home_1x2_odds: float,
-    draw_1x2_odds: float,
-    away_1x2_odds: float,
+    # Original 1X2 decimal odds — used for cap step AND trailing-selection base when live.
+    # Per-side Optional: a suspended selection (BP returns odds=0) reaches us as None
+    # via inputs.extract; the cap handles None as "no source, floor to 1.01".
+    home_1x2_odds: Optional[float],
+    draw_1x2_odds: Optional[float],
+    away_1x2_odds: Optional[float],
     # O/U lines: lists of (line, over_prob) tuples (pre-devigged; no longer (line, over_odds, under_odds))
     total_ou: List[Tuple[float, float]],
     home_ou: List[Tuple[float, float]],
@@ -610,8 +567,7 @@ def price_early_payout_markets(
         # V2 uses the same DP as 2UP, reading the ever_±1 fields. This
         # makes the invariant P(1UP) ≥ P(2UP) hold by construction since
         # both products share ever_leads_probability and reaching ±2
-        # implies passing through ±1. Replaces V1's heuristic
-        # _trailing_selection on this branch.
+        # implies passing through ±1.
         stats = ever_leads_probability(lambda_home, lambda_away, goal_difference)
         p_h_ever_1, p_a_ever_1 = stats[0], stats[1]
         p_h_ever_1_wins, p_a_ever_1_wins = stats[2], stats[3]

@@ -125,7 +125,13 @@ def test_run_simulation_density_latest_emits_one_row_per_event(db, tmp_path):
     assert rows[0]["ts_utc"] == "2026-05-21T11:00:00Z"
 
 
-def test_run_simulation_skips_snapshot_with_zero_odds(db, tmp_path):
+def test_run_simulation_handles_suspended_1x2_side(db, tmp_path):
+    """When BP suspends one 1x2 side (odds=0) but probs are all valid,
+    the engine still runs — the suspended side's cap source becomes None
+    (no SB fallback in this fixture), and cap_source_home stays blank.
+    Pre-2026-05 behavior dropped the whole snapshot; the new contract is
+    graceful per-side degradation so the cap still works for the
+    non-suspended side(s)."""
     _seed_event_with_priced_snapshot(db, "GOOD")
     db.execute(
         "INSERT INTO events (id, home, away, kickoff_utc) "
@@ -163,9 +169,18 @@ def test_run_simulation_skips_snapshot_with_zero_odds(db, tmp_path):
         scope={"country": "", "league": "", "date": "", "search": ""},
         csv_path=csv_path,
     )
-    event_ids = {r["event_id"] for r in _read_csv(csv_path)}
+    rows = _read_csv(csv_path)
+    event_ids = {r["event_id"] for r in rows}
     assert "GOOD" in event_ids
-    assert "BAD" not in event_ids
+    assert "BAD" in event_ids
+    bad_row = next(r for r in rows if r["event_id"] == "BAD")
+    # Suspended home side: BP odds blank in CSV, no SB fallback in this
+    # fixture, so the cap source for home is empty.
+    assert bad_row["bp_1x2_home_odds"] == ""
+    assert bad_row["cap_source_home"] == ""
+    # Away side still has valid BP 1x2 — used as cap source.
+    assert bad_row["bp_1x2_away_odds"] == "4.2"
+    assert bad_row["cap_source_away"] == "bp"
 
 
 def test_run_simulation_handles_many_snapshots_without_in_clause_limit(db, tmp_path):
