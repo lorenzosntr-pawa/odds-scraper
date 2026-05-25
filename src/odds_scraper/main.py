@@ -117,18 +117,22 @@ def _decide_spawns(
     n_active: int,
     max_active: int,
 ) -> list[str]:
-    """Per-refresh spawn decision. Priority IDs always spawn regardless
-    of the cap; non-priority IDs spawn only while there's room.
+    """Per-refresh spawn decision. Priority IDs always spawn even when
+    headroom is exhausted, but they still consume one slot of headroom
+    each, so non-priority spawns see correspondingly less room. The cap
+    is therefore "soft": when |priority| > max_active, total watchers
+    can briefly exceed max_active until non-priority spawns are
+    naturally throttled.
 
     Args:
         ordered: resolver output (priority IDs first, then global by kickoff).
         priority: always-include IDs (standalone + tournament-expanded).
-        watched: IDs already being watched OR queued for spawn this refresh.
+        watched: IDs already being watched (the caller's running-task set).
         n_active: current count of running watcher tasks.
         max_active: configured soft cap on concurrent watchers.
 
     Returns: the list of IDs to spawn this refresh, in the order to spawn
-    them. The cap is a NEW-non-priority gate — running watchers are never
+    them. The cap is a NEW-spawn gate — running watchers are never
     evicted to make room.
     """
     to_spawn: list[str] = []
