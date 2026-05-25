@@ -284,6 +284,8 @@ def run_simulation(
                     cap_2h = res["market_2up"]["home_margin"]
                     cap_2a = res["market_2up"]["away_margin"]
                     rows.append((
+                        # V1-only runner — engines marker + V2 block stays blank.
+                        "v1",
                         t["snapshot_id"], event_id,
                         t["home"], t["away"], t["kickoff_utc"],
                         ts_utc,
@@ -300,6 +302,13 @@ def run_simulation(
                         p_h2, p_a2,
                         res["market_2up"]["home_fair"], cap_2h, _ev(p_h2, cap_2h),
                         res["market_2up"]["away_fair"], cap_2a, _ev(p_a2, cap_2a),
+                        # V2 block — 16 blanks in V1-only runs.
+                        "", "",
+                        "", "", "",
+                        "", "", "",
+                        "", "",
+                        "", "", "",
+                        "", "", "",
                         # BP — prob, odds, EV per selection.
                         bp["1up_home"][1], bp["1up_home"][0], _ev(p_h1, bp["1up_home"][0]),
                         bp["1up_away"][1], bp["1up_away"][0], _ev(p_a1, bp["1up_away"][0]),

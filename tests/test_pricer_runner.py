@@ -686,3 +686,21 @@ def test_run_simulation_deactivates_1up_for_swung_back_score(db, tmp_path):
     assert rows[1]["our_1up_home_capped"] == ""
     # Away 1UP at 1-1 must still be priced — away has never led.
     assert rows[1]["our_1up_away_capped"] != ""
+
+
+def test_v1_runner_marks_rows_engines_v1(db, tmp_path):
+    """A V1-only run must record `engines="v1"` so downstream tooling
+    can filter cleanly when the same CSV mixes engines (future). The
+    v2 cells stay blank in a V1-only run."""
+    _seed_event_with_priced_snapshot(db, "EVMARK")
+    default = configs.load_default(db)
+    csv_path = tmp_path / "sim" / "v1.csv"
+    runner.run_simulation(
+        db, config=default, regime="any", density="all",
+        scope={"country": "", "league": "", "date": "", "search": ""},
+        csv_path=csv_path,
+    )
+    rows = _read_csv(csv_path)
+    assert rows and rows[0]["engines"] == "v1"
+    assert rows[0]["v2_p_home_1"] == ""
+    assert rows[0]["v2_our_2up_away_capped_ev"] == ""
