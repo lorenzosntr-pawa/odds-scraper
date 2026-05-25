@@ -58,3 +58,13 @@ output:
   db_path: data/odds.db
   resolution_cache_path: data/resolution_cache.json
 log_level: INFO
+# Soft cap on concurrent watchers. Priority IDs (events + tournaments)
+# always spawn and consume cap headroom; non-priority (global-sweep)
+# IDs spawn only while there's room.
+max_active_watchers: 500
+# Global BP football sweep: scrapes every UPCOMING + LIVE event BP lists
+# under sport_id="2", in addition to the priority lists above.
+global_sweep:
+  enabled: true
+  sport_id: "2"
+  event_types: [UPCOMING, LIVE]
