@@ -116,3 +116,58 @@ def test_v2_dog_margin_intercept_bumped():
 def test_v1_dog_margin_intercept_unchanged():
     """V1 stays at 0.008 — V2 must not bleed into V1."""
     assert ep_v1.TWOUP_UNDERDOG_MARGIN == (0.994, 0.008)
+
+
+@pytest.fixture
+def home_trailing_match(balanced_match):
+    """Same fixture as balanced_match but score 1-2: away leads by 1.
+    Home is the trailing side; home's 1UP must be repriced via DP
+    (V1 used _trailing_selection here; V2 uses the new DP)."""
+    return {**balanced_match, "score": (1, 2)}
+
+
+def test_v2_oneup_trailing_uses_dp_not_heuristic(home_trailing_match):
+    """V2 must produce a different 1UP odds than V1 on a trailing tick.
+    Both methods are valid, but they're different shapes; if V2 equals
+    V1 here, the rewrite didn't take effect."""
+    r1 = ep_v1.price_early_payout_markets(**home_trailing_match)
+    r2 = ep_v2.price_early_payout_markets(**home_trailing_match)
+    # Trailing side: HOME (away leads). V1 used _trailing_selection, V2
+    # uses inclusion-exclusion on ever_leads_probability.
+    v1_home_1up = r1["market_1up"]["home_margin"]
+    v2_home_1up = r2["market_1up"]["home_margin"]
+    assert v1_home_1up is not None
+    assert v2_home_1up is not None
+    assert v1_home_1up != pytest.approx(v2_home_1up, rel=1e-6)
+
+
+def test_v2_oneup_trailing_deactivates_leading_side(home_trailing_match):
+    """The away side (currently leading 1-2) has already triggered its
+    1UP — must be None just like V1."""
+    r2 = ep_v2.price_early_payout_markets(**home_trailing_match)
+    assert r2["market_1up"]["away_margin"] is None
+    assert r2["market_1up"]["away_fair"] is None
+    assert r2["p_away_1"] is None
+
+
+def test_v2_oneup_trailing_uses_inclusion_exclusion(balanced_match):
+    """Hand-compute: P(home 1UP at score 0-1) =
+        P(home wins FT) + max(0, P(home ever +1) - P(home ever +1 AND wins))
+    Use only the trailing branch's inputs (no draw_1x2 mutation)."""
+    inputs = {**balanced_match, "score": (0, 1)}
+    r2 = ep_v2.price_early_payout_markets(**inputs)
+    lam_h, lam_a = r2["lambda_home"], r2["lambda_away"]
+    stats = ep_v2.ever_leads_probability(lam_h, lam_a, -1)
+    p_home_ever_1, _, p_home_ever_1_wins, *_ = stats
+    expected_residual = max(0.0, p_home_ever_1 - p_home_ever_1_wins)
+    expected_home_1up = inputs["p_home_win"] + expected_residual
+    assert r2["p_home_1"] == pytest.approx(expected_home_1up, abs=1e-9)
+
+
+def test_v2_prematch_oneup_unchanged_vs_v1(balanced_match):
+    """Score 0-0 → level-score branch — not touched by V2. p_home_1
+    must equal V1's bit-for-bit."""
+    r1 = ep_v1.price_early_payout_markets(**balanced_match)
+    r2 = ep_v2.price_early_payout_markets(**balanced_match)
+    assert r2["p_home_1"] == pytest.approx(r1["p_home_1"], abs=1e-12)
+    assert r2["p_away_1"] == pytest.approx(r1["p_away_1"], abs=1e-12)

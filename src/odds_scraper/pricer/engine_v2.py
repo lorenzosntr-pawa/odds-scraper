@@ -675,26 +675,50 @@ def price_early_payout_markets(
             home_1up_capped, _ = _cap_selection(home_1up_fair_odds, home_1up_prob, home_1x2_odds, p_home, ONEUP_MIN_GUARANTEED_REDUCTION)
             away_1up_capped, _ = _cap_selection(away_1up_fair_odds, away_1up_prob, away_1x2_odds, p_away, ONEUP_MIN_GUARANTEED_REDUCTION)
     else:
-        # ---- TRAILING-TEAM 1UP: leading side deactivated, trailing uses Poisson tail on its 1X2 ----
-        # Matches ThreeWay1UPCalculatorImpl.calculateWithTrailingTeam
-        if goal_difference > 0:
-            # Home leads → away is trailing, needs (goal_difference + 1) goals to flip lead
-            home_1up_fair_odds = home_1up_capped = home_1up_prob = None
-            away_1up_capped, away_1up_prob = _trailing_selection(
-                away_1x2_odds, p_away, lambda_away,
-                goal_difference + 1,
-                ONEUP_TRAILING_MIN_REDUCTION, ONEUP_TRAILING_MAX_REDUCTION,
-            )
-            away_1up_fair_odds = away_1up_capped  # no separate cap step in trailing path
+        # ---- TRAILING-TEAM 1UP (V2): DP-based, leading side deactivated ----
+        # V2 uses the same DP as 2UP, reading the ever_±1 fields. This
+        # makes the invariant P(1UP) ≥ P(2UP) hold by construction since
+        # both products share ever_leads_probability and reaching ±2
+        # implies passing through ±1. Replaces V1's heuristic
+        # _trailing_selection on this branch.
+        stats = ever_leads_probability(lambda_home, lambda_away, goal_difference)
+        p_h_ever_1, p_a_ever_1 = stats[0], stats[1]
+        p_h_ever_1_wins, p_a_ever_1_wins = stats[2], stats[3]
+        home_residual = max(0.0, p_h_ever_1 - p_h_ever_1_wins)
+        away_residual = max(0.0, p_a_ever_1 - p_a_ever_1_wins)
+        # Inclusion-exclusion: P(X 1UP) = P(X wins) + residual.
+        home_1up_prob_raw = max(0.0, p_home + home_residual)
+        away_1up_prob_raw = max(0.0, p_away + away_residual)
+
+        # Margin blend — same code path as the level-score branch.
+        if ONEUP_MARGIN_BLEND_ENABLED:
+            fav_margin_1up = _blend_margins(fav_weight, ONEUP_FAVORITE_MARGIN, ONEUP_UNDERDOG_MARGIN)
+            dog_margin_1up = _blend_margins(dog_weight, ONEUP_FAVORITE_MARGIN, ONEUP_UNDERDOG_MARGIN)
         else:
-            home_deficit = abs(goal_difference)
-            home_1up_capped, home_1up_prob = _trailing_selection(
-                home_1x2_odds, p_home, lambda_home,
-                home_deficit + 1,
-                ONEUP_TRAILING_MIN_REDUCTION, ONEUP_TRAILING_MAX_REDUCTION,
-            )
-            home_1up_fair_odds = home_1up_capped
-            away_1up_fair_odds = away_1up_capped = away_1up_prob = None
+            fav_margin_1up = ONEUP_FAVORITE_MARGIN
+            dog_margin_1up = ONEUP_UNDERDOG_MARGIN
+        home_margin_1up = fav_margin_1up if home_is_favorite else dog_margin_1up
+        away_margin_1up = dog_margin_1up if home_is_favorite else fav_margin_1up
+
+        home_1up_fair_odds = _fair_prob_to_odds(home_1up_prob_raw, home_margin_1up)
+        away_1up_fair_odds = _fair_prob_to_odds(away_1up_prob_raw, away_margin_1up)
+
+        home_1up_capped, _ = _cap_selection(
+            home_1up_fair_odds, home_1up_prob_raw, home_1x2_odds, p_home,
+            ONEUP_MIN_GUARANTEED_REDUCTION,
+        )
+        away_1up_capped, _ = _cap_selection(
+            away_1up_fair_odds, away_1up_prob_raw, away_1x2_odds, p_away,
+            ONEUP_MIN_GUARANTEED_REDUCTION,
+        )
+
+        # Leading side has already triggered its 1UP — deactivate.
+        if goal_difference > 0:
+            home_1up_prob = home_1up_fair_odds = home_1up_capped = None
+            away_1up_prob = away_1up_prob_raw
+        else:
+            home_1up_prob = home_1up_prob_raw
+            away_1up_prob = away_1up_fair_odds = away_1up_capped = None
 
     # ============== 2UP ==============
     if abs(goal_difference) < 2:
