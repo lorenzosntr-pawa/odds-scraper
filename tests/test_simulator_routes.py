@@ -759,3 +759,41 @@ def test_post_run_with_unknown_engine_returns_400(db_path, client):
         follow_redirects=False,
     )
     assert r.status_code == 400
+
+
+def test_simulator_form_has_engine_radio(client):
+    r = client.get("/simulator")
+    body = r.text
+    for v in ("v1", "v2", "both"):
+        assert f'name="engine" value="{v}"' in body
+    # 'Both' is the default per spec — must be pre-checked.
+    assert 'name="engine" value="both" checked' in body
+
+
+def test_simulator_history_renders_engines_column(db_path, client):
+    """A finished run must surface its engines value in the history
+    table so the user can tell at a glance which run is which."""
+    reg = _registry(client)
+    rec = RunRecord(
+        id=reg._next_id, state="done",
+        profile_name="default", regime="any", density="all",
+        engines="v1,v2",
+        started_at="2026-05-25T10:00:00Z",
+        n_done=1, n_total=1, n_events=1, n_rows=1,
+        csv_name="run_0001.csv", finished_at="2026-05-25T10:00:30Z",
+    )
+    reg._runs[rec.id] = rec
+    reg._next_id += 1
+    r = client.get("/simulator")
+    body = r.text
+    assert "engines" in body.lower()
+    assert ">v1,v2<" in body
+
+
+def test_simulator_profile_tooltip_mentions_engine_contract(client):
+    """The profile selector now spans both engines — tooltip makes the
+    contract explicit."""
+    r = client.get("/simulator")
+    body = r.text
+    assert "applies to whichever engine" in body.lower() or \
+           "applies to selected engine" in body.lower()

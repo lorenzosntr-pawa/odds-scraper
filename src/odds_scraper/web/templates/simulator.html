@@ -115,6 +115,10 @@
             <option value="{{ p.id }}">{{ p.name }}{% if p.is_default %} (default){% endif %}</option>
           {% endfor %}
         </select>
+        <span class="filter-lbl" style="color:#888;margin-left:6px"
+              title="Profiles apply to whichever engine version is selected. The default profile uses the latest engine defaults; custom profiles use the values they were saved with.">
+          (applies to selected engine ℹ)
+        </span>
         <a href="/simulator/profiles" class="filter-lbl" style="color:#fbbf24;margin-left:6px">Manage profiles →</a>
       </div>
     </div>
@@ -145,6 +149,17 @@
             <label><input type="radio" name="density" value="latest"
                    hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
               <b>latest per event</b> <span class="filter-lbl">— last tick of the regime</span></label>
+          </div>
+        </div>
+        <div>
+          <div class="filter-lbl" style="margin-bottom:4px"><b>Engine</b> — which pricer to run</div>
+          <div class="filter-group" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label><input type="radio" name="engine" value="v1">
+              <b>V1 only</b> <span class="filter-lbl">— current pricing model</span></label>
+            <label><input type="radio" name="engine" value="v2">
+              <b>V2 only</b> <span class="filter-lbl">— rewritten 1UP/2UP DP</span></label>
+            <label><input type="radio" name="engine" value="both" checked>
+              <b>Both (A/B)</b> <span class="filter-lbl">— side-by-side comparison</span></label>
           </div>
         </div>
       </div>
@@ -192,7 +207,7 @@
       <thead>
         <tr>
           <th>#</th><th>started</th><th>profile</th>
-          <th>regime</th><th>density</th>
+          <th>regime</th><th>density</th><th>engines</th>
           <th>events</th><th>rows</th><th>state</th><th>csv</th>
         </tr>
       </thead>
@@ -204,6 +219,7 @@
           <td>{{ r.profile_name }}</td>
           <td>{{ r.regime }}</td>
           <td>{{ r.density }}</td>
+          <td>{{ r.engines }}</td>
           <td>{{ r.n_events }}</td>
           <td>{{ r.n_rows }}</td>
           <td>{{ r.state }}</td>
@@ -231,7 +247,7 @@
   .sim-progress-fill { height: 100%; background: #fbbf24; transition: width 1s linear; }
   .sim-run-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 18px;
     margin-bottom: 12px;
   }
