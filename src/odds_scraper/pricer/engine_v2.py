@@ -278,6 +278,140 @@ def _poisson_pmf(lam: float, k: int) -> float:
     return math.exp(log_prob)
 
 
+# Bit-packed hit flags. Layout mirrors EverLeadsProbability.java:
+#   bit 0 (1)  = "score difference has ever been <= -2 during the match"
+#   bit 1 (2)  = "                              has ever been <= -1"
+#   bit 2 (4)  = "                              has ever been >= +1"
+#   bit 3 (8)  = "                              has ever been >= +2"
+_LEADS_F_LOW2  = 1
+_LEADS_F_LOW1  = 1 << 1
+_LEADS_F_HIGH1 = 1 << 2
+_LEADS_F_HIGH2 = 1 << 3
+_LEADS_N_FLAGS = 16
+
+
+def ever_leads_probability(
+    lambda_h: float, lambda_a: float, initial_diff: int,
+) -> Tuple[float, float, float, float, float, float, float, float]:
+    """Joint DP over the score-difference random walk tracking 4 hit
+    flags ({ever <=-2, <=-1, >=+1, >=+2}) and the final-result winner.
+
+    Returns an 8-tuple matching Java's Stats record:
+        (p_home_ever_1, p_away_ever_1,
+         p_home_ever_1_and_wins, p_away_ever_1_and_wins,
+         p_home_ever_2, p_away_ever_2,
+         p_home_ever_2_and_wins, p_away_ever_2_and_wins)
+
+    p_home_ever_1 + win is enough to compute P(home 1UP) by inclusion-
+    exclusion: P(home 1UP) = P(home wins) + max(0, ever1 - ever1AndWins).
+    """
+    if lambda_h <= 0.0 or lambda_a <= 0.0:
+        return (0.0,) * 8
+    lambda_total = lambda_h + lambda_a
+    p = lambda_h / lambda_total
+
+    d_extent = TWOUP_DP_MAX_GOALS + abs(initial_diff) + 2
+    size = 2 * d_extent + 1
+    offset = d_extent
+
+    state = [[0.0] * _LEADS_N_FLAGS for _ in range(size)]
+    init_flag = 0
+    if initial_diff >= 1: init_flag |= _LEADS_F_HIGH1
+    if initial_diff >= 2: init_flag |= _LEADS_F_HIGH2
+    if initial_diff <= -1: init_flag |= _LEADS_F_LOW1
+    if initial_diff <= -2: init_flag |= _LEADS_F_LOW2
+    state[initial_diff + offset][init_flag] = 1.0
+
+    accum = [0.0] * 8
+    exp_neg = math.exp(-lambda_total)
+
+    _ever_leads_accumulate(state, offset, exp_neg, accum)
+
+    lambda_pow = 1.0
+    factorial = 1.0
+    for n in range(1, TWOUP_DP_MAX_GOALS + 1):
+        lambda_pow *= lambda_total
+        factorial *= n
+        prob_n = (lambda_pow * exp_neg) / factorial
+
+        state = _ever_leads_step(state, offset, p, size)
+        _ever_leads_accumulate(state, offset, prob_n, accum)
+
+        if prob_n < TWOUP_DP_NEGLIGIBLE_TAIL and n > lambda_total:
+            break
+
+    return tuple(accum)
+
+
+def _ever_leads_step(state, offset, p, size):
+    """One Poisson-goal transition. Home goal moves diff -> diff+1
+    with probability p; away symmetric. ORs the appropriate threshold
+    flags as the new diff crosses +-1 / +-2."""
+    nxt = [[0.0] * _LEADS_N_FLAGS for _ in range(size)]
+    one_minus_p = 1.0 - p
+    for d_idx in range(size):
+        row = state[d_idx]
+        for flag in range(_LEADS_N_FLAGS):
+            prob = row[flag]
+            if prob == 0.0:
+                continue
+            diff = d_idx - offset
+
+            # Home scores: diff -> diff + 1
+            new_diff_h = diff + 1
+            new_idx_h = new_diff_h + offset
+            if 0 <= new_idx_h < size:
+                new_flag = flag
+                if new_diff_h >= 1: new_flag |= _LEADS_F_HIGH1
+                if new_diff_h >= 2: new_flag |= _LEADS_F_HIGH2
+                nxt[new_idx_h][new_flag] += p * prob
+
+            # Away scores: diff -> diff - 1
+            new_diff_a = diff - 1
+            new_idx_a = new_diff_a + offset
+            if 0 <= new_idx_a < size:
+                new_flag = flag
+                if new_diff_a <= -1: new_flag |= _LEADS_F_LOW1
+                if new_diff_a <= -2: new_flag |= _LEADS_F_LOW2
+                nxt[new_idx_a][new_flag] += one_minus_p * prob
+    return nxt
+
+
+def _ever_leads_accumulate(state, offset, weight, accum):
+    """Folds the current state into the 8-accumulator at this Poisson
+    weight. `weight` is the probability the match ends with the current
+    goal count; accum entries are layout described in the public API."""
+    if weight == 0.0:
+        return
+    for d_idx in range(len(state)):
+        row = state[d_idx]
+        for flag in range(_LEADS_N_FLAGS):
+            prob = row[flag]
+            if prob == 0.0:
+                continue
+            weighted = prob * weight
+            diff = d_idx - offset
+            h1 = (flag & _LEADS_F_HIGH1) != 0
+            h2 = (flag & _LEADS_F_HIGH2) != 0
+            l1 = (flag & _LEADS_F_LOW1) != 0
+            l2 = (flag & _LEADS_F_LOW2) != 0
+            home_wins = diff >= 1
+            away_wins = diff <= -1
+
+            if h1:
+                accum[0] += weighted
+                if home_wins: accum[2] += weighted
+            if l1:
+                accum[1] += weighted
+                if away_wins: accum[3] += weighted
+            if h2:
+                accum[4] += weighted
+                if home_wins: accum[6] += weighted
+            if l2:
+                accum[5] += weighted
+                if away_wins: accum[7] += weighted
+
+
 def ever_2up_probability(lambda_h: float, lambda_a: float, initial_diff: int) -> Tuple[float, float, float, float]:
     """
     Port of Ever2UpProbability.compute.

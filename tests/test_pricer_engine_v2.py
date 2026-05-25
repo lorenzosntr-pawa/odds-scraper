@@ -57,3 +57,52 @@ def test_v2_prematch_matches_v1_byte_for_byte(balanced_match):
     assert r2["market_1up"]["away_margin"] == pytest.approx(r1["market_1up"]["away_margin"])
     assert r2["p_home_2"] == pytest.approx(r1["p_home_2"])
     assert r2["p_away_2"] == pytest.approx(r1["p_away_2"])
+
+
+def test_ever_leads_returns_8_tuple():
+    stats = ep_v2.ever_leads_probability(1.4, 1.1, 0)
+    assert len(stats) == 8
+    for v in stats:
+        assert 0.0 <= v <= 1.0
+
+
+def test_ever_leads_zero_lambdas_returns_zeros():
+    assert ep_v2.ever_leads_probability(0.0, 1.0, 0) == (0.0,) * 8
+    assert ep_v2.ever_leads_probability(1.0, 0.0, 0) == (0.0,) * 8
+
+
+def test_ever_leads_monotonic_ever_1_geq_ever_2():
+    """P(ever ±1) must be >= P(ever ±2) - reaching +2 means passing
+    through +1. This is the construction-time invariant V2 relies on."""
+    for lh, la, d in [(1.4, 1.1, 0), (2.0, 0.8, 0), (1.0, 1.0, -1), (0.6, 1.5, 2)]:
+        ev1h, ev1a, _, _, ev2h, ev2a, _, _ = ep_v2.ever_leads_probability(lh, la, d)
+        assert ev1h >= ev2h - 1e-12, f"home: ever1={ev1h} < ever2={ev2h}"
+        assert ev1a >= ev2a - 1e-12, f"away: ever1={ev1a} < ever2={ev2a}"
+
+
+def test_ever_leads_initial_diff_sets_flags():
+    """An initial_diff of +1 must have HIGH1 already triggered -> P(ever+-1)
+    on the home side starts at 1.0 (no time-dependent build-up needed)."""
+    ev1h, _, _, _, ev2h, _, _, _ = ep_v2.ever_leads_probability(1.4, 1.1, 1)
+    assert ev1h == pytest.approx(1.0)
+    # +2 -> both HIGH1 and HIGH2 pre-set.
+    ev1h, _, _, _, ev2h, _, _, _ = ep_v2.ever_leads_probability(1.4, 1.1, 2)
+    assert ev1h == pytest.approx(1.0)
+    assert ev2h == pytest.approx(1.0)
+
+
+def test_ever_leads_symmetry_under_team_swap():
+    """Swapping (lambdaH, lambdaA) and negating initial_diff must swap home/away
+    statistics. Confidence that the home/away wiring is right."""
+    a = ep_v2.ever_leads_probability(1.4, 1.1, 1)
+    b = ep_v2.ever_leads_probability(1.1, 1.4, -1)
+    # Stats layout: (home1, away1, home1wins, away1wins, home2, away2, home2wins, away2wins)
+    # Under swap, home<->away.
+    assert a[0] == pytest.approx(b[1])  # home_ever_1 <-> away_ever_1
+    assert a[1] == pytest.approx(b[0])
+    assert a[2] == pytest.approx(b[3])
+    assert a[3] == pytest.approx(b[2])
+    assert a[4] == pytest.approx(b[5])
+    assert a[5] == pytest.approx(b[4])
+    assert a[6] == pytest.approx(b[7])
+    assert a[7] == pytest.approx(b[6])
