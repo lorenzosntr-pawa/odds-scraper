@@ -412,108 +412,6 @@ def _ever_leads_accumulate(state, offset, weight, accum):
                 if away_wins: accum[7] += weighted
 
 
-def ever_2up_probability(lambda_h: float, lambda_a: float, initial_diff: int) -> Tuple[float, float, float, float]:
-    """
-    Port of Ever2UpProbability.compute.
-
-    Random walk on score difference driven by Poisson goals:
-      - N = total goals ~ Poisson(lambda_h + lambda_a)
-      - each goal is home with prob p = lambda_h / (lambda_h + lambda_a)
-      - diff +=1 (home) with prob p, diff -=1 (away) with prob 1-p
-
-    DP tracks (current_diff, has_ever_hit_+2, has_ever_hit_-2) at each step.
-    Returns (p_home_ever, p_away_ever, p_home_ever_and_wins, p_away_ever_and_wins).
-    """
-    if lambda_h <= 0 or lambda_a <= 0:
-        return 0.0, 0.0, 0.0, 0.0
-
-    lambda_total = lambda_h + lambda_a
-    p = lambda_h / lambda_total
-
-    d_extent = TWOUP_DP_MAX_GOALS + abs(initial_diff) + 2
-    size = 2 * d_extent + 1
-    offset = d_extent
-
-    # state[d_idx][flag]: flag bit0 = hit_low (≤-2), bit1 = hit_high (≥+2)
-    state = [[0.0] * 4 for _ in range(size)]
-    init_flag = (2 if initial_diff >= 2 else 0) | (1 if initial_diff <= -2 else 0)
-    state[initial_diff + offset][init_flag] = 1.0
-
-    accum = [0.0, 0.0, 0.0, 0.0]  # pHomeEver, pAwayEver, pHomeEverAndWins, pAwayEverAndWins
-    exp_neg = math.exp(-lambda_total)
-
-    _ever_2up_accumulate(state, offset, exp_neg, accum)
-
-    lambda_pow = 1.0
-    factorial = 1.0
-    for n in range(1, TWOUP_DP_MAX_GOALS + 1):
-        lambda_pow *= lambda_total
-        factorial *= n
-        prob_n = (lambda_pow * exp_neg) / factorial
-
-        state = _ever_2up_step(state, offset, p, size)
-        _ever_2up_accumulate(state, offset, prob_n, accum)
-
-        if prob_n < TWOUP_DP_NEGLIGIBLE_TAIL and n > lambda_total:
-            break
-
-    return accum[0], accum[1], accum[2], accum[3]
-
-
-def _ever_2up_step(state, offset: int, p: float, size: int):
-    nxt = [[0.0] * 4 for _ in range(size)]
-    one_minus_p = 1.0 - p
-    for d_idx in range(size):
-        row = state[d_idx]
-        for flag in range(4):
-            prob = row[flag]
-            if prob == 0.0:
-                continue
-            diff = d_idx - offset
-            hit_high = (flag & 2) != 0
-            hit_low = (flag & 1) != 0
-
-            # Home scores
-            new_diff_h = diff + 1
-            new_idx_h = new_diff_h + offset
-            if 0 <= new_idx_h < size:
-                new_hit_high = hit_high or new_diff_h >= 2
-                new_flag = (2 if new_hit_high else 0) | (1 if hit_low else 0)
-                nxt[new_idx_h][new_flag] += p * prob
-
-            # Away scores
-            new_diff_a = diff - 1
-            new_idx_a = new_diff_a + offset
-            if 0 <= new_idx_a < size:
-                new_hit_low = hit_low or new_diff_a <= -2
-                new_flag = (2 if hit_high else 0) | (1 if new_hit_low else 0)
-                nxt[new_idx_a][new_flag] += one_minus_p * prob
-    return nxt
-
-
-def _ever_2up_accumulate(state, offset: int, weight: float, accum) -> None:
-    if weight == 0.0:
-        return
-    for d_idx in range(len(state)):
-        row = state[d_idx]
-        for flag in range(4):
-            prob = row[flag]
-            if prob == 0.0:
-                continue
-            weighted = prob * weight
-            diff = d_idx - offset
-            hit_high = (flag & 2) != 0
-            hit_low = (flag & 1) != 0
-            if hit_high:
-                accum[0] += weighted
-                if diff >= 1:
-                    accum[2] += weighted
-            if hit_low:
-                accum[1] += weighted
-                if diff <= -1:
-                    accum[3] += weighted
-
-
 def _poisson_at_least(lam: float, k: int) -> float:
     """P(N >= k) under Poisson(lam). Port of SyntheticMath.poissonAtLeast."""
     if lam <= 0:
@@ -724,11 +622,16 @@ def price_early_payout_markets(
     if abs(goal_difference) < 2:
         # ---- LEVEL OR ONE-GOAL 2UP: Ever2UpProbability DP + inclusion-exclusion ----
         # Matches Threeway2UpCalculatorImpl.calculateLevelOrOneGoal
-        p_home_ever, p_away_ever, p_home_ever_wins, p_away_ever_wins = ever_2up_probability(
-            lambda_home, lambda_away, goal_difference
-        )
-        home_residual = max(0.0, p_home_ever - p_home_ever_wins)
-        away_residual = max(0.0, p_away_ever - p_away_ever_wins)
+        # V2: read ever_±2 stats from the unified DP. Same DP, same
+        # numbers — just packaged into the wider 8-tuple now shared
+        # with the 1UP trailing path.
+        stats = ever_leads_probability(lambda_home, lambda_away, goal_difference)
+        p_home_ever_2_wins = stats[6]
+        p_away_ever_2_wins = stats[7]
+        p_home_ever_2 = stats[4]
+        p_away_ever_2 = stats[5]
+        home_residual = max(0.0, p_home_ever_2 - p_home_ever_2_wins)
+        away_residual = max(0.0, p_away_ever_2 - p_away_ever_2_wins)
 
         # Per-side boost coefficient (blended favorite/underdog)
         if TWOUP_BOOST_BLEND_ENABLED:

@@ -171,3 +171,28 @@ def test_v2_prematch_oneup_unchanged_vs_v1(balanced_match):
     r2 = ep_v2.price_early_payout_markets(**balanced_match)
     assert r2["p_home_1"] == pytest.approx(r1["p_home_1"], abs=1e-12)
     assert r2["p_away_1"] == pytest.approx(r1["p_away_1"], abs=1e-12)
+
+
+def test_v2_twoup_level_matches_v1_within_float_tolerance(balanced_match):
+    """The 2UP level path math should yield the same per-side
+    probability under V1 and V2 — they're using the same DP physics."""
+    r1 = ep_v1.price_early_payout_markets(**balanced_match)
+    r2 = ep_v2.price_early_payout_markets(**balanced_match)
+    assert r2["p_home_2"] == pytest.approx(r1["p_home_2"], abs=1e-10)
+    assert r2["p_away_2"] == pytest.approx(r1["p_away_2"], abs=1e-10)
+
+
+def test_v2_no_longer_exposes_ever_2up_probability():
+    """V2 doesn't call ever_2up_probability anymore — keeping the
+    legacy function around invites stale-code drift."""
+    assert not hasattr(ep_v2, "ever_2up_probability")
+
+
+def test_v2_twoup_one_goal_branch_matches_v1(balanced_match):
+    """Score 1-0 still goes through level/one-goal branch (|diff| < 2)
+    and must match V1."""
+    inputs = {**balanced_match, "score": (1, 0)}
+    r1 = ep_v1.price_early_payout_markets(**inputs)
+    r2 = ep_v2.price_early_payout_markets(**inputs)
+    # Away is still active in 2UP (|diff| = 1).
+    assert r2["p_away_2"] == pytest.approx(r1["p_away_2"], abs=1e-10)
