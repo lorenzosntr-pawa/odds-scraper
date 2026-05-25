@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Callable
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _BASE_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -237,6 +237,25 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     # run+results tables were duplicating that work and bloating the DB
     # with rows the user actively didn't want there.
     8: lambda conn: _apply_v8_drop_sim_tables(conn),
+    # v9: per-tick V2 engine output alongside V1. The detail page and
+    # home card SIM cell render both engines side-by-side; the scraper
+    # writes both every tick. Columns mirror V1's our_* block but are
+    # nullable so legacy rows (pre-v9) keep loading cleanly until the
+    # backfill fills them in.
+    9: lambda conn: _add_columns_if_missing(conn, "pricer_live_results", [
+        ("v2_p_home_1",        "REAL"),
+        ("v2_p_away_1",        "REAL"),
+        ("v2_1up_home_fair",   "REAL"),
+        ("v2_1up_home_capped", "REAL"),
+        ("v2_1up_away_fair",   "REAL"),
+        ("v2_1up_away_capped", "REAL"),
+        ("v2_p_home_2",        "REAL"),
+        ("v2_p_away_2",        "REAL"),
+        ("v2_2up_home_fair",   "REAL"),
+        ("v2_2up_home_capped", "REAL"),
+        ("v2_2up_away_fair",   "REAL"),
+        ("v2_2up_away_capped", "REAL"),
+    ]),
 }
 
 

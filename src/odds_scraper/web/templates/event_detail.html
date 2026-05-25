@@ -68,7 +68,8 @@
   <div class="history-wrap">
     <div class="history-title">History — {{ event.market_label }}</div>
     {% if event.history %}
-      {% set book_label = {"betpawa":"BetPawa","sportybet":"SportyBet","bet9ja":"Bet9ja","betway":"Betway","sim":"SIM"} %}
+      {% set book_label = {"betpawa":"BetPawa","sportybet":"SportyBet","bet9ja":"Bet9ja","betway":"Betway","sim":"SIM v1","sim_v2":"SIM v2"} %}
+      {% set sim_books = ("sim", "sim_v2") %}
       <table class="history-table">
         <thead>
           <tr>
@@ -76,7 +77,7 @@
             <th class="state-col">STATE</th>
             {% for bm in event.history_books %}
               <th data-bookmaker="{{ bm }}"
-                  {% if bm == "sim" %}class="sim"{% endif %}
+                  {% if bm in sim_books %}class="sim"{% endif %}
                   colspan="{{ event.sides|length }}">
                 {{ book_label[bm] }}
               </th>
@@ -88,7 +89,7 @@
             {% for bm in event.history_books %}
               {% for side in event.sides %}
                 <th data-bookmaker="{{ bm }}"
-                    {% if bm == "sim" %}class="side-h sim"{% else %}class="side-h"{% endif %}>{{ event.sides_short[loop.index0] }}</th>
+                    {% if bm in sim_books %}class="side-h sim"{% else %}class="side-h"{% endif %}>{{ event.sides_short[loop.index0] }}</th>
               {% endfor %}
             {% endfor %}
           </tr>
@@ -103,8 +104,8 @@
                   {% set p = row.cells.get(bm, {}).get(side) %}
                   <td data-bookmaker="{{ bm }}" class="num">
                     {% if p %}
-                      <span class="odds{% if bm == 'sim' %} sim{% endif %}">{{ "%.2f"|format(p.odds) }}</span>
-                      {% if bm in ("betpawa", "sportybet", "sim") and p.probability is not none %}
+                      <span class="odds{% if bm in sim_books %} sim{% endif %}">{{ "%.2f"|format(p.odds) }}</span>
+                      {% if bm in ("betpawa", "sportybet", "sim", "sim_v2") and p.probability is not none %}
                         <span class="prob">.{{ "%02d"|format([(p.probability * 100)|round|int, 99]|min) }}</span>
                       {% endif %}
                     {% else %}<span class="text-gray-700">—</span>{% endif %}

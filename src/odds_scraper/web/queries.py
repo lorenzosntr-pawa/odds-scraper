@@ -255,24 +255,32 @@ def get_our_history_for_event(
 ) -> dict[str, dict[str, float | None]]:
     """Return OUR engine output per tick for the requested 1UP or 2UP market.
 
-    Returned shape: {ts_utc: {"home_odds": _, "away_odds": _,
-                              "home_prob": _, "away_prob": _}}.
+    Returned shape: {ts_utc: {
+        "home_odds": _, "away_odds": _, "home_prob": _, "away_prob": _,
+        "v2_home_odds": _, "v2_away_odds": _, "v2_home_prob": _, "v2_away_prob": _,
+    }}.
     Empty dict if the market isn't a UP market or no rows exist.
 
-    Used by the detail-page history to render OUR alongside the bookmaker
-    columns. The values come from `pricer_live_results`, written by the
-    scraper one row per tick.
+    V1 cells come from the historical `pricer_live_results` rows
+    (written by every scraper tick). V2 cells are written alongside
+    starting with schema v9 — legacy rows from before that show null
+    in the v2_* fields.
     """
     if market_id == "1x2_1up_ft":
         odds_h, odds_a = "our_1up_home_capped", "our_1up_away_capped"
         prob_h, prob_a = "our_p_home_1", "our_p_away_1"
+        v2_odds_h, v2_odds_a = "v2_1up_home_capped", "v2_1up_away_capped"
+        v2_prob_h, v2_prob_a = "v2_p_home_1", "v2_p_away_1"
     elif market_id == "1x2_2up_ft":
         odds_h, odds_a = "our_2up_home_capped", "our_2up_away_capped"
         prob_h, prob_a = "our_p_home_2", "our_p_away_2"
+        v2_odds_h, v2_odds_a = "v2_2up_home_capped", "v2_2up_away_capped"
+        v2_prob_h, v2_prob_a = "v2_p_home_2", "v2_p_away_2"
     else:
         return {}
     rows = conn.execute(
-        f"SELECT ts_utc, {odds_h}, {odds_a}, {prob_h}, {prob_a} "
+        f"SELECT ts_utc, {odds_h}, {odds_a}, {prob_h}, {prob_a}, "
+        f"       {v2_odds_h}, {v2_odds_a}, {v2_prob_h}, {v2_prob_a} "
         f"FROM pricer_live_results WHERE event_id = ?",
         (event_id,),
     ).fetchall()
@@ -280,6 +288,8 @@ def get_our_history_for_event(
         r["ts_utc"]: {
             "home_odds": r[odds_h], "away_odds": r[odds_a],
             "home_prob": r[prob_h], "away_prob": r[prob_a],
+            "v2_home_odds": r[v2_odds_h], "v2_away_odds": r[v2_odds_a],
+            "v2_home_prob": r[v2_prob_h], "v2_away_prob": r[v2_prob_a],
         }
         for r in rows
     }

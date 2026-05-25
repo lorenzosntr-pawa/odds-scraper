@@ -175,3 +175,82 @@ def test_backfill_all_populates_missing_ticks(tmp_path: Path):
     written2, _ = live_writer.backfill_all(conn)
     assert written2 == 0
     conn.close()
+
+
+def test_live_writer_persists_v2_columns_alongside_v1(tmp_path: Path):
+    """Schema v9 adds 12 v2_* columns; live_writer must populate them
+    on every tick so the detail page can render V1 + V2 side-by-side."""
+    conn = sqlite3.connect(str(tmp_path / "v2.db"), isolation_level=None)
+    init_schema(conn)
+    conn.row_factory = sqlite3.Row
+    rows = [
+        _tick_snapshot(Bookmaker.BETPAWA, with_prob=True),
+        _tick_snapshot(Bookmaker.SPORTYBET, with_prob=False),
+    ]
+    ok = live_writer.compute_and_write_from_snapshots(
+        conn, "E1", "2026-05-21T10:00:00Z", rows, (0, 0),
+    )
+    assert ok
+    row = conn.execute(
+        "SELECT our_p_home_1, v2_p_home_1, "
+        "       our_1up_home_capped, v2_1up_home_capped "
+        "FROM pricer_live_results WHERE event_id='E1'"
+    ).fetchone()
+    assert row is not None
+    assert row["our_p_home_1"] is not None
+    assert row["our_1up_home_capped"] is not None
+    # V2 cells populated. At score 0-0 the level-score 1UP path is
+    # unchanged across engines, so V1 == V2 numerically.
+    assert row["v2_p_home_1"] is not None
+    assert row["v2_1up_home_capped"] is not None
+    assert row["v2_p_home_1"] == row["our_p_home_1"]
+    assert row["v2_1up_home_capped"] == row["our_1up_home_capped"]
+    conn.close()
+
+
+def _live_trailing_snapshot(bookmaker: Bookmaker) -> Snapshot:
+    """Snapshot at score 1-0 minute 91 — V1 heuristic vs V2 DP diverge."""
+    base = {
+        PriceKey("1x2_ft", None, "home"): (1.85, 0.54),
+        PriceKey("1x2_ft", None, "draw"): (3.40, 0.29),
+        PriceKey("1x2_ft", None, "away"): (4.20, 0.17),
+        PriceKey("over_under_ft", 2.5, "over"):  (1.85, 0.55),
+        PriceKey("over_under_ft", 2.5, "under"): (1.95, 0.45),
+    }
+    ts = datetime(2026, 5, 22, 18, 30, tzinfo=timezone.utc)
+    return Snapshot(
+        ts_utc=ts, event_bp_id="E1", sr_id="", genius_id="",
+        home="A", away="B", kickoff_utc=ts,
+        status=EventStatus.STARTED,
+        match_minute=91, score_home=1, score_away=0,
+        bookmaker=bookmaker, fetch_status=FetchStatus.OK, fetch_error="",
+        prices=base,
+    )
+
+
+def test_live_writer_v2_diverges_from_v1_on_live_trailing(tmp_path: Path):
+    """At a live trailing score (1-0 minute 91), V2's DP-based 1UP
+    trailing path produces different odds than V1's heuristic. The
+    persisted v2_* cells must reflect that."""
+    conn = sqlite3.connect(str(tmp_path / "v2_live.db"), isolation_level=None)
+    init_schema(conn)
+    conn.row_factory = sqlite3.Row
+    rows = [
+        _live_trailing_snapshot(Bookmaker.BETPAWA),
+        _live_trailing_snapshot(Bookmaker.SPORTYBET),
+    ]
+    ok = live_writer.compute_and_write_from_snapshots(
+        conn, "E1", "2026-05-22T10:00:00Z", rows, (1, 0),
+    )
+    assert ok
+    row = conn.execute(
+        "SELECT our_1up_away_capped, v2_1up_away_capped "
+        "FROM pricer_live_results WHERE event_id='E1'"
+    ).fetchone()
+    assert row is not None
+    # Away is trailing — both engines price it, via different paths
+    # (V1 heuristic vs V2 DP). They must disagree.
+    assert row["our_1up_away_capped"] is not None
+    assert row["v2_1up_away_capped"] is not None
+    assert row["our_1up_away_capped"] != pytest.approx(row["v2_1up_away_capped"], rel=1e-6)
+    conn.close()

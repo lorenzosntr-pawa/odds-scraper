@@ -907,7 +907,7 @@ def test_event_detail_history_shows_sim_column_for_1up(db_path: Path):
     assert 'data-bookmaker="sim"' in body
     # Column header text — Jinja renders with surrounding whitespace
     import re
-    assert re.search(r"<th[^>]*data-bookmaker=\"sim\"[^>]*>\s*SIM\s*</th>", body)
+    assert re.search(r"<th[^>]*data-bookmaker=\"sim\"[^>]*>\s*SIM v1\s*</th>", body)
     assert "1.48" in body
     # Probability .66 → rendered as ".66"
     assert ".66" in body

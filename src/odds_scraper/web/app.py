@@ -11,7 +11,8 @@ from fastapi.templating import Jinja2Templates
 
 from odds_scraper.models import MARKET_MANIFEST, MarketSpec
 from odds_scraper.pricer import (
-    engine, inputs as pricer_inputs, score_state as pricer_score_state,
+    engine, engine_v2, inputs as pricer_inputs,
+    score_state as pricer_score_state,
 )
 
 from . import queries
@@ -137,17 +138,25 @@ class EventView:
     score_away: Optional[int]
     market_groups: list[MarketGroup]
     # OUR-engine output for the SIM column. None when inputs are missing
-    # or the engine deactivates.
+    # or the engine deactivates. V1 (`our_*`) is the original engine; V2
+    # (`v2_*`) is the May 2026 Java rewrite — rendered stacked under V1
+    # in the same SIM cell so the user can A/B at a glance.
     our_1up_home: Optional[float]
     our_1up_away: Optional[float]
     our_2up_home: Optional[float]
     our_2up_away: Optional[float]
-    # True probabilities from the engine (pre-margin). Rendered next to
-    # the SIM cell's decimal odds as ".pNN" to match the BP/SB display.
     our_p_1up_home: Optional[float]
     our_p_1up_away: Optional[float]
     our_p_2up_home: Optional[float]
     our_p_2up_away: Optional[float]
+    v2_1up_home: Optional[float]
+    v2_1up_away: Optional[float]
+    v2_2up_home: Optional[float]
+    v2_2up_away: Optional[float]
+    v2_p_1up_home: Optional[float]
+    v2_p_1up_away: Optional[float]
+    v2_p_2up_home: Optional[float]
+    v2_p_2up_away: Optional[float]
     # True when BP itself quoted the market — drives the rule "if BP
     # missing, OUR replaces the BP cell instead of going to SIM column".
     bp_has_1up: bool
@@ -391,6 +400,8 @@ def _build_event_view(
     engine_inputs, _basis = pricer_inputs.extract(prices_by_book)
     our_1up_home = our_1up_away = our_2up_home = our_2up_away = None
     our_p_1up_home = our_p_1up_away = our_p_2up_home = our_p_2up_away = None
+    v2_1up_home = v2_1up_away = v2_2up_home = v2_2up_away = None
+    v2_p_1up_home = v2_p_1up_away = v2_p_2up_home = v2_p_2up_away = None
     if engine_inputs is not None:
         score = (row["score_home"] or 0, row["score_away"] or 0)
         engine_inputs["score"] = (int(score[0]), int(score[1]))
@@ -407,8 +418,18 @@ def _build_event_view(
             our_p_2up_home = result["p_home_2"]
             our_p_2up_away = result["p_away_2"]
         except Exception:  # noqa: BLE001
-            # Engine doesn't raise on bad inputs (returns deactivated dict),
-            # so this is a defensive guard against future regressions.
+            pass
+        try:
+            result_v2 = engine_v2.price_early_payout_markets(**engine_inputs)
+            v2_1up_home = result_v2["market_1up"]["home_margin"]
+            v2_1up_away = result_v2["market_1up"]["away_margin"]
+            v2_2up_home = result_v2["market_2up"]["home_margin"]
+            v2_2up_away = result_v2["market_2up"]["away_margin"]
+            v2_p_1up_home = result_v2["p_home_1"]
+            v2_p_1up_away = result_v2["p_away_1"]
+            v2_p_2up_home = result_v2["p_home_2"]
+            v2_p_2up_away = result_v2["p_away_2"]
+        except Exception:  # noqa: BLE001
             pass
 
     bp_prices = prices_by_book.get("betpawa", [])
@@ -427,6 +448,10 @@ def _build_event_view(
         our_2up_home=our_2up_home, our_2up_away=our_2up_away,
         our_p_1up_home=our_p_1up_home, our_p_1up_away=our_p_1up_away,
         our_p_2up_home=our_p_2up_home, our_p_2up_away=our_p_2up_away,
+        v2_1up_home=v2_1up_home, v2_1up_away=v2_1up_away,
+        v2_2up_home=v2_2up_home, v2_2up_away=v2_2up_away,
+        v2_p_1up_home=v2_p_1up_home, v2_p_1up_away=v2_p_1up_away,
+        v2_p_2up_home=v2_p_2up_home, v2_p_2up_away=v2_p_2up_away,
         bp_has_1up=bp_has_1up, bp_has_2up=bp_has_2up,
     )
 
@@ -503,12 +528,29 @@ def _build_event_detail(
         if sim_cells and ts in bucket:
             bucket[ts]["cells"]["sim"] = sim_cells
 
+        sim_v2_cells: dict[str, PriceCell] = {}
+        if our.get("v2_home_odds") is not None:
+            sim_v2_cells["home"] = PriceCell(
+                odds=our["v2_home_odds"], probability=our.get("v2_home_prob"),
+            )
+        if our.get("v2_away_odds") is not None:
+            sim_v2_cells["away"] = PriceCell(
+                odds=our["v2_away_odds"], probability=our.get("v2_away_prob"),
+            )
+        if sim_v2_cells and ts in bucket:
+            bucket[ts]["cells"]["sim_v2"] = sim_v2_cells
+
     show_sim_col = bool(our_by_ts) and market_id in ("1x2_1up_ft", "1x2_2up_ft")
-    history_books: tuple[str, ...] = (
-        ("betpawa", "sportybet", "sim", "bet9ja", "betway")
-        if show_sim_col
-        else ("betpawa", "sportybet", "bet9ja", "betway")
+    show_sim_v2_col = show_sim_col and any(
+        our.get("v2_home_odds") is not None or our.get("v2_away_odds") is not None
+        for our in our_by_ts.values()
     )
+    if show_sim_col and show_sim_v2_col:
+        history_books = ("betpawa", "sportybet", "sim", "sim_v2", "bet9ja", "betway")
+    elif show_sim_col:
+        history_books = ("betpawa", "sportybet", "sim", "bet9ja", "betway")
+    else:
+        history_books = ("betpawa", "sportybet", "bet9ja", "betway")
 
     # Newest first
     history = [
