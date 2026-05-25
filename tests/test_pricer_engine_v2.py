@@ -196,3 +196,39 @@ def test_v2_twoup_one_goal_branch_matches_v1(balanced_match):
     r2 = ep_v2.price_early_payout_markets(**inputs)
     # Away is still active in 2UP (|diff| = 1).
     assert r2["p_away_2"] == pytest.approx(r1["p_away_2"], abs=1e-10)
+
+
+def test_v2_oneup_geq_twoup_probability_invariant(balanced_match):
+    """P(1UP) ≥ P(2UP) on the same side, in the DP-driven regions
+    (|goal_difference| < 2). V2's structural claim: where both 1UP and
+    2UP draw from ever_leads_probability, the inequality holds by
+    construction since reaching ±2 implies passing through ±1.
+
+    At |diff| ≥ 2, V2's 2UP trailing branch still uses
+    _trailing_selection (a heuristic), matching the Java rewrite
+    (Threeway2UpCalculatorImpl lines 176-200). The DP-vs-heuristic
+    composition there can violate monotonicity — that's a known
+    fall-back zone, not a regression vs V1."""
+    import random
+    rng = random.Random(0xABCD)
+    checked = 0
+    for _ in range(200):
+        sh = rng.randint(0, 5)
+        sa = rng.randint(0, 5)
+        if abs(sh - sa) >= 2:
+            continue  # outside the DP-only region; see docstring
+        inputs = {**balanced_match, "score": (sh, sa)}
+        r = ep_v2.price_early_payout_markets(**inputs)
+        for side in ("home", "away"):
+            p1 = r[f"p_{side}_1"]
+            p2 = r[f"p_{side}_2"]
+            if p1 is None or p2 is None:
+                continue
+            assert p1 >= p2 - 1e-12, (
+                f"V2 invariant broken on score=({sh},{sa}), side={side}: "
+                f"p_1={p1}, p_2={p2}"
+            )
+            checked += 1
+    # Defensive: |diff|<2 should dominate a 0..5 scan; a too-low
+    # `checked` means the scope filter accidentally degenerated.
+    assert checked >= 50, f"only {checked} assertions made — test scope too narrow"
