@@ -73,13 +73,19 @@ def devig_three_way(o1: float, o2: float, o3: float) -> Tuple[float, float, floa
     return q1 / s, q2 / s, q3 / s
 
 
-def _poisson_over_prob(lam: float, line: float) -> float:
-    """P(N > line) under Poisson(lam). line must be half-line (X.5)."""
+def _poisson_over_prob(lam: float, line: float, score_offset: int = 0) -> float:
+    """P(N_remaining > line - score_offset) under Poisson(lam).
+
+    line must be half-line (X.5). `score_offset` is the number of goals
+    already scored on this side; the lambda is the REMAINING-time rate,
+    so the comparison is against `line - score_offset` goals in what's
+    left of the match. When `score_offset >= ceil(line)` the over is
+    certain (current score already past the line)."""
     if lam <= 0:
         return 0.0
-    n_under = int(math.floor(line)) + 1  # number of CDF terms (k=0..floor(line))
+    n_under = int(math.floor(line)) + 1 - score_offset
     if n_under <= 0:
-        return 1.0 - math.exp(-lam)
+        return 1.0
     cdf = 0.0
     exp_neg = math.exp(-lam)
     factorial = 1.0
@@ -92,13 +98,19 @@ def _poisson_over_prob(lam: float, line: float) -> float:
     return 1.0 - cdf
 
 
-def _lambda_from_over_prob(over_prob: float, line: float) -> Optional[float]:
-    """Bisect to find lambda such that P(N > line) = over_prob."""
+def _lambda_from_over_prob(
+    over_prob: float, line: float, score_offset: int = 0,
+) -> Optional[float]:
+    """Bisect to find lambda such that P(N > line - score_offset) = over_prob."""
     if not (0.0 < over_prob < 1.0):
+        return None
+    # OU line already below current score: provides no info about
+    # remaining-time scoring rate (the over is certain).
+    if line < score_offset:
         return None
 
     def f(lam: float) -> float:
-        return _poisson_over_prob(lam, line) - over_prob
+        return _poisson_over_prob(lam, line, score_offset) - over_prob
 
     if f(LAMBDA_TOLERANCE) > 0:
         return None
@@ -114,23 +126,23 @@ def _lambda_from_over_prob(over_prob: float, line: float) -> Optional[float]:
     return (low + high) / 2.0
 
 
-def _derive_lambda_from_multiple_lines(lines: List[Tuple[float, float]]) -> Optional[float]:
-    """
-    lines: list of (line, over_prob) — over_prob is already the pre-devigged probability.
-    Returns the weighted average of per-line lambdas. Weight = 1 / (1 + |lambda - 2.5|).
-    Returns None if no lines yielded a valid lambda.
-    """
+def _derive_lambda_from_multiple_lines(
+    lines: List[Tuple[float, float]], score_offset: int = 0,
+) -> Optional[float]:
+    """Weighted average of per-line lambdas. Each lambda is the
+    remaining-time rate that explains the bookmaker's devigged over
+    probability at that line, given the current `score_offset` goals
+    already scored on this side."""
     if not lines:
         return None
     weighted_sum = 0.0
     total_weight = 0.0
     for line, over_prob in lines:
-        # Only half-lines (X.5) are valid per LambdaCalculator.java
         if abs((line * 2) - round(line * 2)) > 1e-9 or (round(line * 2) % 2 != 1):
-            continue  # not a half-line
+            continue
         if over_prob is None:
             continue
-        lam = _lambda_from_over_prob(over_prob, line)
+        lam = _lambda_from_over_prob(over_prob, line, score_offset)
         if lam is not None and lam > 0:
             distance = abs(lam - LAMBDA_TYPICAL)
             weight = 1.0 / (1.0 + distance)
@@ -145,11 +157,20 @@ def derive_lambda_pair(
     home_ou: List[Tuple[float, float]],
     away_ou: List[Tuple[float, float]],
     total_ou: List[Tuple[float, float]],
+    score_home: int = 0,
+    score_away: int = 0,
 ) -> Tuple[Optional[float], Optional[float]]:
-    """Port of LambdaCalculator.deriveLambdasFromOuMarkets."""
-    home = _derive_lambda_from_multiple_lines(home_ou)
-    away = _derive_lambda_from_multiple_lines(away_ou)
-    total = _derive_lambda_from_multiple_lines(total_ou)
+    """Score-aware lambda derivation.
+
+    OU lines describe full-match goal totals; the lambdas the engine
+    consumes are REMAINING-time Poisson rates. So we subtract the
+    relevant score off each line before inverting: home OU uses
+    `score_home`, away OU uses `score_away`, total OU uses their sum.
+    At prematch (score=0) the math collapses to the original full-match
+    interpretation."""
+    home = _derive_lambda_from_multiple_lines(home_ou, score_home)
+    away = _derive_lambda_from_multiple_lines(away_ou, score_away)
+    total = _derive_lambda_from_multiple_lines(total_ou, score_home + score_away)
 
     if total is None:
         return home, away
@@ -503,8 +524,17 @@ def price_early_payout_markets(
     # Alias to local short names for internal math (consistent with prior code)
     p_home, p_away = p_home_win, p_away_win
 
-    # ---- 1. Derive lambdas ----
-    lambda_home, lambda_away = derive_lambda_pair(home_ou, away_ou, total_ou)
+    # Score is unpacked early — lambdas are score-aware in V2 (the OU
+    # lines describe full-match goal totals, but the engine consumes
+    # remaining-time Poisson rates).
+    home_score, away_score = score
+    goal_difference = home_score - away_score
+
+    # ---- 1. Derive lambdas (score-aware) ----
+    lambda_home, lambda_away = derive_lambda_pair(
+        home_ou, away_ou, total_ou,
+        score_home=int(home_score), score_away=int(away_score),
+    )
 
     # If lambdas couldn't be derived, return a "deactivated" result
     if lambda_home is None or lambda_away is None:
@@ -528,10 +558,6 @@ def price_early_payout_markets(
     fs = _favorite_strength(p_home, p_away)
     fav_weight = 0.5 + fs / 2.0
     dog_weight = 1.0 - fav_weight
-
-    # ---- Live-score branching: compute goal_difference ----
-    home_score, away_score = score
-    goal_difference = home_score - away_score
 
     # ============== 1UP ==============
     if goal_difference == 0:
@@ -618,71 +644,59 @@ def price_early_payout_markets(
             home_1up_prob = home_1up_prob_raw
             away_1up_prob = away_1up_fair_odds = away_1up_capped = None
 
-    # ============== 2UP ==============
-    if abs(goal_difference) < 2:
-        # ---- LEVEL OR ONE-GOAL 2UP: Ever2UpProbability DP + inclusion-exclusion ----
-        # Matches Threeway2UpCalculatorImpl.calculateLevelOrOneGoal
-        # V2: read ever_±2 stats from the unified DP. Same DP, same
-        # numbers — just packaged into the wider 8-tuple now shared
-        # with the 1UP trailing path.
-        stats = ever_leads_probability(lambda_home, lambda_away, goal_difference)
-        p_home_ever_2_wins = stats[6]
-        p_away_ever_2_wins = stats[7]
-        p_home_ever_2 = stats[4]
-        p_away_ever_2 = stats[5]
-        home_residual = max(0.0, p_home_ever_2 - p_home_ever_2_wins)
-        away_residual = max(0.0, p_away_ever_2 - p_away_ever_2_wins)
+    # ============== 2UP (UNIFIED) ==============
+    # V2 always reads ever_±2 from the same DP — there's no
+    # heuristic trailing path anymore. Sides whose lead reached ±2
+    # (current or historical) get deactivated at the bottom of the
+    # function; the inclusion-exclusion math itself is the same as
+    # the level/one-goal branch under V1.
+    stats = ever_leads_probability(lambda_home, lambda_away, goal_difference)
+    p_home_ever_2 = stats[4]
+    p_away_ever_2 = stats[5]
+    p_home_ever_2_wins = stats[6]
+    p_away_ever_2_wins = stats[7]
+    home_residual = max(0.0, p_home_ever_2 - p_home_ever_2_wins)
+    away_residual = max(0.0, p_away_ever_2 - p_away_ever_2_wins)
 
-        # Per-side boost coefficient (blended favorite/underdog)
-        if TWOUP_BOOST_BLEND_ENABLED:
-            fav_coeff = _blend_boost(fav_weight, TWOUP_FAVORITE_BOOST_COEFFICIENT, TWOUP_UNDERDOG_BOOST_COEFFICIENT)
-            dog_coeff = _blend_boost(dog_weight, TWOUP_FAVORITE_BOOST_COEFFICIENT, TWOUP_UNDERDOG_BOOST_COEFFICIENT)
-        else:
-            fav_coeff = TWOUP_FAVORITE_BOOST_COEFFICIENT
-            dog_coeff = TWOUP_UNDERDOG_BOOST_COEFFICIENT
-        home_coeff = fav_coeff if home_is_favorite else dog_coeff
-        away_coeff = dog_coeff if home_is_favorite else fav_coeff
-
-        home_2up_prob = max(0.0, p_home + home_residual * home_coeff)
-        away_2up_prob = max(0.0, p_away + away_residual * away_coeff)
-
-        if TWOUP_MARGIN_BLEND_ENABLED:
-            fav_margin_2up = _blend_margins(fav_weight, TWOUP_FAVORITE_MARGIN, TWOUP_UNDERDOG_MARGIN)
-            dog_margin_2up = _blend_margins(dog_weight, TWOUP_FAVORITE_MARGIN, TWOUP_UNDERDOG_MARGIN)
-        else:
-            fav_margin_2up = TWOUP_FAVORITE_MARGIN
-            dog_margin_2up = TWOUP_UNDERDOG_MARGIN
-        home_margin_2up = fav_margin_2up if home_is_favorite else dog_margin_2up
-        away_margin_2up = dog_margin_2up if home_is_favorite else fav_margin_2up
-
-        home_2up_fair_odds = _fair_prob_to_odds(home_2up_prob, home_margin_2up)
-        away_2up_fair_odds = _fair_prob_to_odds(away_2up_prob, away_margin_2up)
-
-        home_min_red = TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION if home_is_favorite else TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION
-        away_min_red = TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION if home_is_favorite else TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION
-
-        home_2up_capped, _ = _cap_selection(home_2up_fair_odds, home_2up_prob, home_1x2_odds, p_home, home_min_red)
-        away_2up_capped, _ = _cap_selection(away_2up_fair_odds, away_2up_prob, away_1x2_odds, p_away, away_min_red)
+    # Per-side boost coefficient (blended favorite/underdog)
+    if TWOUP_BOOST_BLEND_ENABLED:
+        fav_coeff = _blend_boost(fav_weight, TWOUP_FAVORITE_BOOST_COEFFICIENT, TWOUP_UNDERDOG_BOOST_COEFFICIENT)
+        dog_coeff = _blend_boost(dog_weight, TWOUP_FAVORITE_BOOST_COEFFICIENT, TWOUP_UNDERDOG_BOOST_COEFFICIENT)
     else:
-        # ---- TRAILING-TEAM 2UP: |diff| >= 2, leading side deactivated ----
-        # Matches Threeway2UpCalculatorImpl.calculateWithTrailingTeam
-        if goal_difference > 0:
-            home_2up_fair_odds = home_2up_capped = home_2up_prob = None
-            away_2up_capped, away_2up_prob = _trailing_selection(
-                away_1x2_odds, p_away, lambda_away,
-                goal_difference + 2,
-                TWOUP_TRAILING_MIN_REDUCTION, TWOUP_TRAILING_MAX_REDUCTION,
-            )
-            away_2up_fair_odds = away_2up_capped
-        else:
-            home_deficit = abs(goal_difference)
-            home_2up_capped, home_2up_prob = _trailing_selection(
-                home_1x2_odds, p_home, lambda_home,
-                home_deficit + 2,
-                TWOUP_TRAILING_MIN_REDUCTION, TWOUP_TRAILING_MAX_REDUCTION,
-            )
-            home_2up_fair_odds = home_2up_capped
-            away_2up_fair_odds = away_2up_capped = away_2up_prob = None
+        fav_coeff = TWOUP_FAVORITE_BOOST_COEFFICIENT
+        dog_coeff = TWOUP_UNDERDOG_BOOST_COEFFICIENT
+    home_coeff = fav_coeff if home_is_favorite else dog_coeff
+    away_coeff = dog_coeff if home_is_favorite else fav_coeff
+
+    home_2up_prob_raw = max(0.0, p_home + home_residual * home_coeff)
+    away_2up_prob_raw = max(0.0, p_away + away_residual * away_coeff)
+
+    if TWOUP_MARGIN_BLEND_ENABLED:
+        fav_margin_2up = _blend_margins(fav_weight, TWOUP_FAVORITE_MARGIN, TWOUP_UNDERDOG_MARGIN)
+        dog_margin_2up = _blend_margins(dog_weight, TWOUP_FAVORITE_MARGIN, TWOUP_UNDERDOG_MARGIN)
+    else:
+        fav_margin_2up = TWOUP_FAVORITE_MARGIN
+        dog_margin_2up = TWOUP_UNDERDOG_MARGIN
+    home_margin_2up = fav_margin_2up if home_is_favorite else dog_margin_2up
+    away_margin_2up = dog_margin_2up if home_is_favorite else fav_margin_2up
+
+    home_2up_fair_odds = _fair_prob_to_odds(home_2up_prob_raw, home_margin_2up)
+    away_2up_fair_odds = _fair_prob_to_odds(away_2up_prob_raw, away_margin_2up)
+
+    home_min_red = TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION if home_is_favorite else TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION
+    away_min_red = TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION if home_is_favorite else TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION
+
+    home_2up_capped, _ = _cap_selection(home_2up_fair_odds, home_2up_prob_raw, home_1x2_odds, p_home, home_min_red)
+    away_2up_capped, _ = _cap_selection(away_2up_fair_odds, away_2up_prob_raw, away_1x2_odds, p_away, away_min_red)
+
+    home_2up_prob = home_2up_prob_raw
+    away_2up_prob = away_2up_prob_raw
+    # Current-score deactivation for sides whose lead has already
+    # reached ±2 (their 2UP has triggered).
+    if goal_difference >= 2:
+        home_2up_prob = home_2up_fair_odds = home_2up_capped = None
+    if goal_difference <= -2:
+        away_2up_prob = away_2up_fair_odds = away_2up_capped = None
 
     # History-aware deactivation. The current-score logic above only
     # knows the CURRENT diff, so a level / swung-back score (e.g. 1-1

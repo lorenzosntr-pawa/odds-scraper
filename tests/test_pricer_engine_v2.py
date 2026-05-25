@@ -188,35 +188,29 @@ def test_v2_no_longer_exposes_ever_2up_probability():
     assert not hasattr(ep_v2, "ever_2up_probability")
 
 
-def test_v2_twoup_one_goal_branch_matches_v1(balanced_match):
-    """Score 1-0 still goes through level/one-goal branch (|diff| < 2)
-    and must match V1."""
+def test_v2_diverges_from_v1_once_score_advances(balanced_match):
+    """V2 derives lambdas score-aware (OU lines describe full-match
+    totals; engine consumes remaining-time rates), so V1 and V2
+    diverge as soon as the score moves off 0-0 — even in the
+    level/one-goal branch where the 2UP math itself is identical."""
     inputs = {**balanced_match, "score": (1, 0)}
     r1 = ep_v1.price_early_payout_markets(**inputs)
     r2 = ep_v2.price_early_payout_markets(**inputs)
-    # Away is still active in 2UP (|diff| = 1).
-    assert r2["p_away_2"] == pytest.approx(r1["p_away_2"], abs=1e-10)
+    # Away is still active in 2UP (|diff| = 1) on both engines.
+    assert r2["p_away_2"] != pytest.approx(r1["p_away_2"], abs=1e-10)
 
 
 def test_v2_oneup_geq_twoup_probability_invariant(balanced_match):
-    """P(1UP) ≥ P(2UP) on the same side, in the DP-driven regions
-    (|goal_difference| < 2). V2's structural claim: where both 1UP and
-    2UP draw from ever_leads_probability, the inequality holds by
-    construction since reaching ±2 implies passing through ±1.
-
-    At |diff| ≥ 2, V2's 2UP trailing branch still uses
-    _trailing_selection (a heuristic), matching the Java rewrite
-    (Threeway2UpCalculatorImpl lines 176-200). The DP-vs-heuristic
-    composition there can violate monotonicity — that's a known
-    fall-back zone, not a regression vs V1."""
+    """P(1UP) ≥ P(2UP) on the same side, for ANY current score.
+    V2 unified 1UP and 2UP under the same DP (ever_leads_probability),
+    so reaching ±2 implies passing through ±1 by construction —
+    invariant holds across the full |goal_difference| range."""
     import random
     rng = random.Random(0xABCD)
     checked = 0
     for _ in range(200):
         sh = rng.randint(0, 5)
         sa = rng.randint(0, 5)
-        if abs(sh - sa) >= 2:
-            continue  # outside the DP-only region; see docstring
         inputs = {**balanced_match, "score": (sh, sa)}
         r = ep_v2.price_early_payout_markets(**inputs)
         for side in ("home", "away"):
@@ -229,6 +223,4 @@ def test_v2_oneup_geq_twoup_probability_invariant(balanced_match):
                 f"p_1={p1}, p_2={p2}"
             )
             checked += 1
-    # Defensive: |diff|<2 should dominate a 0..5 scan; a too-low
-    # `checked` means the scope filter accidentally degenerated.
-    assert checked >= 50, f"only {checked} assertions made — test scope too narrow"
+    assert checked >= 40, f"only {checked} assertions made — test scope too narrow"
