@@ -190,3 +190,94 @@ async def test_tournament_returning_empty_response_yields_no_events():
         bp_client=client,
     )
     assert out == []
+
+
+def _events_response_with_kickoff(items: list[tuple[str, str | None]]) -> dict:
+    """items = [(event_id, start_time_iso_or_None), ...]."""
+    return {
+        "responses": [{
+            "responses": [
+                {"id": ev_id, "participants": [], **({"startTime": kt} if kt else {})}
+                for ev_id, kt in items
+            ]
+        }]
+    }
+
+
+@pytest.mark.asyncio
+async def test_global_fetch_sorts_by_kickoff_asc_missing_last():
+    """_fetch_global_event_ids paginates per event_type and sorts the
+    union by startTime ASC; entries missing startTime drop to the end."""
+    from odds_scraper.event_resolver import _fetch_global_event_ids
+
+    client = AsyncMock()
+    async def get_events(tournament_id, sport_id, event_type, skip, take):
+        assert tournament_id is None
+        assert sport_id == "2"
+        if event_type == "UPCOMING" and skip == 0:
+            return _events_response_with_kickoff([
+                ("a", "2026-06-01T18:00:00Z"),
+                ("b", "2026-05-30T15:00:00Z"),
+                ("missing", None),
+            ])
+        if event_type == "LIVE" and skip == 0:
+            return _events_response_with_kickoff([
+                ("c", "2026-05-25T20:00:00Z"),
+            ])
+        return _events_response_with_kickoff([])
+    client.get_events.side_effect = get_events
+
+    out = await _fetch_global_event_ids(
+        client, sport_id="2", event_types=("UPCOMING", "LIVE"),
+    )
+    assert out == ["c", "b", "a", "missing"]
+
+
+@pytest.mark.asyncio
+async def test_global_fetch_one_event_type_failure_returns_partial(caplog):
+    """If one event_type's pagination raises, we keep the IDs from the
+    successful event_type — a single bad page doesn't wipe the sweep."""
+    from odds_scraper.event_resolver import _fetch_global_event_ids
+
+    client = AsyncMock()
+    async def get_events(tournament_id, sport_id, event_type, skip, take):
+        if event_type == "UPCOMING":
+            return _events_response_with_kickoff([
+                ("good1", "2026-05-25T18:00:00Z"),
+            ])
+        if event_type == "LIVE":
+            raise RuntimeError("HTTP 500 from BP")
+        return _events_response_with_kickoff([])
+    client.get_events.side_effect = get_events
+
+    with caplog.at_level(logging.WARNING, logger="odds_scraper.event_resolver"):
+        out = await _fetch_global_event_ids(
+            client, sport_id="2", event_types=("UPCOMING", "LIVE"),
+        )
+    assert out == ["good1"]
+    assert any("LIVE" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_global_fetch_paginates_until_partial_page():
+    """Pagination walks `take`-sized pages until a partial page signals
+    the tail. Mirrors `_fetch_tournament_event_ids`."""
+    from odds_scraper.event_resolver import _fetch_global_event_ids
+
+    page1 = [(str(i), f"2026-06-{(i%30)+1:02d}T00:00:00Z") for i in range(100)]
+    page2 = [(str(i), f"2026-06-{(i%30)+1:02d}T00:00:00Z") for i in range(100, 150)]
+
+    client = AsyncMock()
+    async def get_events(tournament_id, sport_id, event_type, skip, take):
+        if event_type == "UPCOMING" and skip == 0:
+            return _events_response_with_kickoff(page1)
+        if event_type == "UPCOMING" and skip == 100:
+            return _events_response_with_kickoff(page2)
+        return _events_response_with_kickoff([])
+    client.get_events.side_effect = get_events
+
+    out = await _fetch_global_event_ids(
+        client, sport_id="2", event_types=("UPCOMING",),
+    )
+    assert len(out) == 150
+    assert set(out) == {str(i) for i in range(150)}
