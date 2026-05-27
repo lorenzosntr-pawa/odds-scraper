@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=odds
-WorkingDirectory=/opt/odds-scraper
-ExecStart=/opt/odds-scraper/.venv/bin/python -m odds_scraper.main
+User=deploy
+WorkingDirectory=/home/deploy/odds-scraper
+ExecStart=/home/deploy/odds-scraper/.venv/bin/python -m odds_scraper.main
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1

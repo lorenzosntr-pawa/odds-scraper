@@ -4,8 +4,8 @@ set -euo pipefail
 # Run this ONCE on the server to set up the deployment target.
 # Usage: ssh your-server 'bash -s' < deploy/setup-server.sh
 
-APP_DIR="/opt/odds-scraper"
-APP_USER="odds"
+APP_DIR="/home/deploy/odds-scraper"
+APP_USER="deploy"
 
 # Create service user (no login shell, no home dir)
 if ! id "$APP_USER" &>/dev/null; then
