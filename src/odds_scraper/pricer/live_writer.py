@@ -14,7 +14,7 @@ import sqlite3
 from typing import Iterable
 
 from ..models import Snapshot
-from . import engine, engine_v2, inputs as input_extract, score_state
+from . import engine_v2, inputs as input_extract, score_state
 
 log = logging.getLogger(__name__)
 
@@ -71,24 +71,13 @@ def compute_and_write(
     # for the CSV layer's benefit but aren't engine kwargs — strip before call.
     engine_kwargs = {k: v for k, v in engine_inputs.items() if not k.startswith("_")}
     try:
-        res = engine.price_early_payout_markets(**engine_kwargs)
-    except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "v1 engine crashed on event=%s ts=%s — skipping (%s)",
-            event_id, ts_utc, exc,
-        )
-        return False
-    # V2 runs in parallel — same inputs, independent module. If it
-    # crashes we don't abort the V1 write; we just leave the v2_*
-    # cells null so the detail page can still render V1.
-    try:
         res_v2 = engine_v2.price_early_payout_markets(**engine_kwargs)
     except Exception as exc:  # noqa: BLE001
         log.warning(
-            "v2 engine crashed on event=%s ts=%s — leaving v2 cells null (%s)",
+            "v2 engine crashed on event=%s ts=%s — skipping (%s)",
             event_id, ts_utc, exc,
         )
-        res_v2 = None
+        return False
 
     conn.execute(
         """
@@ -112,23 +101,19 @@ def compute_and_write(
         """,
         (
             event_id, ts_utc, basis,
-            res["lambda_home"], res["lambda_away"],
-            res["p_home_1"], res["p_away_1"],
-            res["market_1up"]["home_fair"],   res["market_1up"]["home_margin"],
-            res["market_1up"]["away_fair"],   res["market_1up"]["away_margin"],
-            res["p_home_2"], res["p_away_2"],
-            res["market_2up"]["home_fair"],   res["market_2up"]["home_margin"],
-            res["market_2up"]["away_fair"],   res["market_2up"]["away_margin"],
-            (res_v2 or {}).get("p_home_1"), (res_v2 or {}).get("p_away_1"),
-            (res_v2 or {}).get("market_1up", {}).get("home_fair"),
-            (res_v2 or {}).get("market_1up", {}).get("home_margin"),
-            (res_v2 or {}).get("market_1up", {}).get("away_fair"),
-            (res_v2 or {}).get("market_1up", {}).get("away_margin"),
-            (res_v2 or {}).get("p_home_2"), (res_v2 or {}).get("p_away_2"),
-            (res_v2 or {}).get("market_2up", {}).get("home_fair"),
-            (res_v2 or {}).get("market_2up", {}).get("home_margin"),
-            (res_v2 or {}).get("market_2up", {}).get("away_fair"),
-            (res_v2 or {}).get("market_2up", {}).get("away_margin"),
+            res_v2["lambda_home"], res_v2["lambda_away"],
+            None, None,  # our_p_home_1, our_p_away_1
+            None, None,  # our_1up_home_fair, our_1up_home_capped
+            None, None,  # our_1up_away_fair, our_1up_away_capped
+            None, None,  # our_p_home_2, our_p_away_2
+            None, None,  # our_2up_home_fair, our_2up_home_capped
+            None, None,  # our_2up_away_fair, our_2up_away_capped
+            res_v2["p_home_1"], res_v2["p_away_1"],
+            res_v2["market_1up"]["home_fair"],   res_v2["market_1up"]["home_margin"],
+            res_v2["market_1up"]["away_fair"],   res_v2["market_1up"]["away_margin"],
+            res_v2["p_home_2"], res_v2["p_away_2"],
+            res_v2["market_2up"]["home_fair"],   res_v2["market_2up"]["home_margin"],
+            res_v2["market_2up"]["away_fair"],   res_v2["market_2up"]["away_margin"],
         ),
     )
     return True

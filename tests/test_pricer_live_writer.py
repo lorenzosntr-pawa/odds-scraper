@@ -67,16 +67,16 @@ def test_compute_and_write_inserts_row(tmp_path: Path):
     assert ok is True
     persisted = conn.execute(
         "SELECT basis_used, our_p_home_1, our_1up_home_capped, "
-        "our_p_home_2, our_2up_home_capped "
+        "v2_p_home_1, v2_1up_home_capped "
         "FROM pricer_live_results WHERE event_id=? AND ts_utc=?",
         ("E1", "2026-05-22T18:30:00Z"),
     ).fetchone()
     assert persisted is not None
     assert persisted[0] == "bp"
-    assert persisted[1] is not None  # 1UP prob computed
-    assert persisted[2] is not None  # 1UP capped odds computed
-    assert persisted[3] is not None  # 2UP prob computed
-    assert persisted[4] is not None  # 2UP capped odds computed
+    assert persisted[1] is None   # our_p_home_1 — V1 no longer runs
+    assert persisted[2] is None   # our_1up_home_capped — V1 no longer runs
+    assert persisted[3] is not None  # v2_p_home_1 computed
+    assert persisted[4] is not None  # v2_1up_home_capped computed
 
 
 def test_compute_and_write_returns_false_on_insufficient_inputs(tmp_path: Path):
@@ -177,9 +177,9 @@ def test_backfill_all_populates_missing_ticks(tmp_path: Path):
     conn.close()
 
 
-def test_live_writer_persists_v2_columns_alongside_v1(tmp_path: Path):
-    """Schema v9 adds 12 v2_* columns; live_writer must populate them
-    on every tick so the detail page can render V1 + V2 side-by-side."""
+def test_live_writer_persists_v2_columns(tmp_path: Path):
+    """live_writer runs V2 only — our_* (V1) columns are NULL,
+    v2_* columns populated."""
     conn = sqlite3.connect(str(tmp_path / "v2.db"), isolation_level=None)
     init_schema(conn)
     conn.row_factory = sqlite3.Row
@@ -197,14 +197,12 @@ def test_live_writer_persists_v2_columns_alongside_v1(tmp_path: Path):
         "FROM pricer_live_results WHERE event_id='E1'"
     ).fetchone()
     assert row is not None
-    assert row["our_p_home_1"] is not None
-    assert row["our_1up_home_capped"] is not None
-    # V2 cells populated. At score 0-0 the level-score 1UP path is
-    # unchanged across engines, so V1 == V2 numerically.
+    # V1 cells NULL — no longer computed in live pipeline
+    assert row["our_p_home_1"] is None
+    assert row["our_1up_home_capped"] is None
+    # V2 cells populated
     assert row["v2_p_home_1"] is not None
     assert row["v2_1up_home_capped"] is not None
-    assert row["v2_p_home_1"] == row["our_p_home_1"]
-    assert row["v2_1up_home_capped"] == row["our_1up_home_capped"]
     conn.close()
 
 
@@ -228,10 +226,8 @@ def _live_trailing_snapshot(bookmaker: Bookmaker) -> Snapshot:
     )
 
 
-def test_live_writer_v2_diverges_from_v1_on_live_trailing(tmp_path: Path):
-    """At a live trailing score (1-0 minute 91), V2's DP-based 1UP
-    trailing path produces different odds than V1's heuristic. The
-    persisted v2_* cells must reflect that."""
+def test_live_writer_v2_trailing_produces_output(tmp_path: Path):
+    """At a live trailing score (1-0), V2 trailing 1UP is populated."""
     conn = sqlite3.connect(str(tmp_path / "v2_live.db"), isolation_level=None)
     init_schema(conn)
     conn.row_factory = sqlite3.Row
@@ -248,9 +244,6 @@ def test_live_writer_v2_diverges_from_v1_on_live_trailing(tmp_path: Path):
         "FROM pricer_live_results WHERE event_id='E1'"
     ).fetchone()
     assert row is not None
-    # Away is trailing — both engines price it, via different paths
-    # (V1 heuristic vs V2 DP). They must disagree.
-    assert row["our_1up_away_capped"] is not None
-    assert row["v2_1up_away_capped"] is not None
-    assert row["our_1up_away_capped"] != pytest.approx(row["v2_1up_away_capped"], rel=1e-6)
+    assert row["our_1up_away_capped"] is None  # V1 no longer runs
+    assert row["v2_1up_away_capped"] is not None  # V2 trailing away populated
     conn.close()
