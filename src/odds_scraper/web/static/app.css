@@ -166,20 +166,6 @@
   font-size: 9px;
   letter-spacing: 0.05em;
 }
-/* Stacked v1/v2 in the SIM cell — two lines, small engine tag prefix. */
-.sim-stack { display: inline-flex; flex-direction: column; gap: 1px; }
-.sim-line { white-space: nowrap; }
-.sim-tag {
-  display: inline-block;
-  border: 1px solid #6b5817;
-  color: #fbbf24;
-  background: #1f1808;
-  padding: 0 3px;
-  margin-right: 3px;
-  font-size: 8px;
-  letter-spacing: 0.05em;
-  font-weight: 600;
-}
 .col-header > .lbl[data-bookmaker="sim"],
 .row > span[data-bookmaker="sim"] {
   width: 90px;       /* slightly wider than other cells to fit "1.85 SIM" */
