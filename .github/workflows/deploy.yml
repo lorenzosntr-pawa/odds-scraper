@@ -18,5 +18,5 @@ jobs:
             cd /home/deploy/odds-scraper
             git pull --ff-only origin main
             .venv/bin/pip install -e . --quiet
-            sudo systemctl restart odds-scraper odds-web
+            sudo systemctl restart odds-scraper odds-scraper-web
             echo "Deployed $(git rev-parse --short HEAD) at $(date)"

@@ -29,16 +29,16 @@ sudo -u "$APP_USER" "$APP_DIR/.venv/bin/pip" install -e "$APP_DIR"
 
 # Install systemd services
 sudo cp "$APP_DIR/deploy/odds-scraper.service" /etc/systemd/system/
-sudo cp "$APP_DIR/deploy/odds-web.service" /etc/systemd/system/
+sudo cp "$APP_DIR/deploy/odds-scraper-web.service" /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable odds-scraper odds-web
-sudo systemctl start odds-scraper odds-web
+sudo systemctl enable odds-scraper odds-scraper-web
+sudo systemctl start odds-scraper odds-scraper-web
 
 echo ""
 echo "Done. Services running:"
 echo "  odds-scraper  — scraper (port: none, writes to $APP_DIR/data/odds.db)"
-echo "  odds-web      — web UI  (port: 8080)"
+echo "  odds-scraper-web — web UI  (port: 8081)"
 echo ""
 echo "Next: copy your existing odds.db to $APP_DIR/data/odds.db"
 echo "  scp data/odds.db your-server:$APP_DIR/data/"
-echo "  ssh your-server 'sudo systemctl restart odds-scraper odds-web'"
+echo "  ssh your-server 'sudo systemctl restart odds-scraper odds-scraper-web'"
