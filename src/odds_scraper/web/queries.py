@@ -257,14 +257,11 @@ def get_our_history_for_event(
 
     Returned shape: {ts_utc: {
         "home_odds": _, "away_odds": _, "home_prob": _, "away_prob": _,
-        "v2_home_odds": _, "v2_away_odds": _, "v2_home_prob": _, "v2_away_prob": _,
     }}.
     Empty dict if the market isn't a UP market or no rows exist.
 
-    V1 cells come from the historical `pricer_live_results` rows
-    (written by every scraper tick). V2 cells are written alongside
-    starting with schema v9 — legacy rows from before that show null
-    in the v2_* fields.
+    V2 is the primary engine (schema v9+). For historical rows that predate V2
+    (where v2_* columns are NULL), the V1 values are used as a fallback.
     """
     if market_id == "1x2_1up_ft":
         odds_h, odds_a = "our_1up_home_capped", "our_1up_away_capped"
@@ -286,10 +283,10 @@ def get_our_history_for_event(
     ).fetchall()
     return {
         r["ts_utc"]: {
-            "home_odds": r[odds_h], "away_odds": r[odds_a],
-            "home_prob": r[prob_h], "away_prob": r[prob_a],
-            "v2_home_odds": r[v2_odds_h], "v2_away_odds": r[v2_odds_a],
-            "v2_home_prob": r[v2_prob_h], "v2_away_prob": r[v2_prob_a],
+            "home_odds": r[v2_odds_h] if r[v2_odds_h] is not None else r[odds_h],
+            "away_odds": r[v2_odds_a] if r[v2_odds_a] is not None else r[odds_a],
+            "home_prob": r[v2_prob_h] if r[v2_prob_h] is not None else r[prob_h],
+            "away_prob": r[v2_prob_a] if r[v2_prob_a] is not None else r[prob_a],
         }
         for r in rows
     }

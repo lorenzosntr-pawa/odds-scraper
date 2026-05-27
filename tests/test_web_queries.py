@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from odds_scraper.db_schema import init_schema
+from odds_scraper.web import queries
 from odds_scraper.web.queries import (
     get_event_meta, get_events_by_status, get_latest_prices_for_event,
     get_market_history_for_event, open_ro_conn,
@@ -409,3 +410,47 @@ def test_get_market_history_for_event_includes_minute_and_score(db: Path):
     assert r["score_home"] == 1
     assert r["score_away"] == 0
     assert r["status"] == "STARTED"
+
+
+def test_our_history_returns_v2_as_primary(tmp_path: Path):
+    """get_our_history_for_event returns V2 fields as the primary
+    home_odds/away_odds keys, falling back to V1 for pre-V2 rows."""
+    db_path = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    init_schema(conn)
+    # Row with both V1 and V2 — V2 should win
+    conn.execute(
+        "INSERT INTO pricer_live_results "
+        "(event_id, ts_utc, basis_used, "
+        " our_1up_home_capped, our_1up_away_capped, our_p_home_1, our_p_away_1, "
+        " v2_1up_home_capped, v2_1up_away_capped, v2_p_home_1, v2_p_away_1) "
+        "VALUES ('E1', '2026-05-21T10:00:00Z', 'bp', "
+        "        1.48, 4.10, 0.66, 0.12, "
+        "        1.55, 3.90, 0.63, 0.14)",
+    )
+    # Row with only V1 (pre-V2 historical) — V1 fallback
+    conn.execute(
+        "INSERT INTO pricer_live_results "
+        "(event_id, ts_utc, basis_used, "
+        " our_1up_home_capped, our_1up_away_capped, our_p_home_1, our_p_away_1) "
+        "VALUES ('E1', '2026-05-21T10:05:00Z', 'bp', "
+        "        1.48, 4.10, 0.66, 0.12)",
+    )
+    conn.close()
+    conn = queries.open_ro_conn(db_path)
+    result = queries.get_our_history_for_event(conn, "E1", "1x2_1up_ft")
+    conn.close()
+    # Tick with V2 → V2 values used
+    t1 = result["2026-05-21T10:00:00Z"]
+    assert t1["home_odds"] == 1.55
+    assert t1["away_odds"] == 3.90
+    assert t1["home_prob"] == 0.63
+    # Tick without V2 → V1 fallback
+    t2 = result["2026-05-21T10:05:00Z"]
+    assert t2["home_odds"] == 1.48
+    assert t2["away_odds"] == 4.10
+    assert t2["home_prob"] == 0.66
+    # No v2_* keys in the output — unified interface
+    assert "v2_home_odds" not in t1
+    assert "v2_home_odds" not in t2
