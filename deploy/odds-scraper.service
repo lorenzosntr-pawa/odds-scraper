@@ -1,0 +1,15 @@
+[Unit]
+Description=Odds Scraper — live data collector
+After=network.target
+
+[Service]
+Type=simple
+User=odds
+WorkingDirectory=/opt/odds-scraper
+ExecStart=/opt/odds-scraper/.venv/bin/python -m odds_scraper.main
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

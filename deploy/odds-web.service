@@ -1,0 +1,15 @@
+[Unit]
+Description=Odds Scraper Web UI
+After=network.target
+
+[Service]
+Type=simple
+User=odds
+WorkingDirectory=/opt/odds-scraper
+ExecStart=/opt/odds-scraper/.venv/bin/python -m odds_scraper.web --host 0.0.0.0 --port 8080
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
