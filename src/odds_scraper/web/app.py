@@ -11,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from odds_scraper.models import MARKET_MANIFEST, MarketSpec
 from odds_scraper.pricer import (
-    engine, engine_v2, inputs as pricer_inputs,
+    engine_v2, inputs as pricer_inputs,
     score_state as pricer_score_state,
 )
 
@@ -137,10 +137,7 @@ class EventView:
     score_home: Optional[int]
     score_away: Optional[int]
     market_groups: list[MarketGroup]
-    # OUR-engine output for the SIM column. None when inputs are missing
-    # or the engine deactivates. V1 (`our_*`) is the original engine; V2
-    # (`v2_*`) is the May 2026 Java rewrite — rendered stacked under V1
-    # in the same SIM cell so the user can A/B at a glance.
+    # OUR-engine output for the SIM column (V2 engine).
     our_1up_home: Optional[float]
     our_1up_away: Optional[float]
     our_2up_home: Optional[float]
@@ -149,14 +146,6 @@ class EventView:
     our_p_1up_away: Optional[float]
     our_p_2up_home: Optional[float]
     our_p_2up_away: Optional[float]
-    v2_1up_home: Optional[float]
-    v2_1up_away: Optional[float]
-    v2_2up_home: Optional[float]
-    v2_2up_away: Optional[float]
-    v2_p_1up_home: Optional[float]
-    v2_p_1up_away: Optional[float]
-    v2_p_2up_home: Optional[float]
-    v2_p_2up_away: Optional[float]
     # True when BP itself quoted the market — drives the rule "if BP
     # missing, OUR replaces the BP cell instead of going to SIM column".
     bp_has_1up: bool
@@ -400,8 +389,6 @@ def _build_event_view(
     engine_inputs, _basis = pricer_inputs.extract(prices_by_book)
     our_1up_home = our_1up_away = our_2up_home = our_2up_away = None
     our_p_1up_home = our_p_1up_away = our_p_2up_home = our_p_2up_away = None
-    v2_1up_home = v2_1up_away = v2_2up_home = v2_2up_away = None
-    v2_p_1up_home = v2_p_1up_away = v2_p_2up_home = v2_p_2up_away = None
     if engine_inputs is not None:
         score = (row["score_home"] or 0, row["score_away"] or 0)
         engine_inputs["score"] = (int(score[0]), int(score[1]))
@@ -410,7 +397,7 @@ def _build_event_view(
         # _cap_source_* metadata lives on the inputs dict but isn't an engine kwarg.
         engine_kwargs = {k: v for k, v in engine_inputs.items() if not k.startswith("_")}
         try:
-            result = engine.price_early_payout_markets(**engine_kwargs)
+            result = engine_v2.price_early_payout_markets(**engine_kwargs)
             our_1up_home = result["market_1up"]["home_margin"]
             our_1up_away = result["market_1up"]["away_margin"]
             our_2up_home = result["market_2up"]["home_margin"]
@@ -419,18 +406,6 @@ def _build_event_view(
             our_p_1up_away = result["p_away_1"]
             our_p_2up_home = result["p_home_2"]
             our_p_2up_away = result["p_away_2"]
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            result_v2 = engine_v2.price_early_payout_markets(**engine_kwargs)
-            v2_1up_home = result_v2["market_1up"]["home_margin"]
-            v2_1up_away = result_v2["market_1up"]["away_margin"]
-            v2_2up_home = result_v2["market_2up"]["home_margin"]
-            v2_2up_away = result_v2["market_2up"]["away_margin"]
-            v2_p_1up_home = result_v2["p_home_1"]
-            v2_p_1up_away = result_v2["p_away_1"]
-            v2_p_2up_home = result_v2["p_home_2"]
-            v2_p_2up_away = result_v2["p_away_2"]
         except Exception:  # noqa: BLE001
             pass
 
@@ -450,10 +425,6 @@ def _build_event_view(
         our_2up_home=our_2up_home, our_2up_away=our_2up_away,
         our_p_1up_home=our_p_1up_home, our_p_1up_away=our_p_1up_away,
         our_p_2up_home=our_p_2up_home, our_p_2up_away=our_p_2up_away,
-        v2_1up_home=v2_1up_home, v2_1up_away=v2_1up_away,
-        v2_2up_home=v2_2up_home, v2_2up_away=v2_2up_away,
-        v2_p_1up_home=v2_p_1up_home, v2_p_1up_away=v2_p_1up_away,
-        v2_p_2up_home=v2_p_2up_home, v2_p_2up_away=v2_p_2up_away,
         bp_has_1up=bp_has_1up, bp_has_2up=bp_has_2up,
     )
 

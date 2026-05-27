@@ -50,8 +50,6 @@
           {% set is_up_row = group.group_key in ('1x2_1up_ft', '1x2_2up_ft') %}
           {% set our_value = none %}
           {% set our_prob = none %}
-          {% set v2_value = none %}
-          {% set v2_prob = none %}
           {% set bp_has_quote = false %}
           {% if is_up_row %}
             {% if group.group_key == '1x2_1up_ft' %}
@@ -59,28 +57,20 @@
               {% if row.side_short == 'H' %}
                 {% set our_value = event.our_1up_home %}
                 {% set our_prob = event.our_p_1up_home %}
-                {% set v2_value = event.v2_1up_home %}
-                {% set v2_prob = event.v2_p_1up_home %}
               {% endif %}
               {% if row.side_short == 'A' %}
                 {% set our_value = event.our_1up_away %}
                 {% set our_prob = event.our_p_1up_away %}
-                {% set v2_value = event.v2_1up_away %}
-                {% set v2_prob = event.v2_p_1up_away %}
               {% endif %}
             {% else %}
               {% set bp_has_quote = event.bp_has_2up %}
               {% if row.side_short == 'H' %}
                 {% set our_value = event.our_2up_home %}
                 {% set our_prob = event.our_p_2up_home %}
-                {% set v2_value = event.v2_2up_home %}
-                {% set v2_prob = event.v2_p_2up_home %}
               {% endif %}
               {% if row.side_short == 'A' %}
                 {% set our_value = event.our_2up_away %}
                 {% set our_prob = event.our_p_2up_away %}
-                {% set v2_value = event.v2_2up_away %}
-                {% set v2_prob = event.v2_p_2up_away %}
               {% endif %}
             {% endif %}
           {% endif %}
@@ -104,25 +94,11 @@
               {% else %}<span class="text-gray-700">—</span>{% endif %}
             </span>
 
-            {# SIM column: only populated for UP rows when BP quoted. V1
-               stacked above V2 with small engine labels so the user can
-               compare both engines on the live card at a glance. #}
-            <span data-bookmaker="sim" class="sim-stack">
-              {% if is_up_row and bp_has_quote and (our_value is not none or v2_value is not none) %}
-                {% if our_value is not none %}
-                  <span class="sim-line">
-                    <span class="sim-tag">v1</span>
-                    <span class="odds sim">{{ "%.2f"|format(our_value) }}</span>
-                    {% if our_prob is not none %}<span class="prob">.{{ "%02d"|format([(our_prob * 100)|round|int, 99]|min) }}</span>{% endif %}
-                  </span>
-                {% endif %}
-                {% if v2_value is not none %}
-                  <span class="sim-line">
-                    <span class="sim-tag">v2</span>
-                    <span class="odds sim">{{ "%.2f"|format(v2_value) }}</span>
-                    {% if v2_prob is not none %}<span class="prob">.{{ "%02d"|format([(v2_prob * 100)|round|int, 99]|min) }}</span>{% endif %}
-                  </span>
-                {% endif %}
+            {# SIM column: only populated for UP rows when BP quoted. #}
+            <span data-bookmaker="sim">
+              {% if is_up_row and bp_has_quote and our_value is not none %}
+                <span class="odds sim">{{ "%.2f"|format(our_value) }}</span>
+                {% if our_prob is not none %}<span class="prob">.{{ "%02d"|format([(our_prob * 100)|round|int, 99]|min) }}</span>{% endif %}
               {% else %}<span class="text-gray-700">—</span>{% endif %}
             </span>
 
