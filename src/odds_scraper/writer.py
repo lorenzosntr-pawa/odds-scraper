@@ -128,6 +128,7 @@ class SqliteWriter:
                     "  genius_id = COALESCE(NULLIF(events.genius_id, ''), excluded.genius_id), "
                     "  home = CASE WHEN events.home = '' THEN excluded.home ELSE events.home END, "
                     "  away = CASE WHEN events.away = '' THEN excluded.away ELSE events.away END, "
+                    "  kickoff_utc = excluded.kickoff_utc, "
                     "  country_id = COALESCE(NULLIF(events.country_id, ''), excluded.country_id), "
                     "  country_name = CASE "
                     "      WHEN events.country_name IS NULL OR events.country_name = '' "

@@ -57,6 +57,14 @@ def get_events_by_status(
     league_clause    = "AND e.league_id  = :league_id"  if league_id  else ""
     date_from_clause = "AND s.ts_utc >= :date_from"     if date_from  else ""
     date_to_clause   = "AND s.ts_utc < :date_to_next"   if date_to    else ""
+    # Hide upcoming events whose kickoff is >48h in the past — BP
+    # sometimes publishes bogus startTime values that never transition.
+    stale_upcoming_clause = ""
+    if status == "upcoming":
+        stale_cutoff = (
+            datetime.now(timezone.utc) - timedelta(hours=48)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        stale_upcoming_clause = "AND e.kickoff_utc > :stale_cutoff"
     sql = f"""
         WITH latest AS (
             SELECT event_id, MAX(ts_utc) AS max_ts
@@ -82,6 +90,7 @@ def get_events_by_status(
           AND e.home != '' AND e.away != ''
           {date_from_clause}
           {date_to_clause}
+          {stale_upcoming_clause}
           {country_clause}
           {league_clause}
         GROUP BY e.id
@@ -93,6 +102,8 @@ def get_events_by_status(
         "limit": limit,
         "offset": offset,
     }
+    if status == "upcoming":
+        params["stale_cutoff"] = stale_cutoff
     if date_from:
         params["date_from"] = f"{date_from}T00:00:00Z"
     if date_to:
