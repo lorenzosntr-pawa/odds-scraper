@@ -9,7 +9,13 @@ build/
 dist/
 data/*.csv
 data/*.json
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.bak
 data/sim/
 !data/.gitkeep
 .env
 .superpowers/
+graphify-out/
+N
