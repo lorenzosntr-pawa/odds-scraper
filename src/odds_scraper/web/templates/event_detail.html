@@ -68,8 +68,8 @@
   <div class="history-wrap">
     <div class="history-title">History — {{ event.market_label }}</div>
     {% if event.history %}
-      {% set book_label = {"betpawa":"BetPawa","sportybet":"SportyBet","bet9ja":"Bet9ja","betway":"Betway","sim":"SIM v1","sim_v2":"SIM v2"} %}
-      {% set sim_books = ("sim", "sim_v2") %}
+      {% set book_label = {"betpawa":"BetPawa","sportybet":"SportyBet","bet9ja":"Bet9ja","betway":"Betway","sim":"SIM"} %}
+      {% set sim_books = ("sim",) %}
       <table class="history-table">
         <thead>
           <tr>
