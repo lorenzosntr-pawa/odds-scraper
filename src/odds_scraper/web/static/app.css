@@ -518,3 +518,5 @@ body.hide-betway    .history-table [data-bookmaker="betway"]    { display: none;
     font-size: 10px;
   }
 }
+
+.scroll-sentinel { height: 1px; }

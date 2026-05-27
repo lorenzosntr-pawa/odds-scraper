@@ -288,9 +288,10 @@ def create_app(db_path: Path) -> FastAPI:
             )
             for row in rows
         ]
+        template_name = "_events_batch.html" if offset > 0 else "_events_list.html"
         return templates.TemplateResponse(
             request,
-            "_events_list.html",
+            template_name,
             {
                 "status": status,
                 "events": events,
