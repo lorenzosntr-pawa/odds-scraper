@@ -241,11 +241,13 @@ def create_app(db_path: Path) -> FastAPI:
         if status not in queries.VALID_STATUSES:
             status = "upcoming"
         country_league_index = queries.get_country_league_index(conn)
+        date_range = queries.get_date_range(conn)
         return templates.TemplateResponse(
             request, "index.html",
             {
                 "country_league_index": country_league_index,
                 "initial_status": status,
+                "date_range": date_range,
             },
         )
 
@@ -255,11 +257,17 @@ def create_app(db_path: Path) -> FastAPI:
         status: str = Query("live"),
         country: str = Query(""),
         league: str = Query(""),
+        offset: int = Query(0),
+        limit: int = Query(20),
+        date_from: str = Query(""),
+        date_to: str = Query(""),
     ):
         if status not in queries.VALID_STATUSES:
             raise HTTPException(status_code=400, detail=f"unknown status {status!r}")
         rows = queries.get_events_by_status(  # type: ignore[arg-type]
             conn, status, country_id=country, league_id=league,
+            offset=offset, limit=limit,
+            date_from=date_from, date_to=date_to,
         )
         # Batch the latest-prices fetch across all events: one query for
         # the whole page instead of one per event. Turns ~88s of N+1
@@ -287,6 +295,13 @@ def create_app(db_path: Path) -> FastAPI:
                 "status": status,
                 "events": events,
                 "poll_seconds": _POLL_SECONDS[status],
+                "offset": offset,
+                "limit": limit,
+                "country": country,
+                "league": league,
+                "date_from": date_from,
+                "date_to": date_to,
+                "has_more": len(events) == limit,
             },
         )
 
