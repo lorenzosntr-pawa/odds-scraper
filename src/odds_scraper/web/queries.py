@@ -34,10 +34,13 @@ def _utcnow_iso() -> str:
 def get_events_by_status(
     conn: sqlite3.Connection, status: Status,
     *, country_id: str = "", league_id: str = "",
+    offset: int = 0, limit: int = 20,
+    date_from: str = "", date_to: str = "",
 ) -> list[sqlite3.Row]:
     """Return events whose latest snapshot is in the given status.
 
-    Ended events are limited to the last 24 hours.
+    Supports pagination via offset/limit and optional date range filtering
+    on snapshot timestamp (date_from/date_to, inclusive, YYYY-MM-DD).
     """
     if status not in _STATUS_DB_VALUES:
         raise ValueError(
@@ -45,18 +48,15 @@ def get_events_by_status(
             f"{sorted(_STATUS_DB_VALUES)}",
         )
     db_status = _STATUS_DB_VALUES[status]
-    cutoff: str | None = None
-    if status == "ended":
-        now = datetime.strptime(_utcnow_iso(), "%Y-%m-%dT%H:%M:%SZ")
-        cutoff = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
     order_clause = {
         "live":     "ORDER BY s.match_minute DESC",
         "upcoming": "ORDER BY e.kickoff_utc ASC",
         "ended":    "ORDER BY s.ts_utc DESC",
     }[status]
-    country_clause = "AND e.country_id = :country_id" if country_id else ""
-    league_clause  = "AND e.league_id  = :league_id"  if league_id  else ""
-    cutoff_clause  = "AND s.ts_utc >= :cutoff"        if cutoff     else ""
+    country_clause   = "AND e.country_id = :country_id" if country_id else ""
+    league_clause    = "AND e.league_id  = :league_id"  if league_id  else ""
+    date_from_clause = "AND s.ts_utc >= :date_from"     if date_from  else ""
+    date_to_clause   = "AND s.ts_utc < :date_to_next"   if date_to    else ""
     sql = f"""
         WITH latest AS (
             SELECT event_id, MAX(ts_utc) AS max_ts
@@ -80,20 +80,43 @@ def get_events_by_status(
           -- home AND away never saw a successful collector tick — it's
           -- noise on the upcoming page.
           AND e.home != '' AND e.away != ''
-          {cutoff_clause}
+          {date_from_clause}
+          {date_to_clause}
           {country_clause}
           {league_clause}
         GROUP BY e.id
         {order_clause}
+        LIMIT :limit OFFSET :offset
     """
-    params: dict[str, str] = {"db_status": db_status}
-    if cutoff:
-        params["cutoff"] = cutoff
+    params: dict[str, object] = {
+        "db_status": db_status,
+        "limit": limit,
+        "offset": offset,
+    }
+    if date_from:
+        params["date_from"] = f"{date_from}T00:00:00Z"
+    if date_to:
+        params["date_to_next"] = (
+            datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+        ).strftime("%Y-%m-%dT00:00:00Z")
     if country_id:
         params["country_id"] = country_id
     if league_id:
         params["league_id"] = league_id
     return conn.execute(sql, params).fetchall()
+
+
+def get_date_range(conn: sqlite3.Connection) -> dict[str, str]:
+    """Min/max kickoff dates across all events, for date picker bounds."""
+    row = conn.execute(
+        "SELECT MIN(DATE(kickoff_utc)) AS min_date, "
+        "       MAX(DATE(kickoff_utc)) AS max_date "
+        "FROM events WHERE home != '' AND away != ''"
+    ).fetchone()
+    return {
+        "min": row["min_date"] or "",
+        "max": row["max_date"] or "",
+    }
 
 
 def get_latest_prices_for_event(

@@ -98,16 +98,14 @@ def test_get_events_by_status_upcoming_ordered_by_kickoff(db: Path):
     assert ids == ["E_UPCOMING", "E_UP2"]
 
 
-def test_get_events_by_status_ended_excludes_older_than_24h(db: Path, monkeypatch):
-    import odds_scraper.web.queries as q
-    monkeypatch.setattr(q, "_utcnow_iso",
-                        lambda: "2026-05-21T12:00:00Z")
+def test_get_events_by_status_ended_returns_all_without_cutoff(db: Path):
+    """Ended events have no 24h cutoff — both recent and old events appear."""
     conn = open_ro_conn(db)
-    rows = get_events_by_status(conn, "ended")
+    rows = get_events_by_status(conn, "ended", limit=100)
     conn.close()
     ids = [r["id"] for r in rows]
     assert "E_ENDED" in ids
-    assert "E_OLD" not in ids
+    assert "E_OLD" in ids
 
 
 def test_get_latest_prices_for_event_collapsed_only_1x2(db: Path):
@@ -410,6 +408,83 @@ def test_get_market_history_for_event_includes_minute_and_score(db: Path):
     assert r["score_home"] == 1
     assert r["score_away"] == 0
     assert r["status"] == "STARTED"
+
+
+def test_get_events_pagination_limit_offset(tmp_path: Path):
+    """Pagination returns correct slice of events."""
+    db_path = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    init_schema(conn)
+    for i in range(5):
+        eid = f"EV{i}"
+        conn.execute(
+            "INSERT OR IGNORE INTO events (id, home, away, kickoff_utc) "
+            "VALUES (?, ?, ?, ?)",
+            (eid, f"Home{i}", f"Away{i}", f"2026-06-01T{10+i}:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO snapshots (event_id, ts_utc, bookmaker, status, fetch_status) "
+            "VALUES (?, '2026-06-01T09:00:00Z', 'betpawa', 'UPCOMING', 'ok')",
+            (eid,),
+        )
+    conn.close()
+    conn = queries.open_ro_conn(db_path)
+    page1 = queries.get_events_by_status(conn, "upcoming", limit=2, offset=0)
+    page2 = queries.get_events_by_status(conn, "upcoming", limit=2, offset=2)
+    conn.close()
+    assert len(page1) == 2
+    assert len(page2) == 2
+    assert page1[0]["id"] != page2[0]["id"]
+
+
+def test_get_events_ended_no_24h_cutoff(tmp_path: Path):
+    """Ended events are no longer limited to 24h — old events appear."""
+    db_path = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    init_schema(conn)
+    conn.execute(
+        "INSERT OR IGNORE INTO events (id, home, away, kickoff_utc) "
+        "VALUES ('OLD1', 'TeamA', 'TeamB', '2026-05-01T10:00:00Z')",
+    )
+    conn.execute(
+        "INSERT INTO snapshots (event_id, ts_utc, bookmaker, status, fetch_status) "
+        "VALUES ('OLD1', '2026-05-01T12:00:00Z', 'betpawa', 'ENDED', 'ok')",
+    )
+    conn.close()
+    conn = queries.open_ro_conn(db_path)
+    rows = queries.get_events_by_status(conn, "ended", limit=100)
+    conn.close()
+    ids = [r["id"] for r in rows]
+    assert "OLD1" in ids
+
+
+def test_get_events_ended_date_filter(tmp_path: Path):
+    """date_from / date_to filter ended events by snapshot timestamp."""
+    db_path = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    init_schema(conn)
+    for day in ("01", "10", "20"):
+        eid = f"MAY{day}"
+        conn.execute(
+            "INSERT OR IGNORE INTO events (id, home, away, kickoff_utc) "
+            "VALUES (?, 'A', 'B', ?)",
+            (eid, f"2026-05-{day}T10:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO snapshots (event_id, ts_utc, bookmaker, status, fetch_status) "
+            "VALUES (?, ?, 'betpawa', 'ENDED', 'ok')",
+            (eid, f"2026-05-{day}T12:00:00Z"),
+        )
+    conn.close()
+    conn = queries.open_ro_conn(db_path)
+    rows = queries.get_events_by_status(
+        conn, "ended", date_from="2026-05-05", date_to="2026-05-15", limit=100,
+    )
+    conn.close()
+    ids = [r["id"] for r in rows]
+    assert "MAY10" in ids
+    assert "MAY01" not in ids
+    assert "MAY20" not in ids
 
 
 def test_our_history_returns_v2_as_primary(tmp_path: Path):
