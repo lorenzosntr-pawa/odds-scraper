@@ -63,6 +63,15 @@
              placeholder="team name..."
              autocomplete="off">
     </div>
+
+    <div class="filter-group filter-date-range">
+      <span class="filter-lbl">From</span>
+      <input type="date" id="date-from" class="date-input"
+             min="{{ date_range.min }}" max="{{ date_range.max }}">
+      <span class="filter-lbl">To</span>
+      <input type="date" id="date-to" class="date-input"
+             min="{{ date_range.min }}" max="{{ date_range.max }}">
+    </div>
   </div>
 
   <script type="application/json" id="country-league-index">

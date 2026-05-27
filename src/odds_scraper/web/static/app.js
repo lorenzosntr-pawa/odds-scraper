@@ -68,6 +68,22 @@ function applyBodyTabClass() {
   document.body.classList.add(`tab-${status}`);
 }
 
+function reloadEvents() {
+  const status = currentStatus();
+  const stored = LS.load(filterKey('country_league_filter'),
+                         {country_id: '', league_id: ''});
+  const dateRange = getDateRange();
+  const params = new URLSearchParams({
+    status,
+    country: stored.country_id || '',
+    league:  stored.league_id  || '',
+  });
+  if (dateRange.from) params.set('date_from', dateRange.from);
+  if (dateRange.to) params.set('date_to', dateRange.to);
+  window.htmx.ajax('GET', `/events?${params.toString()}`,
+                   {target: '#events-list', swap: 'outerHTML'});
+}
+
 function _activateTab(status) {
   // Idempotent: flip the .active class, mirror to body, sync filter
   // controls from this tab's saved state, and fetch the matching
@@ -80,6 +96,7 @@ function _activateTab(status) {
   applyCountryLeagueFromStorage();
   applySearchInputFromStorage();
   applyKickoffControlsFromStorage();
+  applyDateRangeFromStorage();
   const stored = LS.load(filterKey('country_league_filter'),
                          {country_id: '', league_id: ''});
   const params = new URLSearchParams({
@@ -87,6 +104,9 @@ function _activateTab(status) {
     country: stored.country_id || '',
     league:  stored.league_id  || '',
   });
+  const dateRange = getDateRange();
+  if (dateRange.from) params.set('date_from', dateRange.from);
+  if (dateRange.to) params.set('date_to', dateRange.to);
   window.htmx.ajax('GET', `/events?${params.toString()}`,
                    {target: '#events-list', swap: 'outerHTML'});
 }
@@ -246,6 +266,38 @@ function initSearch() {
 }
 
 // -----------------------------------------------------------------------------
+// Date range filter (ended tab only)
+// -----------------------------------------------------------------------------
+function applyDateRangeFromStorage() {
+  const stored = LS.load(filterKey('date_range'), {from: '', to: ''});
+  const fromEl = document.getElementById('date-from');
+  const toEl = document.getElementById('date-to');
+  if (fromEl) fromEl.value = stored.from || '';
+  if (toEl) toEl.value = stored.to || '';
+}
+
+function getDateRange() {
+  return LS.load(filterKey('date_range'), {from: '', to: ''});
+}
+
+function initDateRange() {
+  const fromEl = document.getElementById('date-from');
+  const toEl = document.getElementById('date-to');
+  if (!fromEl || !toEl) return;
+
+  function onChange() {
+    LS.save(filterKey('date_range'), {
+      from: fromEl.value || '',
+      to: toEl.value || '',
+    });
+    reloadEvents();
+  }
+  fromEl.addEventListener('change', onChange);
+  toEl.addEventListener('change', onChange);
+  applyDateRangeFromStorage();
+}
+
+// -----------------------------------------------------------------------------
 // Per-market collapse (each market block in a card) — GLOBAL across tabs
 // -----------------------------------------------------------------------------
 // localStorage shape: {group_key: true} where group_key is the value of
@@ -378,13 +430,7 @@ function initCountryLeagueFilter() {
     const country_id = countrySel.value;
     const league_id  = leagueSel.value;
     LS.save(filterKey('country_league_filter'), {country_id, league_id});
-    const params = new URLSearchParams({
-      status: currentStatus(),
-      country: country_id,
-      league:  league_id,
-    });
-    window.htmx.ajax('GET', `/events?${params.toString()}`,
-                     {target: '#events-list', swap: 'outerHTML'});
+    reloadEvents();
   }
 
   // Initial paint: load this tab's stored country/league into the dropdowns.
@@ -501,6 +547,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initKickoffFilter();
   initSortControl();
   initSearch();
+  initDateRange();
   initCountryLeagueFilter();
   initMarketCollapse();
   initCardExpand();

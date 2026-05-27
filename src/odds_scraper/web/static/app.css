@@ -520,3 +520,18 @@ body.hide-betway    .history-table [data-bookmaker="betway"]    { display: none;
 }
 
 .scroll-sentinel { height: 1px; }
+
+/* Date range filter — only visible on ended tab */
+.date-input {
+  background: #0f0f0f;
+  border: 1px solid #1a1a1a;
+  border-radius: 3px;
+  color: #d1d5db;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  outline: none;
+}
+.date-input:focus { border-color: #2a4a2a; }
+.filter-date-range { display: none; }
+body.tab-ended .filter-date-range { display: flex; }
