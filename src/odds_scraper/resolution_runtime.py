@@ -86,6 +86,7 @@ class _Bet9jaPrematchMapCache:
         return {}
 
 
+# Single-process singleton — do NOT use under multiprocessing/uvicorn workers.
 _bet9ja_prematch_map = _Bet9jaPrematchMapCache()
 
 

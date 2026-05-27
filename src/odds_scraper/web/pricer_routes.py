@@ -301,11 +301,18 @@ def register_pricer_routes(
         scope = {"country": country, "league": league,
                  "event_id": event_id, "date": date, "search": search}
         loop = asyncio.get_running_loop()
-        loop.run_in_executor(
-            None, _run_in_thread,
-            run_id, config_id, regime, density, scope, csv_name, engine,
-            config_id_b,
-        )
+
+        async def _background_run() -> None:
+            try:
+                await loop.run_in_executor(
+                    None, _run_in_thread,
+                    run_id, config_id, regime, density, scope, csv_name, engine,
+                    config_id_b,
+                )
+            except Exception:
+                log.exception("background pricer run %d crashed", run_id)
+
+        asyncio.create_task(_background_run())
         return RedirectResponse(url="/simulator", status_code=303)
 
     @app.get("/simulator/scope", response_class=HTMLResponse)
@@ -355,12 +362,13 @@ def register_pricer_routes(
             "ORDER BY kickoff_utc DESC LIMIT 500"
         )
         rows = conn.execute(sql, params).fetchall()
+        from html import escape as _esc
         parts = ['<option value="">All matching events</option>']
         for r in rows:
             kickoff = (r["kickoff_utc"] or "")[:16].replace("T", " ")
-            label = f"{kickoff} · {r['home']} v {r['away']}"
+            label = f"{_esc(kickoff)} · {_esc(r['home'])} v {_esc(r['away'])}"
             parts.append(
-                f'<option value="{r["id"]}">{label}</option>'
+                f'<option value="{_esc(str(r["id"]))}">{label}</option>'
             )
         return HTMLResponse("".join(parts))
 

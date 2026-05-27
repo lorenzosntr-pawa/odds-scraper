@@ -86,9 +86,10 @@ def _select_ticks(
         params.append(scope["date"])
     if scope.get("search"):
         where_extra.append(
-            "(LOWER(e.home) LIKE ? OR LOWER(e.away) LIKE ?)"
+            "(LOWER(e.home) LIKE ? ESCAPE '\\' OR LOWER(e.away) LIKE ? ESCAPE '\\')"
         )
-        like = f"%{scope['search'].lower()}%"
+        escaped = scope["search"].lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped}%"
         params.extend([like, like])
     where_clause = " AND " + " AND ".join(where_extra) if where_extra else ""
 
@@ -138,8 +139,9 @@ def _select_ticks(
             GROUP BY s.event_id, s.ts_utc
             ORDER BY s.event_id, s.ts_utc
         """
-    conn.row_factory = sqlite3.Row
-    return [dict(row) for row in conn.execute(sql, params).fetchall()]
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
+    return [dict(row) for row in cur.execute(sql, params).fetchall()]
 
 
 def _load_tick_prices(

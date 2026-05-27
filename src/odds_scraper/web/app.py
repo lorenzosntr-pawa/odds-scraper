@@ -407,8 +407,10 @@ def _build_event_view(
         engine_inputs["score"] = (int(score[0]), int(score[1]))
         engine_inputs["max_home_lead"] = max_leads[0]
         engine_inputs["max_away_lead"] = max_leads[1]
+        # _cap_source_* metadata lives on the inputs dict but isn't an engine kwarg.
+        engine_kwargs = {k: v for k, v in engine_inputs.items() if not k.startswith("_")}
         try:
-            result = engine.price_early_payout_markets(**engine_inputs)
+            result = engine.price_early_payout_markets(**engine_kwargs)
             our_1up_home = result["market_1up"]["home_margin"]
             our_1up_away = result["market_1up"]["away_margin"]
             our_2up_home = result["market_2up"]["home_margin"]
@@ -420,7 +422,7 @@ def _build_event_view(
         except Exception:  # noqa: BLE001
             pass
         try:
-            result_v2 = engine_v2.price_early_payout_markets(**engine_inputs)
+            result_v2 = engine_v2.price_early_payout_markets(**engine_kwargs)
             v2_1up_home = result_v2["market_1up"]["home_margin"]
             v2_1up_away = result_v2["market_1up"]["away_margin"]
             v2_2up_home = result_v2["market_2up"]["home_margin"]
@@ -496,16 +498,9 @@ def _build_event_detail(
     # appears in the timeline carrying just SIM.
     missing_ts = [ts for ts in our_by_ts if ts not in bucket]
     if missing_ts:
-        placeholders = ",".join("?" * len(missing_ts))
-        meta_rows = conn.execute(
-            f"SELECT ts_utc, MAX(status) AS status, "
-            f"       MAX(match_minute) AS match_minute, "
-            f"       MAX(score_home) AS score_home, "
-            f"       MAX(score_away) AS score_away "
-            f"FROM snapshots WHERE event_id = ? AND ts_utc IN ({placeholders}) "
-            f"GROUP BY ts_utc",
-            (ev_row["id"], *missing_ts),
-        ).fetchall()
+        meta_rows = queries.get_snapshot_meta_for_timestamps(
+            conn, ev_row["id"], missing_ts,
+        )
         for m in meta_rows:
             bucket[m["ts_utc"]] = {
                 "cells": {},

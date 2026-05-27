@@ -329,6 +329,24 @@ def get_country_league_index(
     return out
 
 
+def get_snapshot_meta_for_timestamps(
+    conn: sqlite3.Connection, event_id: str, timestamps: list[str],
+) -> list[sqlite3.Row]:
+    """Return aggregated snapshot metadata for specific (event, ts) pairs."""
+    if not timestamps:
+        return []
+    placeholders = ",".join("?" * len(timestamps))
+    return conn.execute(
+        f"SELECT ts_utc, MAX(status) AS status, "
+        f"       MAX(match_minute) AS match_minute, "
+        f"       MAX(score_home) AS score_home, "
+        f"       MAX(score_away) AS score_away "
+        f"FROM snapshots WHERE event_id = ? AND ts_utc IN ({placeholders}) "
+        f"GROUP BY ts_utc",
+        (event_id, *timestamps),
+    ).fetchall()
+
+
 def get_available_lines(
     conn: sqlite3.Connection, event_id: str,
 ) -> dict[str, list[float]]:

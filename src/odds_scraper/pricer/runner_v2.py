@@ -210,20 +210,10 @@ def run_simulation_dual(
 
             # Skip the tick if every selected engine failed for BOTH
             # profiles — writing a row with only metadata would be misleading.
-            a_failed = (
-                ("v1" in eng and r_v1 is None) and ("v2" in eng and r_v2 is None)
-            ) or (
-                "v1" in eng and "v2" not in eng and r_v1 is None
-            ) or (
-                "v2" in eng and "v1" not in eng and r_v2 is None
-            )
-            b_failed = engine_overrides_b is not None and ((
-                ("v1" in eng and r_v1_b is None) and ("v2" in eng and r_v2_b is None)
-            ) or (
-                "v1" in eng and "v2" not in eng and r_v1_b is None
-            ) or (
-                "v2" in eng and "v1" not in eng and r_v2_b is None
-            ))
+            a_succeeded = ("v1" in eng and r_v1 is not None) or ("v2" in eng and r_v2 is not None)
+            a_failed = not a_succeeded
+            b_succeeded = ("v1" in eng and r_v1_b is not None) or ("v2" in eng and r_v2_b is not None)
+            b_failed = engine_overrides_b is not None and not b_succeeded
             if a_failed and (engine_overrides_b is None or b_failed):
                 if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:
                     on_progress(i + 1, n_total)

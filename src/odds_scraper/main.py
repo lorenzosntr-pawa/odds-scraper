@@ -67,8 +67,10 @@ async def _reap_stuck_started_events(
                 SELECT event_id, MAX(ts_utc) AS max_ts
                 FROM snapshots GROUP BY event_id
             )
-            SELECT DISTINCT e.id,
-                   s.match_minute, s.score_home, s.score_away,
+            SELECT e.id,
+                   MAX(s.match_minute) AS match_minute,
+                   MAX(s.score_home) AS score_home,
+                   MAX(s.score_away) AS score_away,
                    l.max_ts AS head_ts
             FROM events e
             JOIN latest l ON l.event_id = e.id
@@ -76,6 +78,7 @@ async def _reap_stuck_started_events(
               ON s.event_id = l.event_id AND s.ts_utc = l.max_ts
             WHERE s.status = 'STARTED'
               AND (e.kickoff_utc < ? OR l.max_ts < ?)
+            GROUP BY e.id
             """,
             (kickoff_cutoff_iso, head_cutoff_iso),
         ).fetchall()

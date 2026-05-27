@@ -44,15 +44,19 @@ def parse_status(detail: dict[str, Any]) -> EventStatus:
     return EventStatus.UNKNOWN
 
 
-def parse_clock(detail: dict[str, Any]) -> Optional[int]:
-    if parse_status(detail) != EventStatus.STARTED:
+def parse_clock(
+    detail: dict[str, Any], *, status: EventStatus | None = None,
+) -> Optional[int]:
+    if (status or parse_status(detail)) != EventStatus.STARTED:
         return None
     info = extract_live_info(detail, "betpawa")
     return info.minute
 
 
-def parse_score(detail: dict[str, Any]) -> Optional[tuple[int, int]]:
-    if parse_status(detail) not in (EventStatus.STARTED, EventStatus.ENDED):
+def parse_score(
+    detail: dict[str, Any], *, status: EventStatus | None = None,
+) -> Optional[tuple[int, int]]:
+    if (status or parse_status(detail)) not in (EventStatus.STARTED, EventStatus.ENDED):
         return None
     info = extract_live_info(detail, "betpawa")
     if info.score_home is None or info.score_away is None:

@@ -273,13 +273,6 @@ def _cap_selection(synthetic_odds, synthetic_prob, source_odds, source_true_prob
     return max_allowed_odds, capped_prob
 
 
-def _poisson_pmf(lam: float, k: int) -> float:
-    if lam <= 0:
-        return 1.0 if k == 0 else 0.0
-    log_prob = -lam + k * math.log(lam)
-    for i in range(1, k + 1):
-        log_prob -= math.log(i)
-    return math.exp(log_prob)
 
 
 def ever_2up_probability(lambda_h: float, lambda_a: float, initial_diff: int) -> Tuple[float, float, float, float]:

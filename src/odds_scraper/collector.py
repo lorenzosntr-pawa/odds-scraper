@@ -48,8 +48,8 @@ class OddsCollector:
     ) -> list[Snapshot]:
         ts = datetime.now(timezone.utc)
         status = parse_status(bp_detail)
-        minute = parse_clock(bp_detail)
-        score = parse_score(bp_detail)
+        minute = parse_clock(bp_detail, status=status)
+        score = parse_score(bp_detail, status=status)
 
         participants = extract_participants(bp_detail, "betpawa")
         home = participants.home or ""

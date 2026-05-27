@@ -290,13 +290,6 @@ def _cap_selection(synthetic_odds, synthetic_prob, source_odds, source_true_prob
     return max_allowed_odds, capped_prob
 
 
-def _poisson_pmf(lam: float, k: int) -> float:
-    if lam <= 0:
-        return 1.0 if k == 0 else 0.0
-    log_prob = -lam + k * math.log(lam)
-    for i in range(1, k + 1):
-        log_prob -= math.log(i)
-    return math.exp(log_prob)
 
 
 # Bit-packed hit flags. Layout mirrors EverLeadsProbability.java:
@@ -615,7 +608,11 @@ def price_early_payout_markets(
     # (current or historical) get deactivated at the bottom of the
     # function; the inclusion-exclusion math itself is the same as
     # the level/one-goal branch under V1.
-    stats = ever_leads_probability(lambda_home, lambda_away, goal_difference)
+    # When goal_difference != 0 the 1UP trailing branch already
+    # computed stats with identical args — reuse it to avoid a
+    # second O(max_goals * state_size * 16) DP pass.
+    if goal_difference == 0:
+        stats = ever_leads_probability(lambda_home, lambda_away, goal_difference)
     p_home_ever_2 = stats[4]
     p_away_ever_2 = stats[5]
     p_home_ever_2_wins = stats[6]
