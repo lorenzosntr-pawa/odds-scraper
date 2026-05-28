@@ -59,6 +59,22 @@ def test_v2_prematch_matches_v1_byte_for_byte(balanced_match):
     assert r2["p_away_2"] == pytest.approx(r1["p_away_2"])
 
 
+def test_complement_floor_scales_proportionally_for_small_total(monkeypatch):
+    """When one side's lambda is missing, the complement floor scales as
+    min(0.1, total*0.04) — so a small remaining-time total uses a smaller
+    floor than the flat 0.1. Matches Java LambdaCalculator.complement."""
+    derived = {"home": 0.98, "away": None, "total": 1.0}
+    seq = iter([derived["home"], derived["away"], derived["total"]])
+    monkeypatch.setattr(
+        ep_v2, "_derive_lambda_from_multiple_lines",
+        lambda lines, score_offset=0: next(seq),
+    )
+    home, away = ep_v2.derive_lambda_pair([], [], [], 0, 0)
+    # floor = min(0.1, 1.0*0.04) = 0.04; total-home = 0.02 → max(0.04, 0.02)
+    assert home == pytest.approx(0.98)
+    assert away == pytest.approx(0.04)
+
+
 def test_ever_leads_returns_8_tuple():
     stats = ep_v2.ever_leads_probability(1.4, 1.1, 0)
     assert len(stats) == 8
@@ -106,6 +122,37 @@ def test_ever_leads_symmetry_under_team_swap():
     assert a[5] == pytest.approx(b[4])
     assert a[6] == pytest.approx(b[7])
     assert a[7] == pytest.approx(b[6])
+
+
+def test_v2_trailing_probs_clamped_to_one(monkeypatch):
+    """p_win (from 1x2) and the DP residual (from OU) are on different
+    probability bases. When the markets disagree, p_win + residual can
+    exceed 1.0. The returned 1UP/2UP probabilities must be clamped to
+    [0,1] (Java clampToProbability, not just clampNonNegative)."""
+    # Force an inflated residual: ever±1 / ever±2 high, "and wins" low.
+    # Layout: (home1, away1, home1wins, away1wins, home2, away2, home2wins, away2wins)
+    monkeypatch.setattr(
+        ep_v2, "ever_leads_probability",
+        lambda lh, la, d: (0.95, 0.30, 0.10, 0.05, 0.85, 0.20, 0.08, 0.03),
+    )
+    # Strong home favorite from 1x2 (p_home ~0.84), trailing 0-1 so the
+    # home side is repriced via the DP. p_home + 0.85 residual >> 1.0.
+    home_1x2, draw_1x2, away_1x2 = 1.10, 10.0, 13.0
+    p_home, p_draw, p_away = _naive_devig_three(home_1x2, draw_1x2, away_1x2)
+    inp = {
+        "p_home_win": p_home, "p_draw": p_draw, "p_away_win": p_away,
+        "home_1x2_odds": home_1x2, "draw_1x2_odds": draw_1x2, "away_1x2_odds": away_1x2,
+        "home_ou": [_ou_prob(1.5, 2.00, 1.80)],
+        "away_ou": [_ou_prob(1.5, 2.00, 1.80)],
+        "total_ou": [_ou_prob(2.5, 1.65, 2.40), _ou_prob(3.5, 2.60, 1.62)],
+        "ftts_home_prob": 0.55, "ftts_away_prob": 0.45,
+        "score": (0, 1),
+    }
+    r = ep_v2.price_early_payout_markets(**inp)
+    for key in ("p_home_1", "p_away_1", "p_home_2", "p_away_2"):
+        if r[key] is not None:
+            assert r[key] <= 1.0, f"{key}={r[key]} exceeds 1.0 — not clamped"
+            assert r[key] >= 0.0, f"{key}={r[key]} below 0.0"
 
 
 def test_v2_dog_margin_intercept_bumped():

@@ -55,6 +55,7 @@ TWOUP_BOOST_BLEND_ENABLED = True
 LAMBDA_TOLERANCE = 1e-6
 LAMBDA_MAX = 10.0
 LAMBDA_MIN_COMPLEMENT = 0.1
+LAMBDA_MIN_COMPLEMENT_RATIO = 0.04
 LAMBDA_TYPICAL = 2.5
 LAMBDA_RECONCILIATION_THRESHOLD = 0.5
 
@@ -179,11 +180,15 @@ def derive_lambda_pair(
         half = total / 2.0
         return half, half
 
+    # Complement floor scales with the total so small remaining-time
+    # totals don't get an over-inflated complement (Java: min(0.1, total*0.04)).
+    floor = min(LAMBDA_MIN_COMPLEMENT, total * LAMBDA_MIN_COMPLEMENT_RATIO)
+
     if home is None:
-        return max(LAMBDA_MIN_COMPLEMENT, total - (away or 0.0)), away
+        return max(floor, total - (away or 0.0)), away
 
     if away is None:
-        return home, max(LAMBDA_MIN_COMPLEMENT, total - (home or 0.0))
+        return home, max(floor, total - (home or 0.0))
 
     # Both present — reconcile
     s = home + away
@@ -196,6 +201,13 @@ def derive_lambda_pair(
     return half, half
 
 
+def _clamp_prob(value: float) -> float:
+    """Clamp to [0, 1]. P(wins) (from 1x2) and the DP residual (from OU)
+    are on different probability bases, so their sum can land outside
+    [0, 1] when the two markets disagree. Matches Java clampToProbability."""
+    return max(0.0, min(1.0, value))
+
+
 def _apply_model(coeffs: Tuple[float, float, float, float],
                  ftts: float, lambda_fav: float, lambda_dog: float) -> float:
     intercept, next_goal, lam, dog = coeffs
@@ -203,7 +215,7 @@ def _apply_model(coeffs: Tuple[float, float, float, float],
     # Match Java ThreeWay1UPCalculatorImpl.applyModel: clamp to [0, 1] so
     # extreme inputs (lambda far above training distribution) can't exit
     # the valid probability range.
-    return max(0.0, min(1.0, raw))
+    return _clamp_prob(raw)
 
 
 def _blend_margins(strength: float, fav: Tuple[float, float], dog: Tuple[float, float]) -> Tuple[float, float]:
@@ -538,8 +550,8 @@ def price_early_payout_markets(
             # Underdog's blend swaps the weights — matches Java ThreeWay1UPCalculatorImpl
             blended_dog = dog_weight * dog_by_fav + fav_weight * dog_by_dog
 
-            home_1up_prob = max(0.0, blended_fav if home_is_favorite else blended_dog)
-            away_1up_prob = max(0.0, blended_dog if home_is_favorite else blended_fav)
+            home_1up_prob = _clamp_prob(blended_fav if home_is_favorite else blended_dog)
+            away_1up_prob = _clamp_prob(blended_dog if home_is_favorite else blended_fav)
 
             if ONEUP_MARGIN_BLEND_ENABLED:
                 fav_margin_1up = _blend_margins(fav_weight, ONEUP_FAVORITE_MARGIN, ONEUP_UNDERDOG_MARGIN)
@@ -567,8 +579,8 @@ def price_early_payout_markets(
         home_residual = max(0.0, p_h_ever_1 - p_h_ever_1_wins)
         away_residual = max(0.0, p_a_ever_1 - p_a_ever_1_wins)
         # Inclusion-exclusion: P(X 1UP) = P(X wins) + residual.
-        home_1up_prob_raw = max(0.0, p_home + home_residual)
-        away_1up_prob_raw = max(0.0, p_away + away_residual)
+        home_1up_prob_raw = _clamp_prob(p_home + home_residual)
+        away_1up_prob_raw = _clamp_prob(p_away + away_residual)
 
         # Trailing-specific margin pair (intercept ~0.014 vs level's 0.04).
         # Trailing fair probs sit around 0.02–0.10, where the level
@@ -630,8 +642,8 @@ def price_early_payout_markets(
     home_coeff = fav_coeff if home_is_favorite else dog_coeff
     away_coeff = dog_coeff if home_is_favorite else fav_coeff
 
-    home_2up_prob_raw = max(0.0, p_home + home_residual * home_coeff)
-    away_2up_prob_raw = max(0.0, p_away + away_residual * away_coeff)
+    home_2up_prob_raw = _clamp_prob(p_home + home_residual * home_coeff)
+    away_2up_prob_raw = _clamp_prob(p_away + away_residual * away_coeff)
 
     if TWOUP_MARGIN_BLEND_ENABLED:
         fav_margin_2up = _blend_margins(fav_weight, TWOUP_FAVORITE_MARGIN, TWOUP_UNDERDOG_MARGIN)
