@@ -20,6 +20,18 @@ CSV_COLUMNS = (
     "status", "match_minute", "score_home", "score_away",
     "basis_used",
     "lambda_home", "lambda_away",
+    # 1x2 + next-goal reference block — the engine INPUTS behind the
+    # synthetic prices, so a reader can see what the engine priced
+    # against without re-deriving. These are profile-independent (they
+    # come from the market, not the coefficients), so they're written
+    # once in the shared block. `p_*_win` are the devigged 1x2 probs
+    # (the cap's `source_true_prob`); `ftts_*` are the next-goal probs
+    # that drive the level-score 1UP; `cap_1x2_*_odds` are the RESOLVED
+    # per-side cap-source odds (BP-first, SB-fallback) the cap actually
+    # used as `source_odds` — naming which book is in `cap_source_*`.
+    "p_home_win", "p_draw", "p_away_win",
+    "ftts_home_prob", "ftts_away_prob",
+    "cap_1x2_home_odds", "cap_1x2_away_odds",
     # OUR engine output. `*_capped_ev` is the EV of OUR probability
     # against OUR capped odds (= negative of the engine's embedded
     # margin for that selection) — useful when BP isn't quoting and

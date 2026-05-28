@@ -288,6 +288,12 @@ def run_simulation_dual(
                 t["score_home"], t["score_away"],
                 basis,
                 lambdas_src["lambda_home"], lambdas_src["lambda_away"],
+                # 1x2 + next-goal reference (profile-independent inputs).
+                engine_inputs["p_home_win"], engine_inputs["p_draw"],
+                engine_inputs["p_away_win"],
+                engine_inputs.get("ftts_home_prob"),
+                engine_inputs.get("ftts_away_prob"),
+                engine_inputs["home_1x2_odds"], engine_inputs["away_1x2_odds"],
                 *v1_block,
                 *v2_block,
                 bp["1up_home"][1], bp["1up_home"][0], _ev(p_h1, bp["1up_home"][0]),

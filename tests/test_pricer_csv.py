@@ -39,6 +39,9 @@ def _build_row(**overrides) -> tuple:
         "status": "UPCOMING", "match_minute": "", "score_home": "", "score_away": "",
         "basis_used": "bp",
         "lambda_home": 1.4, "lambda_away": 1.1,
+        "p_home_win": 0.54, "p_draw": 0.27, "p_away_win": 0.19,
+        "ftts_home_prob": 0.52, "ftts_away_prob": 0.48,
+        "cap_1x2_home_odds": 1.85, "cap_1x2_away_odds": 4.20,
         "our_p_home_1": 0.55, "our_p_away_1": 0.32,
         "our_1up_home_fair": 1.82, "our_1up_home_capped": 1.85,
         "our_1up_home_capped_ev": -0.0175,
@@ -144,3 +147,19 @@ def test_csv_columns_include_engines_at_front_and_v2_block():
         assert cols.index(v2_col) > v1_end_idx, f"{v2_col} comes before V1 OUR block"
     # Bookmaker columns must still come after the v2 block.
     assert cols.index("bp_p_1up_home") > cols.index("v2_our_2up_away_capped_ev")
+
+
+def test_csv_has_1x2_and_nextgoal_reference_block():
+    """The 1x2 + next-goal reference inputs sit between lambda_* and the
+    OUR engine block, so a reader can see what the engine priced against
+    (and the resolved cap-source odds) without re-deriving."""
+    cols = csv_export.CSV_COLUMNS
+    ref_cols = (
+        "p_home_win", "p_draw", "p_away_win",
+        "ftts_home_prob", "ftts_away_prob",
+        "cap_1x2_home_odds", "cap_1x2_away_odds",
+    )
+    for c in ref_cols:
+        assert c in cols, f"missing {c}"
+        assert cols.index("lambda_away") < cols.index(c) < cols.index("our_p_home_1"), \
+            f"{c} not between lambda_* and OUR block"
