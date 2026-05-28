@@ -206,6 +206,65 @@ def test_live_writer_persists_v2_columns(tmp_path: Path):
     conn.close()
 
 
+def test_live_writer_persists_v3_matching_direct_call(tmp_path: Path):
+    """live_writer writes v3_* alongside v2_*, and the persisted v3 values
+    equal a direct engine_v3 call on the same extracted inputs."""
+    from odds_scraper.pricer import engine_v3, inputs as input_extract
+    conn = sqlite3.connect(str(tmp_path / "v3.db"), isolation_level=None)
+    init_schema(conn)
+    conn.row_factory = sqlite3.Row
+    rows = [
+        _tick_snapshot(Bookmaker.BETPAWA, with_prob=True),
+        _tick_snapshot(Bookmaker.SPORTYBET, with_prob=False),
+    ]
+    ok = live_writer.compute_and_write_from_snapshots(
+        conn, "E1", "2026-05-22T18:30:00Z", rows, (0, 0),
+    )
+    assert ok
+    row = conn.execute(
+        "SELECT v3_2up_home_capped, v3_1up_home_capped, v3_p_home_2 "
+        "FROM pricer_live_results WHERE event_id='E1'"
+    ).fetchone()
+    pbb = live_writer.snapshots_to_prices_by_book(rows)
+    engine_inputs, _ = input_extract.extract(pbb)
+    engine_inputs["score"] = (0, 0)
+    engine_inputs["max_home_lead"] = 0
+    engine_inputs["max_away_lead"] = 0
+    kw = {k: v for k, v in engine_inputs.items() if not k.startswith("_")}
+    direct = engine_v3.price_early_payout_markets(**kw)
+    assert row["v3_2up_home_capped"] == direct["market_2up"]["home_margin"]
+    assert row["v3_p_home_2"] == direct["p_home_2"]
+    conn.close()
+
+
+def test_v3_crash_still_persists_row_with_v2(tmp_path: Path, monkeypatch):
+    """A V3 engine exception must not drop the tick or affect V2: the row
+    persists with V2 populated and v3_* NULL."""
+    conn = sqlite3.connect(str(tmp_path / "v3crash.db"), isolation_level=None)
+    init_schema(conn)
+    conn.row_factory = sqlite3.Row
+
+    def boom(**kw):
+        raise RuntimeError("v3 down")
+
+    monkeypatch.setattr(live_writer.engine_v3, "price_early_payout_markets", boom)
+    rows = [
+        _tick_snapshot(Bookmaker.BETPAWA, with_prob=True),
+        _tick_snapshot(Bookmaker.SPORTYBET, with_prob=False),
+    ]
+    ok = live_writer.compute_and_write_from_snapshots(
+        conn, "E2", "2026-05-22T18:30:00Z", rows, (0, 0),
+    )
+    assert ok  # row still written
+    row = conn.execute(
+        "SELECT v2_2up_home_capped, v3_2up_home_capped "
+        "FROM pricer_live_results WHERE event_id='E2'"
+    ).fetchone()
+    assert row["v2_2up_home_capped"] is not None  # V2 present
+    assert row["v3_2up_home_capped"] is None      # V3 nulled on crash
+    conn.close()
+
+
 def _live_trailing_snapshot(bookmaker: Bookmaker) -> Snapshot:
     """Snapshot at score 1-0 minute 91 — V1 heuristic vs V2 DP diverge."""
     base = {

@@ -14,7 +14,7 @@ import sqlite3
 from typing import Iterable
 
 from ..models import Snapshot
-from . import engine_v2, inputs as input_extract, score_state
+from . import engine_v2, engine_v3, inputs as input_extract, score_state
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +79,23 @@ def compute_and_write(
         )
         return False
 
+    # V3 runs on the same inputs. A V3 failure must never drop the tick or
+    # affect V2 — store NULL v3 and carry on.
+    try:
+        res_v3 = engine_v3.price_early_payout_markets(**engine_kwargs)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "v3 engine crashed on event=%s ts=%s — storing NULL v3 (%s)",
+            event_id, ts_utc, exc,
+        )
+        res_v3 = None
+
+    def _v3(market, key):
+        return res_v3[market][key] if res_v3 is not None else None
+
+    def _v3p(key):
+        return res_v3[key] if res_v3 is not None else None
+
     conn.execute(
         """
         INSERT OR REPLACE INTO pricer_live_results (
@@ -95,8 +112,15 @@ def compute_and_write(
             v2_1up_away_fair, v2_1up_away_capped,
             v2_p_home_2, v2_p_away_2,
             v2_2up_home_fair, v2_2up_home_capped,
-            v2_2up_away_fair, v2_2up_away_capped
+            v2_2up_away_fair, v2_2up_away_capped,
+            v3_p_home_1, v3_p_away_1,
+            v3_1up_home_fair, v3_1up_home_capped,
+            v3_1up_away_fair, v3_1up_away_capped,
+            v3_p_home_2, v3_p_away_2,
+            v3_2up_home_fair, v3_2up_home_capped,
+            v3_2up_away_fair, v3_2up_away_capped
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
@@ -114,6 +138,12 @@ def compute_and_write(
             res_v2["p_home_2"], res_v2["p_away_2"],
             res_v2["market_2up"]["home_fair"],   res_v2["market_2up"]["home_margin"],
             res_v2["market_2up"]["away_fair"],   res_v2["market_2up"]["away_margin"],
+            _v3p("p_home_1"), _v3p("p_away_1"),
+            _v3("market_1up", "home_fair"),   _v3("market_1up", "home_margin"),
+            _v3("market_1up", "away_fair"),   _v3("market_1up", "away_margin"),
+            _v3p("p_home_2"), _v3p("p_away_2"),
+            _v3("market_2up", "home_fair"),   _v3("market_2up", "home_margin"),
+            _v3("market_2up", "away_fair"),   _v3("market_2up", "away_margin"),
         ),
     )
     return True
