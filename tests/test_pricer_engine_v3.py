@@ -104,6 +104,33 @@ def test_v3_midrange_odds_preserved_vs_v2(balanced_match):
     assert checked > 0, "no mid-range selection exercised by the fixture"
 
 
+def test_v3_oneup_min_reduction_split_defaults():
+    """V3's 1UP cap gap is split favorite/underdog (mirroring 2UP), both
+    defaulting to 0.02."""
+    assert ep_v3.ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION == 0.02
+    assert ep_v3.ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION == 0.02
+
+
+def test_v3_oneup_per_side_min_reduction_wiring(monkeypatch, strong_home_favorite):
+    """The favorite 1UP side caps with ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION
+    and the underdog side with ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION
+    (mirroring 2UP). Spy on _cap_selection to assert the per-side gap wiring
+    without depending on the cap's scaled-gap binding behaviour."""
+    monkeypatch.setattr(ep_v3, "ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION", 0.111)
+    monkeypatch.setattr(ep_v3, "ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION", 0.222)
+    calls = []
+    real_cap = ep_v3._cap_selection
+    monkeypatch.setattr(
+        ep_v3, "_cap_selection",
+        lambda so, sp, src, st, gap: (calls.append(gap), real_cap(so, sp, src, st, gap))[1],
+    )
+    ep_v3.price_early_payout_markets(**strong_home_favorite)
+    # Code computes 1UP (home, away) before 2UP (home, away). Home is the
+    # favorite in this fixture.
+    assert calls[0] == pytest.approx(0.111)  # 1UP favorite (home) gap
+    assert calls[1] == pytest.approx(0.222)  # 1UP underdog (away) gap
+
+
 def test_v3_apply_boost_helper():
     """Favorite/underdog odds boost: lengthens the chosen side's odds by
     a %, no-op near-even or on None."""

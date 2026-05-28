@@ -35,7 +35,11 @@ from typing import Dict, List, Optional, Tuple
 # ---- 1UP regression model (UNCHANGED from V2 — this is NOT margin) ----
 ONEUP_FAVORITE_MODEL  = (-0.137308, 1.228176, 0.001221, 0.085310)  # (intercept, nextGoal, lambda, underdog)
 ONEUP_UNDERDOG_MODEL  = (0.006276, 0.909535, -0.009967, 0.094182)
-ONEUP_MIN_GUARANTEED_REDUCTION = 0.02
+# V3 splits the 1UP cap gap favorite/underdog (mirrors 2UP) so the config
+# pattern is identical across 1UP and 2UP. (V1/V2 keep the single
+# ONEUP_MIN_GUARANTEED_REDUCTION; V3 doesn't read it.)
+ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION = 0.02
+ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION = 0.02
 
 # ---- 2UP boost (UNCHANGED from V2 — this is NOT margin) ----
 TWOUP_FAVORITE_BOOST_COEFFICIENT = 0.9
@@ -538,6 +542,9 @@ def price_early_payout_markets(
     dog_weight = 1.0 - fav_weight
     # Odds-boost is skipped near-even — no clear favorite/underdog side.
     near_even = abs(p_home - p_away) < NEAR_EVEN_THRESHOLD
+    # Per-side 1UP cap gap (favorite/underdog), mirroring the 2UP pattern.
+    oneup_home_min_red = ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION if home_is_favorite else ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION
+    oneup_away_min_red = ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION if home_is_favorite else ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION
 
     # ============== 1UP ==============
     if goal_difference == 0:
@@ -577,8 +584,8 @@ def price_early_payout_markets(
                 ONEUP_FAVORITE_ODDS_BOOST_PCT, ONEUP_UNDERDOG_ODDS_BOOST_PCT,
             )
 
-            home_1up_capped, _ = _cap_selection(home_1up_fair_odds, home_1up_prob, home_1x2_odds, p_home, ONEUP_MIN_GUARANTEED_REDUCTION)
-            away_1up_capped, _ = _cap_selection(away_1up_fair_odds, away_1up_prob, away_1x2_odds, p_away, ONEUP_MIN_GUARANTEED_REDUCTION)
+            home_1up_capped, _ = _cap_selection(home_1up_fair_odds, home_1up_prob, home_1x2_odds, p_home, oneup_home_min_red)
+            away_1up_capped, _ = _cap_selection(away_1up_fair_odds, away_1up_prob, away_1x2_odds, p_away, oneup_away_min_red)
     else:
         # ---- TRAILING-TEAM 1UP: DP-based, leading side deactivated ----
         # Probability math identical to V2; only the margin differs (V3's
@@ -606,11 +613,11 @@ def price_early_payout_markets(
 
         home_1up_capped, _ = _cap_selection(
             home_1up_fair_odds, home_1up_prob_raw, home_1x2_odds, p_home,
-            ONEUP_MIN_GUARANTEED_REDUCTION,
+            oneup_home_min_red,
         )
         away_1up_capped, _ = _cap_selection(
             away_1up_fair_odds, away_1up_prob_raw, away_1x2_odds, p_away,
-            ONEUP_MIN_GUARANTEED_REDUCTION,
+            oneup_away_min_red,
         )
 
         # Leading side has already triggered its 1UP — deactivate.

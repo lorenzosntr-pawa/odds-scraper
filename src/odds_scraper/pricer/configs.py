@@ -33,6 +33,9 @@ TUNABLE_NAMES = (
     "TWOUP_FAVORITE_ODDS_BOOST_PCT",
     "TWOUP_UNDERDOG_ODDS_BOOST_PCT",
     "NEAR_EVEN_THRESHOLD",
+    # V3-only per-side 1UP cap gap (mirrors the 2UP fav/dog split).
+    "ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION",
+    "ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION",
 )
 
 # Subset of TUNABLE_NAMES that only engine_v2.py defines. V1's
@@ -57,6 +60,8 @@ V3_ONLY_TUNABLE_NAMES = frozenset({
     "TWOUP_FAVORITE_ODDS_BOOST_PCT",
     "TWOUP_UNDERDOG_ODDS_BOOST_PCT",
     "NEAR_EVEN_THRESHOLD",
+    "ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION",
+    "ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION",
 })
 
 # Tunables optional in stored profiles (backfilled from defaults on load
@@ -108,6 +113,8 @@ DEFAULT_COEFFICIENTS = {
     "TWOUP_FAVORITE_ODDS_BOOST_PCT": 0.0,
     "TWOUP_UNDERDOG_ODDS_BOOST_PCT": 0.0,
     "NEAR_EVEN_THRESHOLD": 0.03,
+    "ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION": 0.02,
+    "ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION": 0.02,
     # Default flag values match Java behaviour (blends on).
     **DEFAULT_FLAGS,
 }
