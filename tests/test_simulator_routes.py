@@ -735,11 +735,13 @@ def test_post_run_with_engine_v2_dispatches_dual_runner(db_path, client):
     assert rec.engines == "v2"
 
 
-def test_post_run_with_engine_both_dispatches_dual_runner(db_path, client):
+def test_post_run_with_multiple_engines_dispatches_dual_runner(db_path, client):
+    """Multiple `engine` checkboxes → the run uses exactly those engines,
+    recorded in canonical (v1,v2,v3) order regardless of submit order."""
     r = client.post(
         "/simulator/runs",
         data={"config_id": _default_id(db_path),
-              "regime": "any", "density": "all", "engine": "both",
+              "regime": "any", "density": "all", "engine": ["v3", "v1"],
               "country": "", "league": "", "event_id": "",
               "date": "", "search": ""},
         follow_redirects=False,
@@ -747,14 +749,46 @@ def test_post_run_with_engine_both_dispatches_dual_runner(db_path, client):
     assert r.status_code == 303
     reg = _registry(client)
     rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
-    assert rec.engines == "v1,v2"
+    assert rec.engines == "v1,v3"  # canonical order, not submit order
+
+
+def test_post_run_with_all_three_engines(db_path, client):
+    r = client.post(
+        "/simulator/runs",
+        data={"config_id": _default_id(db_path),
+              "regime": "any", "density": "all", "engine": ["v1", "v2", "v3"],
+              "country": "", "league": "", "event_id": "",
+              "date": "", "search": ""},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    reg = _registry(client)
+    rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
+    assert rec.engines == "v1,v2,v3"
+
+
+def test_post_run_with_no_engine_defaults_to_latest_v3(db_path, client):
+    """Omitting the engine field falls back to the latest engine (v3) —
+    a run always exercises at least one engine."""
+    r = client.post(
+        "/simulator/runs",
+        data={"config_id": _default_id(db_path),
+              "regime": "any", "density": "all",
+              "country": "", "league": "", "event_id": "",
+              "date": "", "search": ""},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    reg = _registry(client)
+    rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
+    assert rec.engines == "v3"
 
 
 def test_post_run_with_unknown_engine_returns_400(db_path, client):
     r = client.post(
         "/simulator/runs",
         data={"config_id": _default_id(db_path),
-              "regime": "any", "density": "all", "engine": "v9000",
+              "regime": "any", "density": "all", "engine": ["v9000"],
               "country": "", "league": "", "event_id": "",
               "date": "", "search": ""},
         follow_redirects=False,
@@ -762,13 +796,13 @@ def test_post_run_with_unknown_engine_returns_400(db_path, client):
     assert r.status_code == 400
 
 
-def test_simulator_form_has_engine_radio(client):
+def test_simulator_form_has_engine_checkboxes(client):
     r = client.get("/simulator")
     body = r.text
-    for v in ("v1", "v2", "both"):
-        assert f'name="engine" value="{v}"' in body
-    # 'Both' is the default per spec — must be pre-checked.
-    assert 'name="engine" value="both" checked' in body
+    for v in ("v1", "v2", "v3"):
+        assert f'type="checkbox" name="engine" value="{v}"' in body
+    # V3 (latest) is pre-selected.
+    assert 'name="engine" value="v3" checked' in body
 
 
 def test_simulator_history_renders_engines_column(db_path, client):

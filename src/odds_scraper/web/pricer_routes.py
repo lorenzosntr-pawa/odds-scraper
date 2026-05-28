@@ -14,20 +14,13 @@ from fastapi.templating import Jinja2Templates
 from odds_scraper.pricer import configs as config_mod, runner, runner_v2
 
 
-# Engine choice the simulator page can submit → the engine tuple passed
-# to the dual runner. "v1" with no profile B stays on the lean pre-V2
-# runner (byte-identical layout); everything else routes through the
-# dual runner (it owns the v2_*/v3_*/pB_* column writes). "both" is the
-# legacy v1+v2 combo; "v2v3" and "all" were added with V3.
-ENGINE_CHOICE_MAP = {
-    "v1":   ("v1",),
-    "v2":   ("v2",),
-    "v3":   ("v3",),
-    "both": ("v1", "v2"),
-    "v2v3": ("v2", "v3"),
-    "all":  ("v1", "v2", "v3"),
-}
-VALID_ENGINE_CHOICES = tuple(ENGINE_CHOICE_MAP)
+# The simulator page submits zero or more `engine` checkbox values, each
+# one of runner_v2.VALID_ENGINES ("v1"/"v2"/"v3"). We normalise to canonical
+# (v1, v2, v3) order so CSV columns and the run-history string are stable
+# regardless of checkbox order. Empty selection falls back to the latest
+# engine. A lone "v1" with no profile B stays on the lean pre-V2 runner
+# (byte-identical layout); anything else routes through the dual runner.
+LATEST_ENGINE = "v3"
 
 from . import queries
 
@@ -178,7 +171,7 @@ def register_pricer_routes(
 
     def _run_in_thread(
         run_id: int, profile_id: int, regime: str, density: str,
-        scope: dict, csv_name: str, engine_choice: str,
+        scope: dict, csv_name: str, engines: tuple[str, ...],
         profile_b_id: int,
     ) -> None:
         """Runs in the default executor (a background thread). The
@@ -203,7 +196,7 @@ def register_pricer_routes(
                 # Single-profile V1-only path stays on the lean runner;
                 # anything else needs the dual runner (it owns the pB_*
                 # column writes and the engine-fanout logic).
-                if engine_choice == "v1" and profile_b is None:
+                if engines == ("v1",) and profile_b is None:
                     n_events, n_rows = runner.run_simulation(
                         write_conn, config=profile,
                         regime=regime, density=density,
@@ -213,7 +206,6 @@ def register_pricer_routes(
                         ),
                     )
                 else:
-                    engines = ENGINE_CHOICE_MAP.get(engine_choice, ("v1", "v2"))
                     n_events, n_rows = runner_v2.run_simulation_dual(
                         write_conn, config=profile,
                         config_b=profile_b,
@@ -260,7 +252,7 @@ def register_pricer_routes(
         config_id_b: int = Form(0),
         regime:    str = Form("any"),
         density:   str = Form("all"),
-        engine:    str = Form("both"),
+        engine:    list[str] = Form([]),
         country:   str = Form(""),
         league:    str = Form(""),
         event_id:  str = Form(""),
@@ -271,9 +263,15 @@ def register_pricer_routes(
             raise HTTPException(400, f"unknown regime {regime!r}")
         if density not in runner.VALID_DENSITIES:
             raise HTTPException(400, f"unknown density {density!r}")
-        if engine not in VALID_ENGINE_CHOICES:
-            raise HTTPException(400, f"unknown engine {engine!r}")
-        engines_str = ",".join(ENGINE_CHOICE_MAP[engine])
+        bad = [e for e in engine if e not in runner_v2.VALID_ENGINES]
+        if bad:
+            raise HTTPException(400, f"unknown engine(s) {bad!r}")
+        # Canonical order; empty selection falls back to the latest engine
+        # so a run always exercises at least one.
+        picked = set(engine)
+        engines = tuple(e for e in runner_v2.VALID_ENGINES if e in picked) \
+            or (LATEST_ENGINE,)
+        engines_str = ",".join(engines)
         probe_conn = _open_write_conn()
         try:
             profile = config_mod.load_by_id(probe_conn, config_id)
@@ -311,7 +309,7 @@ def register_pricer_routes(
             try:
                 await loop.run_in_executor(
                     None, _run_in_thread,
-                    run_id, config_id, regime, density, scope, csv_name, engine,
+                    run_id, config_id, regime, density, scope, csv_name, engines,
                     config_id_b,
                 )
             except Exception:

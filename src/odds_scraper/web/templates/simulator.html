@@ -163,20 +163,14 @@
           </div>
         </div>
         <div>
-          <div class="filter-lbl" style="margin-bottom:4px"><b>Engine</b> — which pricer to run</div>
-          <div class="filter-group" style="flex-direction:column;align-items:flex-start;gap:4px">
-            <label><input type="radio" name="engine" value="v1">
-              <b>V1 only</b> <span class="filter-lbl">— original pricing model</span></label>
-            <label><input type="radio" name="engine" value="v2">
-              <b>V2 only</b> <span class="filter-lbl">— unified 1UP/2UP DP, additive margin</span></label>
-            <label><input type="radio" name="engine" value="v3">
-              <b>V3 only</b> <span class="filter-lbl">— logit-linear margin + odds boost</span></label>
-            <label><input type="radio" name="engine" value="both" checked>
-              <b>V1 + V2 (A/B)</b> <span class="filter-lbl">— side-by-side comparison</span></label>
-            <label><input type="radio" name="engine" value="v2v3">
-              <b>V2 + V3 (A/B)</b> <span class="filter-lbl">— margin comparison</span></label>
-            <label><input type="radio" name="engine" value="all">
-              <b>All three</b> <span class="filter-lbl">— V1 + V2 + V3 side-by-side</span></label>
+          <div class="filter-lbl" style="margin-bottom:4px"><b>Engine</b> — which pricer(s) to run <span class="filter-lbl">(pick one or more)</span></div>
+          <div class="filter-group" id="engine-group" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label><input type="checkbox" name="engine" value="v1">
+              <b>V1</b> <span class="filter-lbl">— original pricing model</span></label>
+            <label><input type="checkbox" name="engine" value="v2">
+              <b>V2</b> <span class="filter-lbl">— unified 1UP/2UP DP, additive margin</span></label>
+            <label><input type="checkbox" name="engine" value="v3" checked>
+              <b>V3</b> <span class="filter-lbl">— latest · logit-linear margin + odds boost</span></label>
           </div>
         </div>
       </div>
@@ -315,6 +309,23 @@
       // HTMX-bound event-options loader picks up the new league filter
       // (which is now empty / 'All' after the country switch).
       leagueSel.dispatchEvent(new Event('change', {bubbles: true}));
+    });
+  })();
+</script>
+
+<script>
+  // Engine selector requires at least one engine — block the submit and
+  // warn when the user has unchecked them all (server also falls back to
+  // the latest engine, but the UI should make the rule explicit).
+  (function () {
+    const form  = document.querySelector('form.sim-form');
+    const group = document.getElementById('engine-group');
+    if (!form || !group) return;
+    form.addEventListener('submit', (e) => {
+      if (!group.querySelector('input[name="engine"]:checked')) {
+        e.preventDefault();
+        alert('Select at least one engine to run.');
+      }
     });
   })();
 </script>
