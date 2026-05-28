@@ -224,3 +224,90 @@ def backfill_all(conn: sqlite3.Connection) -> tuple[int, int]:
         else:
             skipped += 1
     return written, skipped
+
+
+def backfill_v3(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Fill v3_* on existing pricer_live_results rows that don't have V3 yet.
+
+    A row has V3 iff any v3_* column is non-NULL — a fully score-deactivated
+    row can't happen (both sides can't deactivate at once), so "all v3_* NULL"
+    reliably means "not computed". Re-extracts engine inputs from `prices`
+    exactly as backfill_all does, runs engine_v3, and UPDATEs ONLY the v3_*
+    columns. V2 values are left untouched. Idempotent.
+
+    Returns (updated, skipped); skipped = rows whose inputs can't price.
+    """
+    targets = conn.execute(
+        """
+        SELECT r.event_id, r.ts_utc,
+               MAX(s.score_home) AS sh, MAX(s.score_away) AS sa
+        FROM pricer_live_results r
+        JOIN snapshots s ON s.event_id = r.event_id AND s.ts_utc = r.ts_utc
+        WHERE r.v3_p_home_1 IS NULL AND r.v3_p_away_1 IS NULL
+          AND r.v3_1up_home_fair IS NULL AND r.v3_1up_home_capped IS NULL
+          AND r.v3_1up_away_fair IS NULL AND r.v3_1up_away_capped IS NULL
+          AND r.v3_p_home_2 IS NULL AND r.v3_p_away_2 IS NULL
+          AND r.v3_2up_home_fair IS NULL AND r.v3_2up_home_capped IS NULL
+          AND r.v3_2up_away_fair IS NULL AND r.v3_2up_away_capped IS NULL
+        GROUP BY r.event_id, r.ts_utc
+        ORDER BY r.event_id, r.ts_utc
+        """
+    ).fetchall()
+    leads_by_tick = score_state.max_leads_for_events(conn, {t[0] for t in targets})
+
+    updated = 0
+    skipped = 0
+    for ev_id, ts, sh, sa in targets:
+        price_rows = conn.execute(
+            "SELECT bookmaker, market_id, line, side, odds, probability "
+            "FROM prices WHERE event_id = ? AND ts_utc = ?",
+            (ev_id, ts),
+        ).fetchall()
+        prices_by_book: dict[str, list[dict]] = {}
+        for bm, mid, line, side, odds, prob in price_rows:
+            prices_by_book.setdefault(bm, []).append({
+                "market_id":   mid,
+                "line":        line if line is not None else 0.0,
+                "side":        side,
+                "odds":        odds,
+                "probability": prob,
+            })
+        engine_inputs, _basis = input_extract.extract(prices_by_book)
+        if engine_inputs is None:
+            skipped += 1
+            continue
+        score = (int(sh), int(sa)) if sh is not None and sa is not None else (0, 0)
+        engine_inputs["score"] = score
+        leads = leads_by_tick.get((ev_id, ts), (0, 0))
+        engine_inputs["max_home_lead"] = leads[0]
+        engine_inputs["max_away_lead"] = leads[1]
+        kw = {k: v for k, v in engine_inputs.items() if not k.startswith("_")}
+        try:
+            r3 = engine_v3.price_early_payout_markets(**kw)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("v3 backfill crashed event=%s ts=%s (%s)", ev_id, ts, exc)
+            skipped += 1
+            continue
+        conn.execute(
+            """
+            UPDATE pricer_live_results SET
+                v3_p_home_1=?, v3_p_away_1=?,
+                v3_1up_home_fair=?, v3_1up_home_capped=?,
+                v3_1up_away_fair=?, v3_1up_away_capped=?,
+                v3_p_home_2=?, v3_p_away_2=?,
+                v3_2up_home_fair=?, v3_2up_home_capped=?,
+                v3_2up_away_fair=?, v3_2up_away_capped=?
+            WHERE event_id=? AND ts_utc=?
+            """,
+            (
+                r3["p_home_1"], r3["p_away_1"],
+                r3["market_1up"]["home_fair"], r3["market_1up"]["home_margin"],
+                r3["market_1up"]["away_fair"], r3["market_1up"]["away_margin"],
+                r3["p_home_2"], r3["p_away_2"],
+                r3["market_2up"]["home_fair"], r3["market_2up"]["home_margin"],
+                r3["market_2up"]["away_fair"], r3["market_2up"]["away_margin"],
+                ev_id, ts,
+            ),
+        )
+        updated += 1
+    return updated, skipped

@@ -265,6 +265,49 @@ def test_v3_crash_still_persists_row_with_v2(tmp_path: Path, monkeypatch):
     conn.close()
 
 
+def test_backfill_v3_fills_existing_rows_and_is_idempotent(tmp_path: Path):
+    """backfill_v3 fills v3_* on rows that lack it (re-extracting inputs from
+    `prices`), leaves v2_* untouched, and is idempotent on re-run."""
+    import asyncio
+    db = tmp_path / "odds.db"
+    rows = [_tick_snapshot(b, with_prob=(b == Bookmaker.BETPAWA), event_id="EV1")
+            for b in Bookmaker]
+
+    async def seed():
+        async with SqliteWriter(db) as w:
+            await w.append(rows)
+    asyncio.run(seed())
+
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    # Create the pricer_live_results row (writes v2 + v3) for this tick.
+    written, _ = live_writer.backfill_all(conn)
+    assert written == 1
+    # Simulate a pre-v3 row: NULL out every v3_* column.
+    conn.execute(
+        "UPDATE pricer_live_results SET "
+        "v3_p_home_1=NULL, v3_p_away_1=NULL, v3_1up_home_fair=NULL, "
+        "v3_1up_home_capped=NULL, v3_1up_away_fair=NULL, v3_1up_away_capped=NULL, "
+        "v3_p_home_2=NULL, v3_p_away_2=NULL, v3_2up_home_fair=NULL, "
+        "v3_2up_home_capped=NULL, v3_2up_away_fair=NULL, v3_2up_away_capped=NULL"
+    )
+    v2_before = conn.execute(
+        "SELECT v2_2up_home_capped FROM pricer_live_results"
+    ).fetchone()[0]
+
+    updated, skipped = live_writer.backfill_v3(conn)
+    assert updated == 1
+    row = conn.execute(
+        "SELECT v3_2up_home_capped, v2_2up_home_capped FROM pricer_live_results"
+    ).fetchone()
+    assert row["v3_2up_home_capped"] is not None     # v3 filled
+    assert row["v2_2up_home_capped"] == v2_before     # v2 untouched
+
+    again, _ = live_writer.backfill_v3(conn)
+    assert again == 0                                  # idempotent
+    conn.close()
+
+
 def _live_trailing_snapshot(bookmaker: Bookmaker) -> Snapshot:
     """Snapshot at score 1-0 minute 91 — V1 heuristic vs V2 DP diverge."""
     base = {
