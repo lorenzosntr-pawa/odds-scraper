@@ -27,6 +27,12 @@ TUNABLE_NAMES = (
     "ONEUP_MARGIN_TILT",
     "TWOUP_MARGIN_LEVEL",
     "TWOUP_MARGIN_TILT",
+    # V3-only marketing odds-boost % per side + near-even cutoff.
+    "ONEUP_FAVORITE_ODDS_BOOST_PCT",
+    "ONEUP_UNDERDOG_ODDS_BOOST_PCT",
+    "TWOUP_FAVORITE_ODDS_BOOST_PCT",
+    "TWOUP_UNDERDOG_ODDS_BOOST_PCT",
+    "NEAR_EVEN_THRESHOLD",
 )
 
 # Subset of TUNABLE_NAMES that only engine_v2.py defines. V1's
@@ -46,6 +52,11 @@ V3_ONLY_TUNABLE_NAMES = frozenset({
     "ONEUP_MARGIN_TILT",
     "TWOUP_MARGIN_LEVEL",
     "TWOUP_MARGIN_TILT",
+    "ONEUP_FAVORITE_ODDS_BOOST_PCT",
+    "ONEUP_UNDERDOG_ODDS_BOOST_PCT",
+    "TWOUP_FAVORITE_ODDS_BOOST_PCT",
+    "TWOUP_UNDERDOG_ODDS_BOOST_PCT",
+    "NEAR_EVEN_THRESHOLD",
 })
 
 # Tunables optional in stored profiles (backfilled from defaults on load
@@ -91,6 +102,12 @@ DEFAULT_COEFFICIENTS = {
     "ONEUP_MARGIN_TILT": 0.9922,
     "TWOUP_MARGIN_LEVEL": 0.0352,
     "TWOUP_MARGIN_TILT": 1.0030,
+    # V3 marketing odds-boost % per side (0 = no-op) + near-even cutoff.
+    "ONEUP_FAVORITE_ODDS_BOOST_PCT": 0.0,
+    "ONEUP_UNDERDOG_ODDS_BOOST_PCT": 0.0,
+    "TWOUP_FAVORITE_ODDS_BOOST_PCT": 0.0,
+    "TWOUP_UNDERDOG_ODDS_BOOST_PCT": 0.0,
+    "NEAR_EVEN_THRESHOLD": 0.03,
     # Default flag values match Java behaviour (blends on).
     **DEFAULT_FLAGS,
 }

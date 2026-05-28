@@ -14,11 +14,20 @@ from fastapi.templating import Jinja2Templates
 from odds_scraper.pricer import configs as config_mod, runner, runner_v2
 
 
-# Engine choice the simulator page can submit. "both" runs the dual
-# runner emitting v1_* + v2_* columns side-by-side. "v1" stays on the
-# pre-V2 runner (byte-identical column layout) for parity. "v2" runs
-# only V2 (V1 cells stay blank in the CSV).
-VALID_ENGINE_CHOICES = ("v1", "v2", "both")
+# Engine choice the simulator page can submit → the engine tuple passed
+# to the dual runner. "v1" with no profile B stays on the lean pre-V2
+# runner (byte-identical layout); everything else routes through the
+# dual runner (it owns the v2_*/v3_*/pB_* column writes). "both" is the
+# legacy v1+v2 combo; "v2v3" and "all" were added with V3.
+ENGINE_CHOICE_MAP = {
+    "v1":   ("v1",),
+    "v2":   ("v2",),
+    "v3":   ("v3",),
+    "both": ("v1", "v2"),
+    "v2v3": ("v2", "v3"),
+    "all":  ("v1", "v2", "v3"),
+}
+VALID_ENGINE_CHOICES = tuple(ENGINE_CHOICE_MAP)
 
 from . import queries
 
@@ -204,11 +213,7 @@ def register_pricer_routes(
                         ),
                     )
                 else:
-                    engines = (
-                        ("v1",) if engine_choice == "v1"
-                        else ("v2",) if engine_choice == "v2"
-                        else ("v1", "v2")
-                    )
+                    engines = ENGINE_CHOICE_MAP.get(engine_choice, ("v1", "v2"))
                     n_events, n_rows = runner_v2.run_simulation_dual(
                         write_conn, config=profile,
                         config_b=profile_b,
@@ -268,7 +273,7 @@ def register_pricer_routes(
             raise HTTPException(400, f"unknown density {density!r}")
         if engine not in VALID_ENGINE_CHOICES:
             raise HTTPException(400, f"unknown engine {engine!r}")
-        engines_str = "v1" if engine == "v1" else ("v2" if engine == "v2" else "v1,v2")
+        engines_str = ",".join(ENGINE_CHOICE_MAP[engine])
         probe_conn = _open_write_conn()
         try:
             profile = config_mod.load_by_id(probe_conn, config_id)
@@ -429,14 +434,16 @@ def register_pricer_routes(
             raise HTTPException(400, "name is required")
         coefficients: dict = {}
         for k in config_mod.TUNABLE_NAMES:
-            is_v2_only = k in config_mod.V2_ONLY_TUNABLE_NAMES
+            # V2-only AND V3-only keys are optional: when a form omits them
+            # (older cache, or a V1/V2 profile that never had V3 fields)
+            # they fall back to defaults via _validate_and_fill rather than
+            # rejecting the submit. Without including V3-only here, the new
+            # V3 float fields would 400 the POST.
+            is_optional = k in config_mod._OPTIONAL_TUNABLE_NAMES
             if k in _MARGIN_COEFFS:
                 slope_raw = form.get(f"{k}_slope")
                 inter_raw = form.get(f"{k}_intercept")
-                # V2-only fields absent from the form (e.g. older
-                # browser cache) fall back to defaults via
-                # _validate_and_fill rather than rejecting the submit.
-                if is_v2_only and (slope_raw is None or inter_raw is None):
+                if is_optional and (slope_raw is None or inter_raw is None):
                     continue
                 try:
                     coefficients[k] = [float(slope_raw), float(inter_raw)]
@@ -444,7 +451,7 @@ def register_pricer_routes(
                     raise HTTPException(400, f"invalid value for {k}")
             else:
                 raw = form.get(k)
-                if is_v2_only and raw is None:
+                if is_optional and raw is None:
                     continue
                 try:
                     coefficients[k] = float(raw)

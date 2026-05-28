@@ -104,6 +104,49 @@ def test_v3_midrange_odds_preserved_vs_v2(balanced_match):
     assert checked > 0, "no mid-range selection exercised by the fixture"
 
 
+def test_v3_apply_boost_helper():
+    """Favorite/underdog odds boost: lengthens the chosen side's odds by
+    a %, no-op near-even or on None."""
+    # Favorite gets the fav pct.
+    assert ep_v3._apply_boost(2.0, True, False, 10.0, 0.0) == pytest.approx(2.2)
+    # Underdog gets the dog pct, not the fav pct.
+    assert ep_v3._apply_boost(2.0, False, False, 10.0, 0.0) == pytest.approx(2.0)
+    assert ep_v3._apply_boost(2.0, False, False, 10.0, 5.0) == pytest.approx(2.1)
+    # Near-even → skipped entirely.
+    assert ep_v3._apply_boost(2.0, True, True, 10.0, 0.0) == pytest.approx(2.0)
+    # None passes through.
+    assert ep_v3._apply_boost(None, True, False, 10.0, 0.0) is None
+
+
+def test_v3_twoup_favorite_odds_boost(monkeypatch, strong_home_favorite):
+    """TWOUP_FAVORITE_ODDS_BOOST_PCT lengthens the favorite side's 2UP fair
+    odds by that % (pre-cap); the underdog side is untouched."""
+    base = ep_v3.price_early_payout_markets(**strong_home_favorite)
+    monkeypatch.setattr(ep_v3, "TWOUP_FAVORITE_ODDS_BOOST_PCT", 8.0)
+    boosted = ep_v3.price_early_payout_markets(**strong_home_favorite)
+    # Home is the favorite in this fixture → its 2UP fair odds get +8%.
+    assert boosted["market_2up"]["home_fair"] == pytest.approx(
+        base["market_2up"]["home_fair"] * 1.08, rel=1e-6
+    )
+    # Underdog (away) 2UP fair odds unchanged.
+    assert boosted["market_2up"]["away_fair"] == pytest.approx(
+        base["market_2up"]["away_fair"], rel=1e-9
+    )
+
+
+def test_v3_odds_boost_skipped_near_even(monkeypatch, balanced_match):
+    """A near-even match (|p_home - p_away| < NEAR_EVEN_THRESHOLD) gets no
+    boost on either side even when the pct is set."""
+    base = ep_v3.price_early_payout_markets(**balanced_match)
+    monkeypatch.setattr(ep_v3, "TWOUP_FAVORITE_ODDS_BOOST_PCT", 20.0)
+    monkeypatch.setattr(ep_v3, "TWOUP_UNDERDOG_ODDS_BOOST_PCT", 20.0)
+    # Force near-even regardless of fixture devig.
+    monkeypatch.setattr(ep_v3, "NEAR_EVEN_THRESHOLD", 1.0)
+    boosted = ep_v3.price_early_payout_markets(**balanced_match)
+    assert boosted["market_2up"]["home_fair"] == pytest.approx(base["market_2up"]["home_fair"])
+    assert boosted["market_2up"]["away_fair"] == pytest.approx(base["market_2up"]["away_fair"])
+
+
 def test_v3_low_prob_less_crush_than_v2(strong_home_favorite):
     """For low-prob selections (p<0.10) V3 fair odds >= V2 fair odds — V2's
     fixed intercept is a huge relative margin at the tail and crushes the

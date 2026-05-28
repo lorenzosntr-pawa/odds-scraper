@@ -163,11 +163,17 @@
           <div class="filter-lbl" style="margin-bottom:4px"><b>Engine</b> — which pricer to run</div>
           <div class="filter-group" style="flex-direction:column;align-items:flex-start;gap:4px">
             <label><input type="radio" name="engine" value="v1">
-              <b>V1 only</b> <span class="filter-lbl">— current pricing model</span></label>
+              <b>V1 only</b> <span class="filter-lbl">— original pricing model</span></label>
             <label><input type="radio" name="engine" value="v2">
-              <b>V2 only</b> <span class="filter-lbl">— rewritten 1UP/2UP DP</span></label>
+              <b>V2 only</b> <span class="filter-lbl">— unified 1UP/2UP DP, additive margin</span></label>
+            <label><input type="radio" name="engine" value="v3">
+              <b>V3 only</b> <span class="filter-lbl">— logit-linear margin + odds boost</span></label>
             <label><input type="radio" name="engine" value="both" checked>
-              <b>Both (A/B)</b> <span class="filter-lbl">— side-by-side comparison</span></label>
+              <b>V1 + V2 (A/B)</b> <span class="filter-lbl">— side-by-side comparison</span></label>
+            <label><input type="radio" name="engine" value="v2v3">
+              <b>V2 + V3 (A/B)</b> <span class="filter-lbl">— margin comparison</span></label>
+            <label><input type="radio" name="engine" value="all">
+              <b>All three</b> <span class="filter-lbl">— V1 + V2 + V3 side-by-side</span></label>
           </div>
         </div>
       </div>

@@ -52,6 +52,17 @@ ONEUP_MARGIN_TILT  = 0.9922
 TWOUP_MARGIN_LEVEL = 0.0352
 TWOUP_MARGIN_TILT  = 1.0030
 
+# ---- Marketing odds-boost: lengthen one side's odds by a % AFTER the
+# margin and BEFORE the cap. Default 0.0 = no-op. Skipped on near-even
+# matches (|p_home - p_away| < NEAR_EVEN_THRESHOLD) where there's no
+# clear favorite/underdog to boost. A boost can't push odds past the
+# 1X2 cap — that's expected (the cap still binds). ----
+ONEUP_FAVORITE_ODDS_BOOST_PCT = 0.0
+ONEUP_UNDERDOG_ODDS_BOOST_PCT = 0.0
+TWOUP_FAVORITE_ODDS_BOOST_PCT = 0.0
+TWOUP_UNDERDOG_ODDS_BOOST_PCT = 0.0
+NEAR_EVEN_THRESHOLD = 0.03
+
 TWOUP_DP_MAX_GOALS = 40
 TWOUP_DP_NEGLIGIBLE_TAIL = 1e-12
 
@@ -224,6 +235,16 @@ def _apply_model(coeffs: Tuple[float, float, float, float],
 
 def _blend_boost(strength: float, fav_coeff: float, dog_coeff: float) -> float:
     return strength * fav_coeff + (1.0 - strength) * dog_coeff
+
+
+def _apply_boost(odds, is_favorite: bool, near_even: bool,
+                 fav_pct: float, dog_pct: float):
+    """Lengthen one side's odds by a marketing % (favorite or underdog).
+    No-op when odds is None or the match is near-even (no clear side)."""
+    if odds is None or near_even:
+        return odds
+    pct = fav_pct if is_favorite else dog_pct
+    return odds * (1.0 + pct / 100.0)
 
 
 def _fair_prob_to_odds(fair_prob: float, level: float, tilt: float) -> float:
@@ -515,6 +536,8 @@ def price_early_payout_markets(
     fs = _favorite_strength(p_home, p_away)
     fav_weight = 0.5 + fs / 2.0
     dog_weight = 1.0 - fav_weight
+    # Odds-boost is skipped near-even — no clear favorite/underdog side.
+    near_even = abs(p_home - p_away) < NEAR_EVEN_THRESHOLD
 
     # ============== 1UP ==============
     if goal_difference == 0:
@@ -543,8 +566,16 @@ def price_early_payout_markets(
 
             # V3 margin: single (level, tilt) per market, applied to each
             # selection's own probability. No fav/dog split, no blend.
-            home_1up_fair_odds = _fair_prob_to_odds(home_1up_prob, ONEUP_MARGIN_LEVEL, ONEUP_MARGIN_TILT)
-            away_1up_fair_odds = _fair_prob_to_odds(away_1up_prob, ONEUP_MARGIN_LEVEL, ONEUP_MARGIN_TILT)
+            home_1up_fair_odds = _apply_boost(
+                _fair_prob_to_odds(home_1up_prob, ONEUP_MARGIN_LEVEL, ONEUP_MARGIN_TILT),
+                home_is_favorite, near_even,
+                ONEUP_FAVORITE_ODDS_BOOST_PCT, ONEUP_UNDERDOG_ODDS_BOOST_PCT,
+            )
+            away_1up_fair_odds = _apply_boost(
+                _fair_prob_to_odds(away_1up_prob, ONEUP_MARGIN_LEVEL, ONEUP_MARGIN_TILT),
+                not home_is_favorite, near_even,
+                ONEUP_FAVORITE_ODDS_BOOST_PCT, ONEUP_UNDERDOG_ODDS_BOOST_PCT,
+            )
 
             home_1up_capped, _ = _cap_selection(home_1up_fair_odds, home_1up_prob, home_1x2_odds, p_home, ONEUP_MIN_GUARANTEED_REDUCTION)
             away_1up_capped, _ = _cap_selection(away_1up_fair_odds, away_1up_prob, away_1x2_odds, p_away, ONEUP_MIN_GUARANTEED_REDUCTION)
@@ -562,8 +593,16 @@ def price_early_payout_markets(
         home_1up_prob_raw = _clamp_prob(p_home + home_residual)
         away_1up_prob_raw = _clamp_prob(p_away + away_residual)
 
-        home_1up_fair_odds = _fair_prob_to_odds(home_1up_prob_raw, ONEUP_MARGIN_LEVEL, ONEUP_MARGIN_TILT)
-        away_1up_fair_odds = _fair_prob_to_odds(away_1up_prob_raw, ONEUP_MARGIN_LEVEL, ONEUP_MARGIN_TILT)
+        home_1up_fair_odds = _apply_boost(
+            _fair_prob_to_odds(home_1up_prob_raw, ONEUP_MARGIN_LEVEL, ONEUP_MARGIN_TILT),
+            home_is_favorite, near_even,
+            ONEUP_FAVORITE_ODDS_BOOST_PCT, ONEUP_UNDERDOG_ODDS_BOOST_PCT,
+        )
+        away_1up_fair_odds = _apply_boost(
+            _fair_prob_to_odds(away_1up_prob_raw, ONEUP_MARGIN_LEVEL, ONEUP_MARGIN_TILT),
+            not home_is_favorite, near_even,
+            ONEUP_FAVORITE_ODDS_BOOST_PCT, ONEUP_UNDERDOG_ODDS_BOOST_PCT,
+        )
 
         home_1up_capped, _ = _cap_selection(
             home_1up_fair_odds, home_1up_prob_raw, home_1x2_odds, p_home,
@@ -608,8 +647,16 @@ def price_early_payout_markets(
     away_2up_prob_raw = _clamp_prob(p_away + away_residual * away_coeff)
 
     # V3 margin: single (level, tilt) per market.
-    home_2up_fair_odds = _fair_prob_to_odds(home_2up_prob_raw, TWOUP_MARGIN_LEVEL, TWOUP_MARGIN_TILT)
-    away_2up_fair_odds = _fair_prob_to_odds(away_2up_prob_raw, TWOUP_MARGIN_LEVEL, TWOUP_MARGIN_TILT)
+    home_2up_fair_odds = _apply_boost(
+        _fair_prob_to_odds(home_2up_prob_raw, TWOUP_MARGIN_LEVEL, TWOUP_MARGIN_TILT),
+        home_is_favorite, near_even,
+        TWOUP_FAVORITE_ODDS_BOOST_PCT, TWOUP_UNDERDOG_ODDS_BOOST_PCT,
+    )
+    away_2up_fair_odds = _apply_boost(
+        _fair_prob_to_odds(away_2up_prob_raw, TWOUP_MARGIN_LEVEL, TWOUP_MARGIN_TILT),
+        not home_is_favorite, near_even,
+        TWOUP_FAVORITE_ODDS_BOOST_PCT, TWOUP_UNDERDOG_ODDS_BOOST_PCT,
+    )
 
     home_min_red = TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION if home_is_favorite else TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION
     away_min_red = TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION if home_is_favorite else TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION

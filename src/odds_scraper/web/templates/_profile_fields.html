@@ -1,0 +1,160 @@
+{# Shared profile coefficient fields, organized BY ENGINE so a trader
+   knows exactly which params feed which engine. Caller sets `coeffs`
+   (a dict of current values: profile.coefficients on edit, or
+   default_coefficients on create). Every key is rendered exactly once;
+   a key shared by two engines lives in its shared section. #}
+<div class="profile-fields">
+
+  <div class="profile-col">
+    <div class="profile-h">Common <span class="filter-lbl">(all engines)</span></div>
+    <label>1UP min guaranteed reduction
+      <input type="number" step="any" name="ONEUP_MIN_GUARANTEED_REDUCTION"
+             value="{{ coeffs['ONEUP_MIN_GUARANTEED_REDUCTION'] }}" required>
+    </label>
+    <label>2UP favorite boost coefficient
+      <input type="number" step="any" name="TWOUP_FAVORITE_BOOST_COEFFICIENT"
+             value="{{ coeffs['TWOUP_FAVORITE_BOOST_COEFFICIENT'] }}" required>
+    </label>
+    <label>2UP underdog boost coefficient
+      <input type="number" step="any" name="TWOUP_UNDERDOG_BOOST_COEFFICIENT"
+             value="{{ coeffs['TWOUP_UNDERDOG_BOOST_COEFFICIENT'] }}" required>
+    </label>
+    <label>2UP favorite min guaranteed reduction
+      <input type="number" step="any" name="TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION"
+             value="{{ coeffs['TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION'] }}" required>
+    </label>
+    <label>2UP underdog min guaranteed reduction
+      <input type="number" step="any" name="TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION"
+             value="{{ coeffs['TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION'] }}" required>
+    </label>
+  </div>
+
+  <div class="profile-col">
+    <div class="profile-h">V1 &amp; V2 <span class="filter-lbl">(additive margin: slope·p + intercept)</span></div>
+    {% set o_fav = coeffs["ONEUP_FAVORITE_MARGIN"] %}
+    {% set o_dog = coeffs["ONEUP_UNDERDOG_MARGIN"] %}
+    {% set t_fav = coeffs["TWOUP_FAVORITE_MARGIN"] %}
+    {% set t_dog = coeffs["TWOUP_UNDERDOG_MARGIN"] %}
+    <div class="profile-sub">1UP level-score margin</div>
+    <label>Favorite (slope, intercept)
+      <input type="number" step="any" name="ONEUP_FAVORITE_MARGIN_slope" value="{{ o_fav[0] }}" required>
+      <input type="number" step="any" name="ONEUP_FAVORITE_MARGIN_intercept" value="{{ o_fav[1] }}" required>
+    </label>
+    <label>Underdog (slope, intercept)
+      <input type="number" step="any" name="ONEUP_UNDERDOG_MARGIN_slope" value="{{ o_dog[0] }}" required>
+      <input type="number" step="any" name="ONEUP_UNDERDOG_MARGIN_intercept" value="{{ o_dog[1] }}" required>
+    </label>
+    <div class="profile-sub">2UP margin</div>
+    <label>Favorite (slope, intercept)
+      <input type="number" step="any" name="TWOUP_FAVORITE_MARGIN_slope" value="{{ t_fav[0] }}" required>
+      <input type="number" step="any" name="TWOUP_FAVORITE_MARGIN_intercept" value="{{ t_fav[1] }}" required>
+    </label>
+    <label>Underdog (slope, intercept)
+      <input type="number" step="any" name="TWOUP_UNDERDOG_MARGIN_slope" value="{{ t_dog[0] }}" required>
+      <input type="number" step="any" name="TWOUP_UNDERDOG_MARGIN_intercept" value="{{ t_dog[1] }}" required>
+    </label>
+  </div>
+
+  <div class="profile-col">
+    <div class="profile-h">V1 only <span class="filter-lbl">(legacy trailing reductions)</span></div>
+    <label>1UP trailing reduction min
+      <input type="number" step="any" name="ONEUP_TRAILING_MIN_REDUCTION"
+             value="{{ coeffs['ONEUP_TRAILING_MIN_REDUCTION'] }}" required>
+    </label>
+    <label>1UP trailing reduction max
+      <input type="number" step="any" name="ONEUP_TRAILING_MAX_REDUCTION"
+             value="{{ coeffs['ONEUP_TRAILING_MAX_REDUCTION'] }}" required>
+    </label>
+    <label>2UP trailing reduction min
+      <input type="number" step="any" name="TWOUP_TRAILING_MIN_REDUCTION"
+             value="{{ coeffs['TWOUP_TRAILING_MIN_REDUCTION'] }}" required>
+    </label>
+    <label>2UP trailing reduction max
+      <input type="number" step="any" name="TWOUP_TRAILING_MAX_REDUCTION"
+             value="{{ coeffs['TWOUP_TRAILING_MAX_REDUCTION'] }}" required>
+    </label>
+  </div>
+
+  <div class="profile-col">
+    <div class="profile-h">V2 only <span class="filter-lbl">(trailing margin pair + margin blends)</span></div>
+    {% set tf = coeffs["ONEUP_TRAILING_FAVORITE_MARGIN"] %}
+    {% set td = coeffs["ONEUP_TRAILING_UNDERDOG_MARGIN"] %}
+    <label>1UP trailing favorite (slope, intercept)
+      <input type="number" step="any" name="ONEUP_TRAILING_FAVORITE_MARGIN_slope" value="{{ tf[0] }}" required>
+      <input type="number" step="any" name="ONEUP_TRAILING_FAVORITE_MARGIN_intercept" value="{{ tf[1] }}" required>
+    </label>
+    <label>1UP trailing underdog (slope, intercept)
+      <input type="number" step="any" name="ONEUP_TRAILING_UNDERDOG_MARGIN_slope" value="{{ td[0] }}" required>
+      <input type="number" step="any" name="ONEUP_TRAILING_UNDERDOG_MARGIN_intercept" value="{{ td[1] }}" required>
+    </label>
+    <label class="profile-flag">
+      <input type="checkbox" name="ONEUP_MARGIN_BLEND_ENABLED"
+             {% if coeffs.get("ONEUP_MARGIN_BLEND_ENABLED", True) %}checked{% endif %}>
+      1UP margin blend
+      <span class="filter-lbl">— off → fav/dog margins applied flat</span>
+    </label>
+    <label class="profile-flag">
+      <input type="checkbox" name="TWOUP_MARGIN_BLEND_ENABLED"
+             {% if coeffs.get("TWOUP_MARGIN_BLEND_ENABLED", True) %}checked{% endif %}>
+      2UP margin blend
+      <span class="filter-lbl">— same, for 2UP margins</span>
+    </label>
+  </div>
+
+  <div class="profile-col">
+    <div class="profile-h">V2 &amp; V3 <span class="filter-lbl">(shared boost blend)</span></div>
+    <label class="profile-flag">
+      <input type="checkbox" name="TWOUP_BOOST_BLEND_ENABLED"
+             {% if coeffs.get("TWOUP_BOOST_BLEND_ENABLED", True) %}checked{% endif %}>
+      2UP boost-coefficient blend
+      <span class="filter-lbl">— off → fav/dog boost coeffs applied flat</span>
+    </label>
+  </div>
+
+  <div class="profile-col">
+    <div class="profile-h">V3 only <span class="filter-lbl">(logit-linear margin)</span></div>
+    <div class="profile-sub">Logit margin (level, tilt)</div>
+    <label>1UP level
+      <input type="number" step="any" name="ONEUP_MARGIN_LEVEL"
+             value="{{ coeffs['ONEUP_MARGIN_LEVEL'] }}" required>
+    </label>
+    <label>1UP tilt
+      <input type="number" step="any" name="ONEUP_MARGIN_TILT"
+             value="{{ coeffs['ONEUP_MARGIN_TILT'] }}" required>
+    </label>
+    <label>2UP level
+      <input type="number" step="any" name="TWOUP_MARGIN_LEVEL"
+             value="{{ coeffs['TWOUP_MARGIN_LEVEL'] }}" required>
+    </label>
+    <label>2UP tilt
+      <input type="number" step="any" name="TWOUP_MARGIN_TILT"
+             value="{{ coeffs['TWOUP_MARGIN_TILT'] }}" required>
+    </label>
+    <div class="profile-sub">Odds boost % (per side)</div>
+    <label>1UP favorite boost %
+      <input type="number" step="any" name="ONEUP_FAVORITE_ODDS_BOOST_PCT"
+             value="{{ coeffs['ONEUP_FAVORITE_ODDS_BOOST_PCT'] }}" required>
+    </label>
+    <label>1UP underdog boost %
+      <input type="number" step="any" name="ONEUP_UNDERDOG_ODDS_BOOST_PCT"
+             value="{{ coeffs['ONEUP_UNDERDOG_ODDS_BOOST_PCT'] }}" required>
+    </label>
+    <label>2UP favorite boost %
+      <input type="number" step="any" name="TWOUP_FAVORITE_ODDS_BOOST_PCT"
+             value="{{ coeffs['TWOUP_FAVORITE_ODDS_BOOST_PCT'] }}" required>
+    </label>
+    <label>2UP underdog boost %
+      <input type="number" step="any" name="TWOUP_UNDERDOG_ODDS_BOOST_PCT"
+             value="{{ coeffs['TWOUP_UNDERDOG_ODDS_BOOST_PCT'] }}" required>
+    </label>
+    <label>Near-even threshold
+      <input type="number" step="any" name="NEAR_EVEN_THRESHOLD"
+             value="{{ coeffs['NEAR_EVEN_THRESHOLD'] }}" required>
+    </label>
+    <div class="filter-lbl" style="margin-top:6px;line-height:1.4">
+      level 0 = fair, &lt;0 = boost; tilt &gt;1 favors favorites;
+      boost % lengthens that side's odds (skipped near-even).
+    </div>
+  </div>
+
+</div>
