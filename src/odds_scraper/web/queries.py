@@ -59,11 +59,11 @@ def get_events_by_status(
     date_to_clause   = "AND s.ts_utc < :date_to_next"   if date_to    else ""
     # Hide upcoming events whose kickoff is >48h in the past — BP
     # sometimes publishes bogus startTime values that never transition.
+    # Uses _utcnow_iso() (not datetime.now) so tests can pin "now".
     stale_upcoming_clause = ""
     if status == "upcoming":
-        stale_cutoff = (
-            datetime.now(timezone.utc) - timedelta(hours=48)
-        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.strptime(_utcnow_iso(), "%Y-%m-%dT%H:%M:%SZ")
+        stale_cutoff = (now - timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%SZ")
         stale_upcoming_clause = "AND e.kickoff_utc > :stale_cutoff"
     sql = f"""
         WITH latest AS (
