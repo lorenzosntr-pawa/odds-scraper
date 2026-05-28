@@ -172,6 +172,16 @@
   text-align: center;
   white-space: nowrap;
 }
+/* V2/V3 stacked inside the single SIM cell. */
+.sim-sub {
+  display: block;
+  white-space: nowrap;
+}
+.sim-tag {
+  color: #6b7280;
+  font-size: 9px;
+  margin-right: 3px;
+}
 
 /* Event card header is now an anchor; reset link styles */
 a.ev { text-decoration: none; color: inherit; }

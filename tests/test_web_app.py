@@ -858,6 +858,14 @@ def test_sim_cell_marks_our_when_bp_has_up_quote(db_with_ftts_and_ou: Path):
     assert "1.50" in r.text  # BP-quoted 1UP home odds
 
 
+def test_home_card_shows_v3_under_v2_in_sim(db_with_ftts_and_ou: Path):
+    """The card SIM cell stacks V2 and V3 — a V3 sub-cell renders when V3
+    prices the latest snapshot (BP-quoted UP market)."""
+    client = TestClient(create_app(db_path=db_with_ftts_and_ou))
+    r = client.get("/events?status=upcoming")
+    assert 'data-bookmaker="sim_v3"' in r.text
+
+
 def test_sim_replaces_bp_cell_when_bp_missing_up_quote(db_with_ftts_and_ou: Path):
     """BP didn't quote 1UP away — the BP cell itself must show OUR
     (with .sim class + SIM pill), and the SIM cell stays blank."""

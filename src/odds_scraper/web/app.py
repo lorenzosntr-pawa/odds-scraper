@@ -11,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from odds_scraper.models import MARKET_MANIFEST, MarketSpec
 from odds_scraper.pricer import (
-    engine_v2, inputs as pricer_inputs,
+    engine_v2, engine_v3, inputs as pricer_inputs,
     score_state as pricer_score_state,
 )
 
@@ -146,6 +146,15 @@ class EventView:
     our_p_1up_away: Optional[float]
     our_p_2up_home: Optional[float]
     our_p_2up_away: Optional[float]
+    # OUR-engine output for the V3 sub-cell (logit-margin engine).
+    our_v3_1up_home: Optional[float]
+    our_v3_1up_away: Optional[float]
+    our_v3_2up_home: Optional[float]
+    our_v3_2up_away: Optional[float]
+    our_v3_p_1up_home: Optional[float]
+    our_v3_p_1up_away: Optional[float]
+    our_v3_p_2up_home: Optional[float]
+    our_v3_p_2up_away: Optional[float]
     # True when BP itself quoted the market — drives the rule "if BP
     # missing, OUR replaces the BP cell instead of going to SIM column".
     bp_has_1up: bool
@@ -405,6 +414,8 @@ def _build_event_view(
     engine_inputs, _basis = pricer_inputs.extract(prices_by_book)
     our_1up_home = our_1up_away = our_2up_home = our_2up_away = None
     our_p_1up_home = our_p_1up_away = our_p_2up_home = our_p_2up_away = None
+    our_v3_1up_home = our_v3_1up_away = our_v3_2up_home = our_v3_2up_away = None
+    our_v3_p_1up_home = our_v3_p_1up_away = our_v3_p_2up_home = our_v3_p_2up_away = None
     if engine_inputs is not None:
         score = (row["score_home"] or 0, row["score_away"] or 0)
         engine_inputs["score"] = (int(score[0]), int(score[1]))
@@ -424,6 +435,18 @@ def _build_event_view(
             our_p_2up_away = result["p_away_2"]
         except Exception:  # noqa: BLE001
             pass
+        try:
+            r3 = engine_v3.price_early_payout_markets(**engine_kwargs)
+            our_v3_1up_home = r3["market_1up"]["home_margin"]
+            our_v3_1up_away = r3["market_1up"]["away_margin"]
+            our_v3_2up_home = r3["market_2up"]["home_margin"]
+            our_v3_2up_away = r3["market_2up"]["away_margin"]
+            our_v3_p_1up_home = r3["p_home_1"]
+            our_v3_p_1up_away = r3["p_away_1"]
+            our_v3_p_2up_home = r3["p_home_2"]
+            our_v3_p_2up_away = r3["p_away_2"]
+        except Exception:  # noqa: BLE001
+            pass
 
     bp_prices = prices_by_book.get("betpawa", [])
     bp_has_1up = any(p["market_id"] == "1x2_1up_ft" and p["side"] in ("home", "away")
@@ -441,6 +464,10 @@ def _build_event_view(
         our_2up_home=our_2up_home, our_2up_away=our_2up_away,
         our_p_1up_home=our_p_1up_home, our_p_1up_away=our_p_1up_away,
         our_p_2up_home=our_p_2up_home, our_p_2up_away=our_p_2up_away,
+        our_v3_1up_home=our_v3_1up_home, our_v3_1up_away=our_v3_1up_away,
+        our_v3_2up_home=our_v3_2up_home, our_v3_2up_away=our_v3_2up_away,
+        our_v3_p_1up_home=our_v3_p_1up_home, our_v3_p_1up_away=our_v3_p_1up_away,
+        our_v3_p_2up_home=our_v3_p_2up_home, our_v3_p_2up_away=our_v3_p_2up_away,
         bp_has_1up=bp_has_1up, bp_has_2up=bp_has_2up,
     )
 
