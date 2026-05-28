@@ -719,3 +719,90 @@ def test_v1_runner_marks_rows_engines_v1(db, tmp_path):
     assert rows and rows[0]["engines"] == "v1"
     assert rows[0]["v2_p_home_1"] == ""
     assert rows[0]["v2_our_2up_away_capped_ev"] == ""
+
+
+# ---- "on odds change" density (UPCOMING-only dedupe) ----
+
+def _seed_tick(conn, event_id, ts, status, home_1x2=1.85):
+    """One betpawa snapshot + a small base price set at `ts`. Vary `home_1x2`
+    to simulate an odds change between ticks."""
+    cur = conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+        "match_minute, score_home, score_away, fetch_status) "
+        "VALUES (?, ?, 'betpawa', ?, NULL, NULL, NULL, 'ok')",
+        (ts, event_id, status),
+    )
+    snap_id = cur.lastrowid
+    base = [
+        ("1x2_ft", 0.0, "home", home_1x2, 0.54),
+        ("1x2_ft", 0.0, "draw", 3.40, 0.29),
+        ("1x2_ft", 0.0, "away", 4.20, 0.17),
+        ("over_under_ft", 2.5, "over", 1.85, 0.55),
+        ("over_under_ft", 2.5, "under", 1.95, 0.45),
+    ]
+    for mid, line, side, odds, prob in base:
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, ?, ?, 'betpawa', ?, ?, ?, ?, ?)",
+            (snap_id, event_id, ts, mid, line, side, odds, prob),
+        )
+
+
+def _mk_event(conn, eid="E"):
+    conn.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES (?, 'H', 'A', '2026-05-22T18:30:00Z')",
+        (eid,),
+    )
+
+
+def test_onchange_in_valid_densities():
+    assert "onchange" in runner.VALID_DENSITIES
+
+
+def test_select_ticks_onchange_dedupes_identical_upcoming(db):
+    _mk_event(db)
+    _seed_tick(db, "E", "2026-05-21T10:00:00Z", "UPCOMING", home_1x2=1.85)
+    _seed_tick(db, "E", "2026-05-21T10:10:00Z", "UPCOMING", home_1x2=1.85)  # identical
+    _seed_tick(db, "E", "2026-05-21T10:20:00Z", "UPCOMING", home_1x2=1.70)  # odds moved
+    all_ticks = runner._select_ticks(db, "prematch", "all", {})
+    assert [t["ts_utc"] for t in all_ticks] == [
+        "2026-05-21T10:00:00Z", "2026-05-21T10:10:00Z", "2026-05-21T10:20:00Z",
+    ]
+    onchange = runner._select_ticks(db, "prematch", "onchange", {})
+    assert [t["ts_utc"] for t in onchange] == [
+        "2026-05-21T10:00:00Z", "2026-05-21T10:20:00Z",  # identical re-quote dropped
+    ]
+
+
+def test_select_ticks_onchange_keeps_all_started(db):
+    _mk_event(db)
+    _seed_tick(db, "E", "2026-05-21T11:00:00Z", "STARTED", home_1x2=1.85)
+    _seed_tick(db, "E", "2026-05-21T11:10:00Z", "STARTED", home_1x2=1.85)  # identical odds, live
+    onchange = runner._select_ticks(db, "live", "onchange", {})
+    assert [t["ts_utc"] for t in onchange] == [
+        "2026-05-21T11:00:00Z", "2026-05-21T11:10:00Z",  # both kept — live never deduped
+    ]
+
+
+def test_select_ticks_onchange_any_regime_dedupes_only_upcoming(db):
+    _mk_event(db)
+    _seed_tick(db, "E", "2026-05-21T10:00:00Z", "UPCOMING", home_1x2=1.85)
+    _seed_tick(db, "E", "2026-05-21T10:10:00Z", "UPCOMING", home_1x2=1.85)  # dup upcoming -> drop
+    _seed_tick(db, "E", "2026-05-21T11:00:00Z", "STARTED", home_1x2=1.85)
+    _seed_tick(db, "E", "2026-05-21T11:10:00Z", "STARTED", home_1x2=1.85)  # dup started -> keep
+    onchange = runner._select_ticks(db, "any", "onchange", {})
+    assert [t["ts_utc"] for t in onchange] == [
+        "2026-05-21T10:00:00Z", "2026-05-21T11:00:00Z", "2026-05-21T11:10:00Z",
+    ]
+
+
+def test_count_scope_onchange_reflects_dedupe(db):
+    _mk_event(db)
+    _seed_tick(db, "E", "2026-05-21T10:00:00Z", "UPCOMING", home_1x2=1.85)
+    _seed_tick(db, "E", "2026-05-21T10:10:00Z", "UPCOMING", home_1x2=1.85)
+    _seed_tick(db, "E", "2026-05-21T10:20:00Z", "UPCOMING", home_1x2=1.70)
+    n_ev, n_ticks = runner.count_scope(db, "prematch", "onchange", {})
+    assert n_ev == 1
+    assert n_ticks == 2

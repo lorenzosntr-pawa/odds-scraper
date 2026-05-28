@@ -157,6 +157,9 @@
             <label><input type="radio" name="density" value="latest"
                    hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
               <b>latest per event</b> <span class="filter-lbl">— last tick of the regime</span></label>
+            <label><input type="radio" name="density" value="onchange"
+                   hx-get="/simulator/scope" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>on odds change</b> <span class="filter-lbl">— prematch: only ticks where odds moved · live: every tick</span></label>
           </div>
         </div>
         <div>
