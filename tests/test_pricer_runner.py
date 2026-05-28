@@ -761,48 +761,30 @@ def test_onchange_in_valid_densities():
     assert "onchange" in runner.VALID_DENSITIES
 
 
-def test_select_ticks_onchange_dedupes_identical_upcoming(db):
+def test_select_ticks_onchange_returns_all_ticks_no_dedupe(db):
+    """Selection no longer dedupes — onchange returns the same ticks as 'all'
+    (cheap, metadata-only query). The actual collapse happens in the run loop,
+    so the scope-count badge never loads the full price table (the bug that
+    hung the app). count_scope therefore reports the all-count for onchange."""
     _mk_event(db)
     _seed_tick(db, "E", "2026-05-21T10:00:00Z", "UPCOMING", home_1x2=1.85)
     _seed_tick(db, "E", "2026-05-21T10:10:00Z", "UPCOMING", home_1x2=1.85)  # identical
     _seed_tick(db, "E", "2026-05-21T10:20:00Z", "UPCOMING", home_1x2=1.70)  # odds moved
-    all_ticks = runner._select_ticks(db, "prematch", "all", {})
-    assert [t["ts_utc"] for t in all_ticks] == [
-        "2026-05-21T10:00:00Z", "2026-05-21T10:10:00Z", "2026-05-21T10:20:00Z",
-    ]
-    onchange = runner._select_ticks(db, "prematch", "onchange", {})
-    assert [t["ts_utc"] for t in onchange] == [
-        "2026-05-21T10:00:00Z", "2026-05-21T10:20:00Z",  # identical re-quote dropped
-    ]
+    all_ts = [t["ts_utc"] for t in runner._select_ticks(db, "prematch", "all", {})]
+    onchange_ts = [t["ts_utc"] for t in runner._select_ticks(db, "prematch", "onchange", {})]
+    assert onchange_ts == all_ts                      # selection identical to 'all'
+    assert len(onchange_ts) == 3
+    assert runner.count_scope(db, "prematch", "onchange", {}) == (1, 3)
 
 
-def test_select_ticks_onchange_keeps_all_started(db):
-    _mk_event(db)
-    _seed_tick(db, "E", "2026-05-21T11:00:00Z", "STARTED", home_1x2=1.85)
-    _seed_tick(db, "E", "2026-05-21T11:10:00Z", "STARTED", home_1x2=1.85)  # identical odds, live
-    onchange = runner._select_ticks(db, "live", "onchange", {})
-    assert [t["ts_utc"] for t in onchange] == [
-        "2026-05-21T11:00:00Z", "2026-05-21T11:10:00Z",  # both kept — live never deduped
-    ]
-
-
-def test_select_ticks_onchange_any_regime_dedupes_only_upcoming(db):
-    _mk_event(db)
-    _seed_tick(db, "E", "2026-05-21T10:00:00Z", "UPCOMING", home_1x2=1.85)
-    _seed_tick(db, "E", "2026-05-21T10:10:00Z", "UPCOMING", home_1x2=1.85)  # dup upcoming -> drop
-    _seed_tick(db, "E", "2026-05-21T11:00:00Z", "STARTED", home_1x2=1.85)
-    _seed_tick(db, "E", "2026-05-21T11:10:00Z", "STARTED", home_1x2=1.85)  # dup started -> keep
-    onchange = runner._select_ticks(db, "any", "onchange", {})
-    assert [t["ts_utc"] for t in onchange] == [
-        "2026-05-21T10:00:00Z", "2026-05-21T11:00:00Z", "2026-05-21T11:10:00Z",
-    ]
-
-
-def test_count_scope_onchange_reflects_dedupe(db):
-    _mk_event(db)
-    _seed_tick(db, "E", "2026-05-21T10:00:00Z", "UPCOMING", home_1x2=1.85)
-    _seed_tick(db, "E", "2026-05-21T10:10:00Z", "UPCOMING", home_1x2=1.85)
-    _seed_tick(db, "E", "2026-05-21T10:20:00Z", "UPCOMING", home_1x2=1.70)
-    n_ev, n_ticks = runner.count_scope(db, "prematch", "onchange", {})
-    assert n_ev == 1
-    assert n_ticks == 2
+def test_prices_fingerprint_detects_odds_change():
+    """The per-tick fingerprint is equal for identical price sets and differs
+    when any odds moves — the basis of the run-loop onchange dedupe."""
+    a = {"betpawa": [{"market_id": "1x2_ft", "line": 0.0, "side": "home",
+                      "odds": 1.85, "probability": 0.54}]}
+    b = {"betpawa": [{"market_id": "1x2_ft", "line": 0.0, "side": "home",
+                      "odds": 1.85, "probability": 0.54}]}
+    c = {"betpawa": [{"market_id": "1x2_ft", "line": 0.0, "side": "home",
+                      "odds": 1.70, "probability": 0.54}]}  # odds moved
+    assert runner.prices_fingerprint(a) == runner.prices_fingerprint(b)
+    assert runner.prices_fingerprint(a) != runner.prices_fingerprint(c)

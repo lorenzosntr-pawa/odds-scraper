@@ -63,13 +63,15 @@ def _select_ticks(
       regime  in {'any','prematch','live'}  — snapshot-level status filter.
       density in {'all','latest','onchange'} — all matching ticks, only the
                                                 last per event, or (onchange)
-                                                all ticks but with consecutive
-                                                identical-price UPCOMING ticks
-                                                collapsed. STARTED ticks are
-                                                never collapsed under onchange:
-                                                a live 2-min tick is a distinct
-                                                match state even if odds didn't
-                                                move.
+                                                all ticks here with the actual
+                                                collapse applied later by
+                                                run_simulation_dual's loop.
+
+    NOTE: 'onchange' returns the SAME ticks as 'all' from this function. The
+    dedupe (drop a prematch tick whose odds are unchanged from the previous
+    kept one) is done in the run loop where each tick's prices are already
+    loaded — keeping selection a cheap metadata-only query so the scope-count
+    badge never has to read the whole price table.
     """
     where_extra: list[str] = []
     params: list = []
@@ -138,8 +140,8 @@ def _select_ticks(
             ORDER BY s.event_id, s.ts_utc
         """
     else:
-        # "all" and "onchange" share the all-ticks base query; onchange then
-        # collapses unchanged UPCOMING ticks below.
+        # "all" and "onchange" share the all-ticks base query. The onchange
+        # dedupe is applied later, per-tick, in run_simulation_dual's loop.
         sql = f"""
             {base_select}
             FROM snapshots s
@@ -150,56 +152,20 @@ def _select_ticks(
         """
     cur = conn.cursor()
     cur.row_factory = sqlite3.Row
-    ticks = [dict(row) for row in cur.execute(sql, params).fetchall()]
-    if density == "onchange":
-        ticks = _collapse_unchanged_upcoming(conn, ticks, where_clause, params)
-    return ticks
+    return [dict(row) for row in cur.execute(sql, params).fetchall()]
 
 
-def _collapse_unchanged_upcoming(
-    conn: sqlite3.Connection,
-    ticks: list[dict],
-    where_clause: str,
-    params: list,
-) -> list[dict]:
-    """Drop a prematch (UPCOMING) tick when its full price set is identical
-    to the previous KEPT prematch tick for the same event — the engine would
-    reprice identical inputs. STARTED ticks are always kept (a live tick is a
-    distinct match state). `ticks` must be ordered by (event_id, ts_utc).
-
-    The per-tick fingerprint is the set of (bookmaker, market_id, line, side,
-    odds, probability) rows — comparing raw stored values needs no devig, and
-    identical raw inputs guarantee identical engine output.
-    """
-    fp_rows = conn.execute(
-        f"""
-        SELECT p.event_id, p.ts_utc, p.bookmaker, p.market_id, p.line, p.side,
-               p.odds, p.probability
-        FROM prices p
-        JOIN snapshots s
-          ON s.event_id = p.event_id AND s.ts_utc = p.ts_utc
-         AND s.bookmaker = p.bookmaker
-        JOIN events e ON e.id = p.event_id
-        WHERE s.status = 'UPCOMING' {where_clause}
-        """,
-        params,
-    ).fetchall()
-    fp_by_tick: dict[tuple[str, str], set] = {}
-    for r in fp_rows:
-        fp_by_tick.setdefault((r[0], r[1]), set()).add(
-            (r[2], r[3], r[4], r[5], r[6], r[7])
-        )
-
-    kept: list[dict] = []
-    prev_fp_by_event: dict[str, frozenset] = {}
-    for t in ticks:
-        if t["status"] == "UPCOMING":
-            fp = frozenset(fp_by_tick.get((t["event_id"], t["ts_utc"]), ()))
-            if prev_fp_by_event.get(t["event_id"]) == fp:
-                continue  # identical re-quote — skip the redundant reprice
-            prev_fp_by_event[t["event_id"]] = fp
-        kept.append(t)
-    return kept
+def prices_fingerprint(prices_by_book: dict) -> frozenset:
+    """Hashable identity of a tick's full price set, for the 'onchange'
+    density: two consecutive prematch ticks with an equal fingerprint priced
+    identical inputs, so the second can be skipped. Built from the already-
+    loaded `{book: [price_dict, ...]}` (the `_load_tick_prices` shape) — no
+    extra query, no devig (identical raw inputs ⇒ identical engine output)."""
+    return frozenset(
+        (book, p["market_id"], p["line"], p["side"], p["odds"], p["probability"])
+        for book, rows in prices_by_book.items()
+        for p in rows
+    )
 
 
 def _load_tick_prices(

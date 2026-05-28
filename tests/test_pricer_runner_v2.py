@@ -289,3 +289,69 @@ def test_dual_runner_rejects_same_profile_twice_via_route():
     # but the duplication is the caller's problem. This test just
     # documents the runner's contract: it doesn't reject.
     pass
+
+
+# ---- "on odds change" density (dedupe happens in the run loop) ----
+
+def _mk_event(conn, eid="E"):
+    conn.execute(
+        "INSERT INTO events (id, home, away, kickoff_utc) "
+        "VALUES (?, 'H', 'A', '2026-05-22T18:30:00Z')",
+        (eid,),
+    )
+
+
+def _seed_tick(conn, event_id, ts, status, home_1x2=1.85):
+    cur = conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, "
+        "match_minute, score_home, score_away, fetch_status) "
+        "VALUES (?, ?, 'betpawa', ?, NULL, NULL, NULL, 'ok')",
+        (ts, event_id, status),
+    )
+    snap_id = cur.lastrowid
+    for mid, line, side, odds, prob in [
+        ("1x2_ft", 0.0, "home", home_1x2, 0.54),
+        ("1x2_ft", 0.0, "draw", 3.40, 0.29),
+        ("1x2_ft", 0.0, "away", 4.20, 0.17),
+        ("over_under_ft", 2.5, "over", 1.85, 0.55),
+        ("over_under_ft", 2.5, "under", 1.95, 0.45),
+    ]:
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, ?, ?, 'betpawa', ?, ?, ?, ?, ?)",
+            (snap_id, event_id, ts, mid, line, side, odds, prob),
+        )
+
+
+def test_run_onchange_collapses_identical_upcoming(db, tmp_path):
+    _mk_event(db)
+    _seed_tick(db, "E", "2026-05-21T10:00:00Z", "UPCOMING", 1.85)
+    _seed_tick(db, "E", "2026-05-21T10:10:00Z", "UPCOMING", 1.85)  # identical re-quote
+    _seed_tick(db, "E", "2026-05-21T10:20:00Z", "UPCOMING", 1.70)  # odds moved
+    default = configs.load_default(db)
+    p_all = tmp_path / "sim" / "all.csv"
+    p_oc = tmp_path / "sim" / "oc.csv"
+    runner_v2.run_simulation_dual(
+        db, config=default, regime="prematch", density="all",
+        scope=_BASE_SCOPE, csv_path=p_all, engines=("v2",),
+    )
+    runner_v2.run_simulation_dual(
+        db, config=default, regime="prematch", density="onchange",
+        scope=_BASE_SCOPE, csv_path=p_oc, engines=("v2",),
+    )
+    assert len(_read_csv(p_all)) == 3
+    assert len(_read_csv(p_oc)) == 2  # identical re-quote dropped
+
+
+def test_run_onchange_keeps_all_started(db, tmp_path):
+    _mk_event(db)
+    _seed_tick(db, "E", "2026-05-21T11:00:00Z", "STARTED", 1.85)
+    _seed_tick(db, "E", "2026-05-21T11:10:00Z", "STARTED", 1.85)  # identical odds, live
+    default = configs.load_default(db)
+    p = tmp_path / "sim" / "oc_live.csv"
+    runner_v2.run_simulation_dual(
+        db, config=default, regime="live", density="onchange",
+        scope=_BASE_SCOPE, csv_path=p, engines=("v2",),
+    )
+    assert len(_read_csv(p)) == 2  # both kept — live never collapsed

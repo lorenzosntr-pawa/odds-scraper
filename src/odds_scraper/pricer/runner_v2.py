@@ -23,7 +23,7 @@ from . import (
 from .runner import (
     VALID_REGIMES, VALID_DENSITIES, _PROGRESS_BATCH, _ev,
     _select_ticks, _load_tick_prices, _extract_quoted_up,
-    _book_1x2_odds,
+    _book_1x2_odds, prices_fingerprint,
     with_coefficients as with_v1_coefficients,
 )
 
@@ -163,6 +163,12 @@ def run_simulation_dual(
     )
     rows: list[tuple] = []
     seen_events: set[str] = set()
+    # onchange density: drop a prematch tick whose full price set matches the
+    # previous kept prematch tick for that event (identical inputs reprice
+    # identically). STARTED ticks are never collapsed — a live tick is a
+    # distinct match state. Done here (not in _select_ticks) so the prices are
+    # the ones already loaded per tick and selection stays a cheap query.
+    prev_fp_by_event: dict[str, frozenset] = {}
     engines_cell = ",".join(eng)
     profile_a_name = config.name
     profile_b_name = config_b.name if config_b is not None else ""
@@ -204,6 +210,13 @@ def run_simulation_dual(
             event_id = t["event_id"]
             ts_utc = t["ts_utc"]
             prices_by_book = _load_tick_prices(conn, event_id, ts_utc)
+            if density == "onchange" and t["status"] == "UPCOMING":
+                fp = prices_fingerprint(prices_by_book)
+                if prev_fp_by_event.get(event_id) == fp:
+                    if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:
+                        on_progress(i + 1, n_total)
+                    continue  # unchanged prematch odds — skip the reprice
+                prev_fp_by_event[event_id] = fp
             engine_inputs, basis = input_extract.extract(prices_by_book)
             if engine_inputs is None:
                 if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:
