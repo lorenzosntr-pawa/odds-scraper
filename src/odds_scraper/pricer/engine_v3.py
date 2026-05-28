@@ -35,18 +35,21 @@ from typing import Dict, List, Optional, Tuple
 # ---- 1UP regression model (UNCHANGED from V2 — this is NOT margin) ----
 ONEUP_FAVORITE_MODEL  = (-0.137308, 1.228176, 0.001221, 0.085310)  # (intercept, nextGoal, lambda, underdog)
 ONEUP_UNDERDOG_MODEL  = (0.006276, 0.909535, -0.009967, 0.094182)
-# V3 splits the 1UP cap gap favorite/underdog (mirrors 2UP) so the config
-# pattern is identical across 1UP and 2UP. (V1/V2 keep the single
-# ONEUP_MIN_GUARANTEED_REDUCTION; V3 doesn't read it.)
-ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION = 0.02
-ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION = 0.02
 
 # ---- 2UP boost (UNCHANGED from V2 — this is NOT margin) ----
 TWOUP_FAVORITE_BOOST_COEFFICIENT = 0.9
 TWOUP_UNDERDOG_BOOST_COEFFICIENT = 0.6
-TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION = 0.02
-TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION = 0.005
 TWOUP_BOOST_BLEND_ENABLED = True
+
+# ---- V3 cap reductions: PERCENT off the 1X2 ceiling, per market per side.
+# The cap (see _cap_selection) is UPSIDE-ONLY — it only pulls an UP odd DOWN
+# to source_1x2 * (1 - pct/100) when the UP odd would otherwise be LONGER;
+# an UP odd already shorter than that ceiling is left untouched. (V1/V2 keep
+# their own probability-space *_MIN_GUARANTEED_REDUCTION; V3 doesn't read them.)
+ONEUP_FAVORITE_REDUCTION_PCT = 2.0
+ONEUP_UNDERDOG_REDUCTION_PCT = 2.0
+TWOUP_FAVORITE_REDUCTION_PCT = 2.0
+TWOUP_UNDERDOG_REDUCTION_PCT = 0.5
 
 # ---- V3 margin model (logit-linear). One (level, tilt) per market
 # REPLACES all of V2's margin config. Defaults fitted from a 122k-row V2
@@ -273,62 +276,28 @@ def _favorite_strength(p_home: float, p_away: float) -> float:
 
 
 CAP_MIN_OFFERED_ODDS = 1.01
-CAP_MAX_IMPLIED_PROB = 1.0 / CAP_MIN_OFFERED_ODDS  # ≈ 0.9901
-CAP_SCALE_LOWER = 1.10
-CAP_SCALE_UPPER = 2.00
-CAP_RELATIVE_GAP_LIMIT = 0.10  # gap never exceeds 10% of source_prob
 
 
-def _scaled_probability_gap(source_odds: float, configured_gap: float) -> float:
-    """Port of SelectionCapping.scaledProbabilityGap.
-    Scales the configured gap by source-odds range:
-      source ≤ 1.10 → 0 gap (no cap on super-short favorites)
-      source ≥ 2.00 → full configured gap
-      otherwise     → linear interpolation
-    Then bounds the gap to at most RELATIVE_GAP_LIMIT × source_prob so that
-    extreme dogs (e.g. source 8.0) don't get capped so tight that the odds
-    blow up (this safeguard was added with the SelectionCapping update).
-    """
-    if source_odds <= CAP_SCALE_LOWER:
-        return 0.0
-    source_prob = 1.0 / source_odds
-    if source_odds >= CAP_SCALE_UPPER:
-        absolute_gap = configured_gap
-    else:
-        absolute_gap = configured_gap * (source_odds - CAP_SCALE_LOWER) / (CAP_SCALE_UPPER - CAP_SCALE_LOWER)
-    return min(absolute_gap, source_prob * CAP_RELATIVE_GAP_LIMIT)
+def _cap_selection(synthetic_odds, synthetic_prob, source_odds, reduction_pct):
+    """Odds-space, UPSIDE-ONLY cap.
 
-
-def _cap_selection(synthetic_odds, synthetic_prob, source_odds, source_true_prob, min_probability_gap):
-    """Port of SelectionCapping.capSelection.
-
-    Caps the synthetic odds so the implied prob is at least `source_implied_prob +
-    scaledGap`, never below offered odds 1.01. When the cap binds, the output
-    probability is bumped to `source_true_prob + scaledGap` (capped at 0.9901).
+    The offered UP odd may not be longer than the 1X2 ceiling
+    `source_odds * (1 - reduction_pct/100)`. A synthetic odd longer than the
+    ceiling is pulled DOWN to it (its prob bumped to 1/ceiling); a synthetic
+    odd already shorter than the ceiling is returned untouched — the cap never
+    lengthens odds. With no 1X2 source we only floor to the minimum offered
+    odds. (Unlike V2's probability-space SelectionCapping, this caps in odds
+    space and only on the upside.)
     """
     if synthetic_odds is None:
         return synthetic_odds, synthetic_prob
-
-    floored_odds = max(CAP_MIN_OFFERED_ODDS, synthetic_odds)
-
+    floored = max(CAP_MIN_OFFERED_ODDS, synthetic_odds)
     if source_odds is None:
-        return floored_odds, synthetic_prob
-
-    source_implied_prob = 1.0 / source_odds
-    scaled_gap = _scaled_probability_gap(source_odds, min_probability_gap)
-    target_min_prob = min(CAP_MAX_IMPLIED_PROB, source_implied_prob + scaled_gap)
-    max_allowed_odds = max(CAP_MIN_OFFERED_ODDS, 1.0 / target_min_prob)
-
-    if floored_odds <= max_allowed_odds:
-        return floored_odds, synthetic_prob
-
-    if source_true_prob is not None:
-        capped_prob = min(CAP_MAX_IMPLIED_PROB, source_true_prob + scaled_gap)
-    else:
-        capped_prob = synthetic_prob
-    return max_allowed_odds, capped_prob
-
-
+        return floored, synthetic_prob
+    ceiling = max(CAP_MIN_OFFERED_ODDS, source_odds * (1.0 - reduction_pct / 100.0))
+    if floored <= ceiling:
+        return floored, synthetic_prob
+    return ceiling, 1.0 / ceiling
 
 
 # Bit-packed hit flags. Layout mirrors EverLeadsProbability.java:
@@ -542,9 +511,9 @@ def price_early_payout_markets(
     dog_weight = 1.0 - fav_weight
     # Odds-boost is skipped near-even — no clear favorite/underdog side.
     near_even = abs(p_home - p_away) < NEAR_EVEN_THRESHOLD
-    # Per-side 1UP cap gap (favorite/underdog), mirroring the 2UP pattern.
-    oneup_home_min_red = ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION if home_is_favorite else ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION
-    oneup_away_min_red = ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION if home_is_favorite else ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION
+    # Per-side 1UP cap reduction % (favorite/underdog), mirroring the 2UP pattern.
+    oneup_home_red_pct = ONEUP_FAVORITE_REDUCTION_PCT if home_is_favorite else ONEUP_UNDERDOG_REDUCTION_PCT
+    oneup_away_red_pct = ONEUP_UNDERDOG_REDUCTION_PCT if home_is_favorite else ONEUP_FAVORITE_REDUCTION_PCT
 
     # ============== 1UP ==============
     if goal_difference == 0:
@@ -584,8 +553,8 @@ def price_early_payout_markets(
                 ONEUP_FAVORITE_ODDS_BOOST_PCT, ONEUP_UNDERDOG_ODDS_BOOST_PCT,
             )
 
-            home_1up_capped, _ = _cap_selection(home_1up_fair_odds, home_1up_prob, home_1x2_odds, p_home, oneup_home_min_red)
-            away_1up_capped, _ = _cap_selection(away_1up_fair_odds, away_1up_prob, away_1x2_odds, p_away, oneup_away_min_red)
+            home_1up_capped, _ = _cap_selection(home_1up_fair_odds, home_1up_prob, home_1x2_odds, oneup_home_red_pct)
+            away_1up_capped, _ = _cap_selection(away_1up_fair_odds, away_1up_prob, away_1x2_odds, oneup_away_red_pct)
     else:
         # ---- TRAILING-TEAM 1UP: DP-based, leading side deactivated ----
         # Probability math identical to V2; only the margin differs (V3's
@@ -612,12 +581,12 @@ def price_early_payout_markets(
         )
 
         home_1up_capped, _ = _cap_selection(
-            home_1up_fair_odds, home_1up_prob_raw, home_1x2_odds, p_home,
-            oneup_home_min_red,
+            home_1up_fair_odds, home_1up_prob_raw, home_1x2_odds,
+            oneup_home_red_pct,
         )
         away_1up_capped, _ = _cap_selection(
-            away_1up_fair_odds, away_1up_prob_raw, away_1x2_odds, p_away,
-            oneup_away_min_red,
+            away_1up_fair_odds, away_1up_prob_raw, away_1x2_odds,
+            oneup_away_red_pct,
         )
 
         # Leading side has already triggered its 1UP — deactivate.
@@ -665,11 +634,11 @@ def price_early_payout_markets(
         TWOUP_FAVORITE_ODDS_BOOST_PCT, TWOUP_UNDERDOG_ODDS_BOOST_PCT,
     )
 
-    home_min_red = TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION if home_is_favorite else TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION
-    away_min_red = TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION if home_is_favorite else TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION
+    home_red_pct = TWOUP_FAVORITE_REDUCTION_PCT if home_is_favorite else TWOUP_UNDERDOG_REDUCTION_PCT
+    away_red_pct = TWOUP_UNDERDOG_REDUCTION_PCT if home_is_favorite else TWOUP_FAVORITE_REDUCTION_PCT
 
-    home_2up_capped, _ = _cap_selection(home_2up_fair_odds, home_2up_prob_raw, home_1x2_odds, p_home, home_min_red)
-    away_2up_capped, _ = _cap_selection(away_2up_fair_odds, away_2up_prob_raw, away_1x2_odds, p_away, away_min_red)
+    home_2up_capped, _ = _cap_selection(home_2up_fair_odds, home_2up_prob_raw, home_1x2_odds, home_red_pct)
+    away_2up_capped, _ = _cap_selection(away_2up_fair_odds, away_2up_prob_raw, away_1x2_odds, away_red_pct)
 
     home_2up_prob = home_2up_prob_raw
     away_2up_prob = away_2up_prob_raw

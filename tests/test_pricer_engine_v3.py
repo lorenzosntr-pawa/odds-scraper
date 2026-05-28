@@ -104,31 +104,83 @@ def test_v3_midrange_odds_preserved_vs_v2(balanced_match):
     assert checked > 0, "no mid-range selection exercised by the fixture"
 
 
-def test_v3_oneup_min_reduction_split_defaults():
-    """V3's 1UP cap gap is split favorite/underdog (mirroring 2UP), both
-    defaulting to 0.02."""
-    assert ep_v3.ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION == 0.02
-    assert ep_v3.ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION == 0.02
+def test_v3_reduction_pct_defaults():
+    """V3's cap reductions are odds-space PERCENTS, per market per side:
+    1UP fav/dog 2.0%, 2UP fav 2.0% / dog 0.5%."""
+    assert ep_v3.ONEUP_FAVORITE_REDUCTION_PCT == 2.0
+    assert ep_v3.ONEUP_UNDERDOG_REDUCTION_PCT == 2.0
+    assert ep_v3.TWOUP_FAVORITE_REDUCTION_PCT == 2.0
+    assert ep_v3.TWOUP_UNDERDOG_REDUCTION_PCT == 0.5
 
 
-def test_v3_oneup_per_side_min_reduction_wiring(monkeypatch, strong_home_favorite):
-    """The favorite 1UP side caps with ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION
-    and the underdog side with ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION
-    (mirroring 2UP). Spy on _cap_selection to assert the per-side gap wiring
-    without depending on the cap's scaled-gap binding behaviour."""
-    monkeypatch.setattr(ep_v3, "ONEUP_FAVORITE_MIN_GUARANTEED_REDUCTION", 0.111)
-    monkeypatch.setattr(ep_v3, "ONEUP_UNDERDOG_MIN_GUARANTEED_REDUCTION", 0.222)
+def test_v3_oneup_per_side_reduction_pct_wiring(monkeypatch, strong_home_favorite):
+    """The favorite 1UP side caps with ONEUP_FAVORITE_REDUCTION_PCT and the
+    underdog side with ONEUP_UNDERDOG_REDUCTION_PCT (mirroring 2UP). Spy on
+    _cap_selection to assert the per-side reduction wiring."""
+    monkeypatch.setattr(ep_v3, "ONEUP_FAVORITE_REDUCTION_PCT", 1.11)
+    monkeypatch.setattr(ep_v3, "ONEUP_UNDERDOG_REDUCTION_PCT", 2.22)
     calls = []
     real_cap = ep_v3._cap_selection
     monkeypatch.setattr(
         ep_v3, "_cap_selection",
-        lambda so, sp, src, st, gap: (calls.append(gap), real_cap(so, sp, src, st, gap))[1],
+        lambda so, sp, src, red: (calls.append(red), real_cap(so, sp, src, red))[1],
     )
     ep_v3.price_early_payout_markets(**strong_home_favorite)
     # Code computes 1UP (home, away) before 2UP (home, away). Home is the
     # favorite in this fixture.
-    assert calls[0] == pytest.approx(0.111)  # 1UP favorite (home) gap
-    assert calls[1] == pytest.approx(0.222)  # 1UP underdog (away) gap
+    assert calls[0] == pytest.approx(1.11)  # 1UP favorite (home) reduction %
+    assert calls[1] == pytest.approx(2.22)  # 1UP underdog (away) reduction %
+
+
+def test_v3_cap_selection_odds_space_upside_only():
+    """The V3 cap is odds-space and UPSIDE-ONLY: an UP odd longer than the
+    1X2 ceiling (source * (1 - pct/100)) is pulled down to it (prob bumped
+    to 1/ceiling); an UP odd already shorter is returned untouched; with no
+    source we only floor to the minimum offered odds."""
+    # binds: 5.0 > ceiling 4.0*0.995=3.98 -> capped to 3.98
+    odds, prob = ep_v3._cap_selection(5.0, 0.18, 4.0, 0.5)
+    assert odds == pytest.approx(3.98)
+    assert prob == pytest.approx(1.0 / 3.98)
+    # already shorter than the ceiling -> untouched (no lengthening, no prob change)
+    odds, prob = ep_v3._cap_selection(3.0, 0.30, 4.0, 0.5)
+    assert odds == pytest.approx(3.0)
+    assert prob == pytest.approx(0.30)
+    # no 1X2 source -> floor only, prob unchanged
+    odds, prob = ep_v3._cap_selection(5.0, 0.18, None, 0.5)
+    assert odds == pytest.approx(5.0)
+    assert prob == pytest.approx(0.18)
+    # None synthetic passes straight through
+    assert ep_v3._cap_selection(None, None, 4.0, 0.5) == (None, None)
+    # below the offered-odds floor with no source -> floored to 1.01
+    odds, _ = ep_v3._cap_selection(1.005, 0.99, None, 0.5)
+    assert odds == pytest.approx(ep_v3.CAP_MIN_OFFERED_ODDS)
+
+
+def test_v3_cap_upside_only_on_real_path(strong_home_favorite):
+    """On the full pricing path every offered UP odd equals
+    min(fair_floored, 1X2_ceiling): longer-than-ceiling sides are capped to
+    the ceiling, shorter ones pass through unchanged. At least one side must
+    actually bind (so the cap, not just the floor, is exercised)."""
+    r = ep_v3.price_early_payout_markets(**strong_home_favorite)
+    f = strong_home_favorite  # home is the favorite
+    checks = [
+        ("market_1up", "home_fair", "home_margin", f["home_1x2_odds"], ep_v3.ONEUP_FAVORITE_REDUCTION_PCT),
+        ("market_1up", "away_fair", "away_margin", f["away_1x2_odds"], ep_v3.ONEUP_UNDERDOG_REDUCTION_PCT),
+        ("market_2up", "home_fair", "home_margin", f["home_1x2_odds"], ep_v3.TWOUP_FAVORITE_REDUCTION_PCT),
+        ("market_2up", "away_fair", "away_margin", f["away_1x2_odds"], ep_v3.TWOUP_UNDERDOG_REDUCTION_PCT),
+    ]
+    bound = 0
+    for mk, fair_k, marg_k, src, pct in checks:
+        fair, offered = r[mk][fair_k], r[mk][marg_k]
+        if fair is None or offered is None:
+            continue
+        floored = max(ep_v3.CAP_MIN_OFFERED_ODDS, fair)
+        ceiling = max(ep_v3.CAP_MIN_OFFERED_ODDS, src * (1.0 - pct / 100.0))
+        expected = floored if floored <= ceiling else ceiling
+        assert offered == pytest.approx(expected), f"{mk}.{marg_k}"
+        if floored > ceiling:
+            bound += 1
+    assert bound > 0, "expected at least one capped (bound) side"
 
 
 def test_v3_apply_boost_helper():
