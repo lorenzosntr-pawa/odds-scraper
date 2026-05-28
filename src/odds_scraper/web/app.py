@@ -509,10 +509,21 @@ def _build_event_detail(
             )
         if sim_cells and ts in bucket:
             bucket[ts]["cells"]["sim"] = sim_cells
+        sim_cells_v3: dict[str, PriceCell] = {}
+        if our["home_odds_v3"] is not None:
+            sim_cells_v3["home"] = PriceCell(
+                odds=our["home_odds_v3"], probability=our["home_prob_v3"],
+            )
+        if our["away_odds_v3"] is not None:
+            sim_cells_v3["away"] = PriceCell(
+                odds=our["away_odds_v3"], probability=our["away_prob_v3"],
+            )
+        if sim_cells_v3 and ts in bucket:
+            bucket[ts]["cells"]["sim_v3"] = sim_cells_v3
 
     show_sim_col = bool(our_by_ts) and market_id in ("1x2_1up_ft", "1x2_2up_ft")
     if show_sim_col:
-        history_books = ("betpawa", "sportybet", "sim", "bet9ja", "betway")
+        history_books = ("betpawa", "sportybet", "sim", "sim_v3", "bet9ja", "betway")
     else:
         history_books = ("betpawa", "sportybet", "bet9ja", "betway")
 

@@ -918,12 +918,36 @@ def test_event_detail_history_shows_sim_column_for_1up(db_path: Path):
     r = client.get("/events/E1?market=1x2_1up_ft")
     body = r.text
     assert 'data-bookmaker="sim"' in body
-    # Column header text — Jinja renders with surrounding whitespace
+    # The detail OUR column is now labelled "V2" (V3 sits beside it as a
+    # second OUR column). Header text — Jinja renders with surrounding whitespace.
     import re
-    assert re.search(r"<th[^>]*data-bookmaker=\"sim\"[^>]*>\s*SIM\s*</th>", body)
+    assert re.search(r"<th[^>]*data-bookmaker=\"sim\"[^>]*>\s*V2\s*</th>", body)
     assert "1.48" in body
     # Probability .66 → rendered as ".66"
     assert ".66" in body
+
+
+def test_event_detail_history_shows_v2_and_v3_columns(db_path: Path):
+    """With both v2_* and v3_* set on a 1UP pricer_live_results row, the
+    detail history renders two OUR columns: V2 and V3 (sim + sim_v3)."""
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.execute(
+        "INSERT INTO pricer_live_results "
+        "(event_id, ts_utc, basis_used, "
+        " v2_1up_home_capped, v2_1up_away_capped, v2_p_home_1, v2_p_away_1, "
+        " v3_1up_home_capped, v3_1up_away_capped, v3_p_home_1, v3_p_away_1) "
+        "VALUES ('E1', '2026-05-21T10:00:00Z', 'bp', "
+        "        1.48, 4.10, 0.66, 0.22, 1.52, 4.30, 0.63, 0.20)",
+    )
+    conn.close()
+    client = TestClient(create_app(db_path=db_path))
+    body = client.get("/events/E1?market=1x2_1up_ft").text
+    assert 'data-bookmaker="sim"' in body
+    assert 'data-bookmaker="sim_v3"' in body
+    import re
+    assert re.search(r"<th[^>]*data-bookmaker=\"sim\"[^>]*>\s*V2\s*</th>", body)
+    assert re.search(r"<th[^>]*data-bookmaker=\"sim_v3\"[^>]*>\s*V3\s*</th>", body)
+    assert "1.48" in body and "1.52" in body  # V2 and V3 home odds
 
 
 def test_event_detail_history_omits_sim_column_for_1x2_ft(db_path: Path):

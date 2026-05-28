@@ -68,8 +68,8 @@
   <div class="history-wrap">
     <div class="history-title">History — {{ event.market_label }}</div>
     {% if event.history %}
-      {% set book_label = {"betpawa":"BetPawa","sportybet":"SportyBet","bet9ja":"Bet9ja","betway":"Betway","sim":"SIM"} %}
-      {% set sim_books = ("sim",) %}
+      {% set book_label = {"betpawa":"BetPawa","sportybet":"SportyBet","bet9ja":"Bet9ja","betway":"Betway","sim":"V2","sim_v3":"V3"} %}
+      {% set sim_books = ("sim", "sim_v3") %}
       <table class="history-table">
         <thead>
           <tr>
@@ -105,7 +105,7 @@
                   <td data-bookmaker="{{ bm }}" class="num">
                     {% if p %}
                       <span class="odds{% if bm in sim_books %} sim{% endif %}">{{ "%.2f"|format(p.odds) }}</span>
-                      {% if bm in ("betpawa", "sportybet", "sim") and p.probability is not none %}
+                      {% if bm in ("betpawa", "sportybet", "sim", "sim_v3") and p.probability is not none %}
                         <span class="prob">.{{ "%02d"|format([(p.probability * 100)|round|int, 99]|min) }}</span>
                       {% endif %}
                     {% else %}<span class="text-gray-700">—</span>{% endif %}
