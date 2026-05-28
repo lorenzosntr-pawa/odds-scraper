@@ -1,0 +1,126 @@
+"""V3 engine tests. V3 is identical to V2 except the margin step: it uses
+a logit-linear (level, tilt) odds-ratio model instead of V2's additive
+slope*fair_prob + intercept. Every probability output must stay identical
+to V2; only the fair/capped odds change."""
+
+import pytest
+
+from odds_scraper.pricer import engine_v2 as ep_v2
+from odds_scraper.pricer import engine_v3 as ep_v3
+
+
+def _devig3(o1, o2, o3):
+    q1, q2, q3 = 1.0 / o1, 1.0 / o2, 1.0 / o3
+    s = q1 + q2 + q3
+    return q1 / s, q2 / s, q3 / s
+
+
+def _ou(line, over_odds, under_odds):
+    qo, qu = 1.0 / over_odds, 1.0 / under_odds
+    return (line, qo / (qo + qu))
+
+
+@pytest.fixture
+def balanced_match():
+    home_1x2, draw_1x2, away_1x2 = 2.50, 3.30, 2.80
+    ph, pd, pa = _devig3(home_1x2, draw_1x2, away_1x2)
+    return {
+        "p_home_win": ph, "p_draw": pd, "p_away_win": pa,
+        "home_1x2_odds": home_1x2, "draw_1x2_odds": draw_1x2, "away_1x2_odds": away_1x2,
+        "home_ou": [_ou(0.5, 1.30, 3.40), _ou(1.5, 2.10, 1.75)],
+        "away_ou": [_ou(0.5, 1.40, 3.00), _ou(1.5, 2.30, 1.65)],
+        "total_ou": [_ou(1.5, 1.25, 4.00), _ou(2.5, 1.85, 1.95), _ou(3.5, 3.20, 1.35)],
+        "ftts_home_prob": 0.48, "ftts_away_prob": 0.45,
+    }
+
+
+@pytest.fixture
+def strong_home_favorite():
+    """Heavy home favorite so the away 2UP prob lands below 0.10."""
+    home_1x2, draw_1x2, away_1x2 = 1.18, 7.00, 15.0
+    ph, pd, pa = _devig3(home_1x2, draw_1x2, away_1x2)
+    return {
+        "p_home_win": ph, "p_draw": pd, "p_away_win": pa,
+        "home_1x2_odds": home_1x2, "draw_1x2_odds": draw_1x2, "away_1x2_odds": away_1x2,
+        "home_ou": [_ou(1.5, 1.50, 2.50), _ou(2.5, 2.40, 1.55)],
+        "away_ou": [_ou(0.5, 2.20, 1.65), _ou(1.5, 4.50, 1.18)],
+        "total_ou": [_ou(2.5, 1.70, 2.10), _ou(3.5, 2.80, 1.42)],
+        "ftts_home_prob": 0.78, "ftts_away_prob": 0.18,
+    }
+
+
+def test_v3_probabilities_identical_to_v2(balanced_match):
+    """V3 changes ONLY the margin step — every probability output and the
+    lambdas must equal V2 exactly."""
+    r2 = ep_v2.price_early_payout_markets(**balanced_match)
+    r3 = ep_v3.price_early_payout_markets(**balanced_match)
+    for key in ("lambda_home", "lambda_away",
+                "p_home_1", "p_away_1", "p_home_2", "p_away_2"):
+        assert r3[key] == pytest.approx(r2[key]), f"{key} differs (V2={r2[key]} V3={r3[key]})"
+
+
+def test_v3_fair_prob_to_odds_always_valid():
+    """sigmoid implied prob is always in (0,1) → odds always > 1.0, never
+    None, for any p in (0,1) and any (level, tilt)."""
+    for p in (1e-6, 1e-4, 0.01, 0.05, 0.2, 0.5, 0.8, 0.95, 0.99, 0.9999, 1 - 1e-7):
+        for level, tilt in ((0.1324, 0.9922), (0.0352, 1.0030), (0.0, 1.0), (-0.2, 1.2)):
+            odds = ep_v3._fair_prob_to_odds(p, level, tilt)
+            assert odds is not None, f"None at p={p} level={level} tilt={tilt}"
+            assert odds > 1.0, f"odds={odds} <= 1.0 at p={p} level={level} tilt={tilt}"
+
+
+def test_v3_super_favorite_margin_never_overflows():
+    """V3's margin step never produces implied_prob >= 1.0 for a super-fav
+    (sigmoid is bounded) → odds stay > 1.0, no overflow/floor. V2's additive
+    1UP margin DOES overflow past 1.0 at the same high p — the bug V3 fixes."""
+    for p in (0.951, 0.96, 0.97, 0.98, 0.99, 0.999):
+        odds_v3 = ep_v3._fair_prob_to_odds(p, ep_v3.ONEUP_MARGIN_LEVEL, ep_v3.ONEUP_MARGIN_TILT)
+        implied_v3 = 1.0 / odds_v3
+        assert implied_v3 < 1.0, f"V3 overflow at p={p}: implied={implied_v3}"
+    # Contrast: V2's additive 1UP level margin overflows at p=0.99.
+    v2_implied = ep_v2.ONEUP_FAVORITE_MARGIN[0] * 0.99 + ep_v2.ONEUP_FAVORITE_MARGIN[1]
+    assert v2_implied >= 1.0, "expected V2 additive margin to overflow at p=0.99"
+
+
+def test_v3_midrange_odds_preserved_vs_v2(balanced_match):
+    """For mid-range probs (0.25<=p<=0.75) V3 fair odds stay within ~1.5%
+    of V2 — the (level, tilt) params were fit to preserve V2 there."""
+    r2 = ep_v2.price_early_payout_markets(**balanced_match)
+    r3 = ep_v3.price_early_payout_markets(**balanced_match)
+    checked = 0
+    for market, idx in (("market_1up", "1"), ("market_2up", "2")):
+        for side, prob_key in (("home_fair", "p_home_"), ("away_fair", "p_away_")):
+            prob = r2[prob_key + idx]
+            if prob is None or not (0.25 <= prob <= 0.75):
+                continue
+            v2_fair, v3_fair = r2[market][side], r3[market][side]
+            if v2_fair is None or v3_fair is None:
+                continue
+            rel = abs(v3_fair - v2_fair) / v2_fair
+            assert rel <= 0.015, (
+                f"{market}.{side} p={prob:.3f}: V2={v2_fair:.4f} V3={v3_fair:.4f} rel={rel:.3%}"
+            )
+            checked += 1
+    assert checked > 0, "no mid-range selection exercised by the fixture"
+
+
+def test_v3_low_prob_less_crush_than_v2(strong_home_favorite):
+    """For low-prob selections (p<0.10) V3 fair odds >= V2 fair odds — V2's
+    fixed intercept is a huge relative margin at the tail and crushes the
+    odds; V3's logit margin doesn't."""
+    r2 = ep_v2.price_early_payout_markets(**strong_home_favorite)
+    r3 = ep_v3.price_early_payout_markets(**strong_home_favorite)
+    checked = 0
+    for market, idx in (("market_1up", "1"), ("market_2up", "2")):
+        for side, prob_key in (("home_fair", "p_home_"), ("away_fair", "p_away_")):
+            prob = r2[prob_key + idx]
+            if prob is None or prob >= 0.10:
+                continue
+            v2_fair, v3_fair = r2[market][side], r3[market][side]
+            if v2_fair is None or v3_fair is None:
+                continue
+            assert v3_fair >= v2_fair - 1e-9, (
+                f"{market}.{side} p={prob:.3f}: V3={v3_fair:.3f} < V2={v2_fair:.3f}"
+            )
+            checked += 1
+    assert checked > 0, "no low-prob selection exercised by the fixture"

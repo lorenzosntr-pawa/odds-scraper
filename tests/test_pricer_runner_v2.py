@@ -117,6 +117,44 @@ def test_dual_runner_both_fills_v1_and_v2_blocks(db, tmp_path):
     assert rows[0]["v2_p_home_1"] != ""
 
 
+def test_dual_runner_v3_fills_v3_block(db, tmp_path):
+    """`engines=('v3',)` populates the v3_* OUR block and leaves v1/v2 blank."""
+    _seed_event_with_priced_snapshot(db, "E")
+    default = configs.load_default(db)
+    p = tmp_path / "sim" / "v3_only.csv"
+    runner_v2.run_simulation_dual(
+        db, config=default, regime="any", density="all",
+        scope=_BASE_SCOPE,
+        csv_path=p, engines=("v3",),
+    )
+    rows = _read_csv(p)
+    assert len(rows) == 1
+    assert rows[0]["engines"] == "v3"
+    assert rows[0]["v3_p_home_1"] != ""
+    assert rows[0]["v3_our_1up_home_capped"] != ""
+    # V1 and V2 cells blank when only v3 selected.
+    assert rows[0]["our_p_home_1"] == ""
+    assert rows[0]["v2_p_home_1"] == ""
+
+
+def test_dual_runner_all_three_engines(db, tmp_path):
+    """`engines=('v1','v2','v3')` fills all three OUR blocks."""
+    _seed_event_with_priced_snapshot(db, "E")
+    default = configs.load_default(db)
+    p = tmp_path / "sim" / "all3.csv"
+    runner_v2.run_simulation_dual(
+        db, config=default, regime="any", density="all",
+        scope=_BASE_SCOPE,
+        csv_path=p, engines=("v1", "v2", "v3"),
+    )
+    rows = _read_csv(p)
+    assert len(rows) == 1
+    assert rows[0]["engines"] == "v1,v2,v3"
+    assert rows[0]["our_p_home_1"] != ""
+    assert rows[0]["v2_p_home_1"] != ""
+    assert rows[0]["v3_p_home_1"] != ""
+
+
 def test_dual_runner_progress_callback_fires_start_and_end(db, tmp_path):
     _seed_event_with_priced_snapshot(db, "E")
     default = configs.load_default(db)
@@ -150,7 +188,7 @@ def test_dual_runner_rejects_unknown_engine(db, tmp_path):
             db, config=default, regime="any", density="all",
             scope=_BASE_SCOPE,
             csv_path=tmp_path / "sim" / "x.csv",
-            engines=("v3",),
+            engines=("v9",),
         )
 
 

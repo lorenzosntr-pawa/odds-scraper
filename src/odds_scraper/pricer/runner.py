@@ -259,11 +259,14 @@ def run_simulation(
     )
 
     overrides = config_mod.coefficients_to_engine_overrides(config.coefficients)
-    # V2-only tunables (e.g. ONEUP_TRAILING_*_MARGIN) live on engine_v2
-    # only; with_coefficients does getattr(engine, k) and would crash.
+    # V2-only (ONEUP_TRAILING_*_MARGIN) and V3-only (ONEUP/TWOUP_MARGIN_
+    # LEVEL/TILT) tunables live on the other engine modules; this engine
+    # doesn't define them and with_coefficients does getattr(engine, k),
+    # which would crash. Strip both before applying.
+    _skip = config_mod.V2_ONLY_TUNABLE_NAMES | config_mod.V3_ONLY_TUNABLE_NAMES
     overrides = {
         k: v for k, v in overrides.items()
-        if k not in config_mod.V2_ONLY_TUNABLE_NAMES
+        if k not in _skip
     }
     rows: list[tuple] = []
     seen_events: set[str] = set()
@@ -342,13 +345,9 @@ def run_simulation(
                         p_h2, p_a2,
                         res["market_2up"]["home_fair"], cap_2h, _ev(p_h2, cap_2h),
                         res["market_2up"]["away_fair"], cap_2a, _ev(p_a2, cap_2a),
-                        # V2 block — 16 blanks in V1-only runs.
-                        "", "",
-                        "", "", "",
-                        "", "", "",
-                        "", "",
-                        "", "", "",
-                        "", "", "",
+                        # V2 + V3 blocks — 16 blanks each in V1-only runs.
+                        *(("",) * 16),
+                        *(("",) * 16),
                         # BP — prob, odds, EV per selection.
                         bp["1up_home"][1], bp["1up_home"][0], _ev(p_h1, bp["1up_home"][0]),
                         bp["1up_away"][1], bp["1up_away"][0], _ev(p_a1, bp["1up_away"][0]),
@@ -369,9 +368,9 @@ def run_simulation(
                         bp_1x2_h, bp_1x2_d, bp_1x2_a,
                         sb_1x2_h, sb_1x2_d, sb_1x2_a,
                         cap_src_home, cap_src_away,
-                        # Profile B blocks — V1 + V2 OUR (16+16) + BP/SB
-                        # EV (4+4) = 40 blanks in single-profile runs.
-                        *((""),) * 40,
+                        # Profile B blocks — V1 + V2 + V3 OUR (16+16+16) +
+                        # BP/SB EV (4+4) = 56 blanks in single-profile runs.
+                        *((""),) * 56,
                     ))
                     seen_events.add(event_id)
             if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:

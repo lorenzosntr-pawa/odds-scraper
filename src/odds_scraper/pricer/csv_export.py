@@ -54,6 +54,16 @@ CSV_COLUMNS = (
     "v2_p_home_2", "v2_p_away_2",
     "v2_our_2up_home_fair", "v2_our_2up_home_capped", "v2_our_2up_home_capped_ev",
     "v2_our_2up_away_fair", "v2_our_2up_away_capped", "v2_our_2up_away_capped_ev",
+    # ===== V3 engine block — same layout as V2's, prefixed v3_. Blank
+    # unless V3 (or a selection including it) ran. V3 == V2 except the
+    # margin step (logit-linear (level, tilt)), so the fair/capped odds
+    # differ but the probabilities match V2. =====
+    "v3_p_home_1", "v3_p_away_1",
+    "v3_our_1up_home_fair", "v3_our_1up_home_capped", "v3_our_1up_home_capped_ev",
+    "v3_our_1up_away_fair", "v3_our_1up_away_capped", "v3_our_1up_away_capped_ev",
+    "v3_p_home_2", "v3_p_away_2",
+    "v3_our_2up_home_fair", "v3_our_2up_home_capped", "v3_our_2up_home_capped_ev",
+    "v3_our_2up_away_fair", "v3_our_2up_away_capped", "v3_our_2up_away_capped_ev",
     # BP / SB carry per-selection true prob + odds + EV. EV uses OUR
     # probability against the book's odds (`our_prob * book_odds - 1`)
     # — that's the actionable edge. The `*_p_*` column is the book's
@@ -99,6 +109,12 @@ CSV_COLUMNS = (
     "pB_v2_p_home_2", "pB_v2_p_away_2",
     "pB_v2_our_2up_home_fair", "pB_v2_our_2up_home_capped", "pB_v2_our_2up_home_capped_ev",
     "pB_v2_our_2up_away_fair", "pB_v2_our_2up_away_capped", "pB_v2_our_2up_away_capped_ev",
+    "pB_v3_p_home_1", "pB_v3_p_away_1",
+    "pB_v3_our_1up_home_fair", "pB_v3_our_1up_home_capped", "pB_v3_our_1up_home_capped_ev",
+    "pB_v3_our_1up_away_fair", "pB_v3_our_1up_away_capped", "pB_v3_our_1up_away_capped_ev",
+    "pB_v3_p_home_2", "pB_v3_p_away_2",
+    "pB_v3_our_2up_home_fair", "pB_v3_our_2up_home_capped", "pB_v3_our_2up_home_capped_ev",
+    "pB_v3_our_2up_away_fair", "pB_v3_our_2up_away_capped", "pB_v3_our_2up_away_capped_ev",
     "pB_bp_1up_home_ev", "pB_bp_1up_away_ev",
     "pB_bp_2up_home_ev", "pB_bp_2up_away_ev",
     "pB_sb_1up_home_ev", "pB_sb_1up_away_ev",

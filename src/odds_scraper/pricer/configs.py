@@ -22,6 +22,11 @@ TUNABLE_NAMES = (
     "TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION",
     "TWOUP_TRAILING_MIN_REDUCTION",
     "TWOUP_TRAILING_MAX_REDUCTION",
+    # V3-only logit-linear margin params (level, tilt) per market.
+    "ONEUP_MARGIN_LEVEL",
+    "ONEUP_MARGIN_TILT",
+    "TWOUP_MARGIN_LEVEL",
+    "TWOUP_MARGIN_TILT",
 )
 
 # Subset of TUNABLE_NAMES that only engine_v2.py defines. V1's
@@ -33,6 +38,19 @@ V2_ONLY_TUNABLE_NAMES = frozenset({
     "ONEUP_TRAILING_FAVORITE_MARGIN",
     "ONEUP_TRAILING_UNDERDOG_MARGIN",
 })
+
+# Subset that only engine_v3.py defines — same treatment as V2-only:
+# V1/V2 override blocks skip them, optional in stored profiles.
+V3_ONLY_TUNABLE_NAMES = frozenset({
+    "ONEUP_MARGIN_LEVEL",
+    "ONEUP_MARGIN_TILT",
+    "TWOUP_MARGIN_LEVEL",
+    "TWOUP_MARGIN_TILT",
+})
+
+# Tunables optional in stored profiles (backfilled from defaults on load
+# + validate) because they postdate the original schema.
+_OPTIONAL_TUNABLE_NAMES = V2_ONLY_TUNABLE_NAMES | V3_ONLY_TUNABLE_NAMES
 
 # Boolean toggles. Kept separate from TUNABLE_NAMES because they are
 # optional in stored profiles (legacy rows predate them and still need
@@ -68,6 +86,11 @@ DEFAULT_COEFFICIENTS = {
     "TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION": 0.005,
     "TWOUP_TRAILING_MIN_REDUCTION": 0.05,
     "TWOUP_TRAILING_MAX_REDUCTION": 0.25,
+    # V3 logit-linear margin params (fitted to preserve V2 mid-range odds).
+    "ONEUP_MARGIN_LEVEL": 0.1324,
+    "ONEUP_MARGIN_TILT": 0.9922,
+    "TWOUP_MARGIN_LEVEL": 0.0352,
+    "TWOUP_MARGIN_TILT": 1.0030,
     # Default flag values match Java behaviour (blends on).
     **DEFAULT_FLAGS,
 }
@@ -89,9 +112,9 @@ def _row_to_profile(row: sqlite3.Row) -> Profile:
     # branch on absence.
     for k, v in DEFAULT_FLAGS.items():
         coeffs.setdefault(k, v)
-    # V2-only tunables get the same treatment: optional in storage,
-    # backfilled from defaults on load.
-    for k in V2_ONLY_TUNABLE_NAMES:
+    # V2-only and V3-only tunables get the same treatment: optional in
+    # storage, backfilled from defaults on load.
+    for k in _OPTIONAL_TUNABLE_NAMES:
         coeffs.setdefault(k, DEFAULT_COEFFICIENTS[k])
     return Profile(
         id=row["id"],
@@ -139,16 +162,16 @@ def _validate_and_fill(coefficients: dict) -> dict:
     unknown = set(coefficients) - _ALL_NAMES
     if unknown:
         raise ValueError(f"unknown coefficient names: {sorted(unknown)}")
-    # V2-only tunables are optional (legacy profiles predate them); only
-    # the V1-shared names are required.
-    required_num = set(TUNABLE_NAMES) - V2_ONLY_TUNABLE_NAMES
+    # V2-only / V3-only tunables are optional (legacy profiles predate
+    # them); only the V1-shared names are required.
+    required_num = set(TUNABLE_NAMES) - _OPTIONAL_TUNABLE_NAMES
     missing_num = required_num - set(coefficients)
     if missing_num:
         raise ValueError(f"missing coefficient names: {sorted(missing_num)}")
     out = dict(coefficients)
     for k, v in DEFAULT_FLAGS.items():
         out.setdefault(k, v)
-    for k in V2_ONLY_TUNABLE_NAMES:
+    for k in _OPTIONAL_TUNABLE_NAMES:
         out.setdefault(k, DEFAULT_COEFFICIENTS[k])
     return out
 
