@@ -529,3 +529,29 @@ def test_our_history_returns_v2_as_primary(tmp_path: Path):
     # No v2_* keys in the output — unified interface
     assert "v2_home_odds" not in t1
     assert "v2_home_odds" not in t2
+
+
+def test_our_history_returns_v3_beside_v2(tmp_path: Path):
+    """get_our_history_for_event also surfaces the V3 columns under *_v3
+    keys, beside the V2 primary keys."""
+    db_path = tmp_path / "odds.db"
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    init_schema(conn)
+    conn.execute(
+        "INSERT INTO pricer_live_results "
+        "(event_id, ts_utc, basis_used, "
+        " v2_2up_home_capped, v2_2up_away_capped, v2_p_home_2, v2_p_away_2, "
+        " v3_2up_home_capped, v3_2up_away_capped, v3_p_home_2, v3_p_away_2) "
+        "VALUES ('E1', 'T', 'bp', 2.0, 3.0, 0.5, 0.3, 2.2, 3.3, 0.45, 0.28)",
+    )
+    conn.close()
+    conn = queries.open_ro_conn(db_path)
+    out = queries.get_our_history_for_event(conn, "E1", "1x2_2up_ft")
+    conn.close()
+    t = out["T"]
+    assert t["home_odds"] == 2.0       # V2 primary unchanged
+    assert t["home_odds_v3"] == 2.2    # V3 added
+    assert t["away_odds_v3"] == 3.3
+    assert t["home_prob_v3"] == 0.45
+    assert t["away_prob_v3"] == 0.28

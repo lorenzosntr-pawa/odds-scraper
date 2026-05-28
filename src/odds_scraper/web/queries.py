@@ -291,27 +291,35 @@ def get_our_history_for_event(
 
     Returned shape: {ts_utc: {
         "home_odds": _, "away_odds": _, "home_prob": _, "away_prob": _,
+        "home_odds_v3": _, "away_odds_v3": _, "home_prob_v3": _, "away_prob_v3": _,
     }}.
     Empty dict if the market isn't a UP market or no rows exist.
 
     V2 is the primary engine (schema v9+). For historical rows that predate V2
-    (where v2_* columns are NULL), the V1 values are used as a fallback.
+    (where v2_* columns are NULL), the V1 values are used as a fallback. The V3
+    engine (schema v10+) is surfaced beside V2 under the *_v3 keys (NULL where
+    not yet backfilled).
     """
     if market_id == "1x2_1up_ft":
         odds_h, odds_a = "our_1up_home_capped", "our_1up_away_capped"
         prob_h, prob_a = "our_p_home_1", "our_p_away_1"
         v2_odds_h, v2_odds_a = "v2_1up_home_capped", "v2_1up_away_capped"
         v2_prob_h, v2_prob_a = "v2_p_home_1", "v2_p_away_1"
+        v3_odds_h, v3_odds_a = "v3_1up_home_capped", "v3_1up_away_capped"
+        v3_prob_h, v3_prob_a = "v3_p_home_1", "v3_p_away_1"
     elif market_id == "1x2_2up_ft":
         odds_h, odds_a = "our_2up_home_capped", "our_2up_away_capped"
         prob_h, prob_a = "our_p_home_2", "our_p_away_2"
         v2_odds_h, v2_odds_a = "v2_2up_home_capped", "v2_2up_away_capped"
         v2_prob_h, v2_prob_a = "v2_p_home_2", "v2_p_away_2"
+        v3_odds_h, v3_odds_a = "v3_2up_home_capped", "v3_2up_away_capped"
+        v3_prob_h, v3_prob_a = "v3_p_home_2", "v3_p_away_2"
     else:
         return {}
     rows = conn.execute(
         f"SELECT ts_utc, {odds_h}, {odds_a}, {prob_h}, {prob_a}, "
-        f"       {v2_odds_h}, {v2_odds_a}, {v2_prob_h}, {v2_prob_a} "
+        f"       {v2_odds_h}, {v2_odds_a}, {v2_prob_h}, {v2_prob_a}, "
+        f"       {v3_odds_h}, {v3_odds_a}, {v3_prob_h}, {v3_prob_a} "
         f"FROM pricer_live_results WHERE event_id = ?",
         (event_id,),
     ).fetchall()
@@ -321,6 +329,10 @@ def get_our_history_for_event(
             "away_odds": r[v2_odds_a] if r[v2_odds_a] is not None else r[odds_a],
             "home_prob": r[v2_prob_h] if r[v2_prob_h] is not None else r[prob_h],
             "away_prob": r[v2_prob_a] if r[v2_prob_a] is not None else r[prob_a],
+            "home_odds_v3": r[v3_odds_h],
+            "away_odds_v3": r[v3_odds_a],
+            "home_prob_v3": r[v3_prob_h],
+            "away_prob_v3": r[v3_prob_a],
         }
         for r in rows
     }
