@@ -1,160 +1,237 @@
-{# Shared profile coefficient fields, organized BY ENGINE so a trader
-   knows exactly which params feed which engine. Caller sets `coeffs`
-   (a dict of current values: profile.coefficients on edit, or
-   default_coefficients on create). Every key is rendered exactly once;
-   a key shared by two engines lives in its shared section. #}
-<div class="profile-fields">
+{# Pricer-profile coefficient form, one self-contained panel PER ENGINE
+   (V1 / V2 / V3). Each panel lists every coefficient that engine reads —
+   no shared/common buckets. A coefficient used by more than one engine
+   appears in each panel it belongs to; all copies share the same form
+   `name` and a `data-k`, and the sync script at the bottom keeps them
+   identical so the single submitted value is never ambiguous.
 
-  <div class="profile-col">
-    <div class="profile-h">Common <span class="filter-lbl">(all engines)</span></div>
-    <label>1UP min guaranteed reduction
-      <input type="number" step="any" name="ONEUP_MIN_GUARANTEED_REDUCTION"
-             value="{{ coeffs['ONEUP_MIN_GUARANTEED_REDUCTION'] }}" required>
-    </label>
-    <label>2UP favorite boost coefficient
-      <input type="number" step="any" name="TWOUP_FAVORITE_BOOST_COEFFICIENT"
-             value="{{ coeffs['TWOUP_FAVORITE_BOOST_COEFFICIENT'] }}" required>
-    </label>
-    <label>2UP underdog boost coefficient
-      <input type="number" step="any" name="TWOUP_UNDERDOG_BOOST_COEFFICIENT"
-             value="{{ coeffs['TWOUP_UNDERDOG_BOOST_COEFFICIENT'] }}" required>
-    </label>
-    <label>2UP favorite min guaranteed reduction
-      <input type="number" step="any" name="TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION"
-             value="{{ coeffs['TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION'] }}" required>
-    </label>
-    <label>2UP underdog min guaranteed reduction
-      <input type="number" step="any" name="TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION"
-             value="{{ coeffs['TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION'] }}" required>
-    </label>
+   Caller sets `coeffs` (profile.coefficients on edit, default_coefficients
+   on create). #}
+
+{% macro num(name, label, value, hint="") %}
+  <div class="cfg-field">
+    <label>{{ label }}</label>
+    <input class="cfg-in" type="number" step="any" data-k="{{ name }}"
+           name="{{ name }}" value="{{ value }}" required>
+    {% if hint %}<span class="cfg-hint">{{ hint }}</span>{% endif %}
   </div>
+{% endmacro %}
 
-  <div class="profile-col">
-    <div class="profile-h">V1 &amp; V2 <span class="filter-lbl">(additive margin: slope·p + intercept)</span></div>
-    {% set o_fav = coeffs["ONEUP_FAVORITE_MARGIN"] %}
-    {% set o_dog = coeffs["ONEUP_UNDERDOG_MARGIN"] %}
-    {% set t_fav = coeffs["TWOUP_FAVORITE_MARGIN"] %}
-    {% set t_dog = coeffs["TWOUP_UNDERDOG_MARGIN"] %}
-    <div class="profile-sub">1UP level-score margin</div>
-    <label>Favorite (slope, intercept)
-      <input type="number" step="any" name="ONEUP_FAVORITE_MARGIN_slope" value="{{ o_fav[0] }}" required>
-      <input type="number" step="any" name="ONEUP_FAVORITE_MARGIN_intercept" value="{{ o_fav[1] }}" required>
-    </label>
-    <label>Underdog (slope, intercept)
-      <input type="number" step="any" name="ONEUP_UNDERDOG_MARGIN_slope" value="{{ o_dog[0] }}" required>
-      <input type="number" step="any" name="ONEUP_UNDERDOG_MARGIN_intercept" value="{{ o_dog[1] }}" required>
-    </label>
-    <div class="profile-sub">2UP margin</div>
-    <label>Favorite (slope, intercept)
-      <input type="number" step="any" name="TWOUP_FAVORITE_MARGIN_slope" value="{{ t_fav[0] }}" required>
-      <input type="number" step="any" name="TWOUP_FAVORITE_MARGIN_intercept" value="{{ t_fav[1] }}" required>
-    </label>
-    <label>Underdog (slope, intercept)
-      <input type="number" step="any" name="TWOUP_UNDERDOG_MARGIN_slope" value="{{ t_dog[0] }}" required>
-      <input type="number" step="any" name="TWOUP_UNDERDOG_MARGIN_intercept" value="{{ t_dog[1] }}" required>
-    </label>
-  </div>
-
-  <div class="profile-col">
-    <div class="profile-h">V1 only <span class="filter-lbl">(legacy trailing reductions)</span></div>
-    <label>1UP trailing reduction min
-      <input type="number" step="any" name="ONEUP_TRAILING_MIN_REDUCTION"
-             value="{{ coeffs['ONEUP_TRAILING_MIN_REDUCTION'] }}" required>
-    </label>
-    <label>1UP trailing reduction max
-      <input type="number" step="any" name="ONEUP_TRAILING_MAX_REDUCTION"
-             value="{{ coeffs['ONEUP_TRAILING_MAX_REDUCTION'] }}" required>
-    </label>
-    <label>2UP trailing reduction min
-      <input type="number" step="any" name="TWOUP_TRAILING_MIN_REDUCTION"
-             value="{{ coeffs['TWOUP_TRAILING_MIN_REDUCTION'] }}" required>
-    </label>
-    <label>2UP trailing reduction max
-      <input type="number" step="any" name="TWOUP_TRAILING_MAX_REDUCTION"
-             value="{{ coeffs['TWOUP_TRAILING_MAX_REDUCTION'] }}" required>
-    </label>
-  </div>
-
-  <div class="profile-col">
-    <div class="profile-h">V2 only <span class="filter-lbl">(trailing margin pair + margin blends)</span></div>
-    {% set tf = coeffs["ONEUP_TRAILING_FAVORITE_MARGIN"] %}
-    {% set td = coeffs["ONEUP_TRAILING_UNDERDOG_MARGIN"] %}
-    <label>1UP trailing favorite (slope, intercept)
-      <input type="number" step="any" name="ONEUP_TRAILING_FAVORITE_MARGIN_slope" value="{{ tf[0] }}" required>
-      <input type="number" step="any" name="ONEUP_TRAILING_FAVORITE_MARGIN_intercept" value="{{ tf[1] }}" required>
-    </label>
-    <label>1UP trailing underdog (slope, intercept)
-      <input type="number" step="any" name="ONEUP_TRAILING_UNDERDOG_MARGIN_slope" value="{{ td[0] }}" required>
-      <input type="number" step="any" name="ONEUP_TRAILING_UNDERDOG_MARGIN_intercept" value="{{ td[1] }}" required>
-    </label>
-    <label class="profile-flag">
-      <input type="checkbox" name="ONEUP_MARGIN_BLEND_ENABLED"
-             {% if coeffs.get("ONEUP_MARGIN_BLEND_ENABLED", True) %}checked{% endif %}>
-      1UP margin blend
-      <span class="filter-lbl">— off → fav/dog margins applied flat</span>
-    </label>
-    <label class="profile-flag">
-      <input type="checkbox" name="TWOUP_MARGIN_BLEND_ENABLED"
-             {% if coeffs.get("TWOUP_MARGIN_BLEND_ENABLED", True) %}checked{% endif %}>
-      2UP margin blend
-      <span class="filter-lbl">— same, for 2UP margins</span>
-    </label>
-  </div>
-
-  <div class="profile-col">
-    <div class="profile-h">V2 &amp; V3 <span class="filter-lbl">(shared boost blend)</span></div>
-    <label class="profile-flag">
-      <input type="checkbox" name="TWOUP_BOOST_BLEND_ENABLED"
-             {% if coeffs.get("TWOUP_BOOST_BLEND_ENABLED", True) %}checked{% endif %}>
-      2UP boost-coefficient blend
-      <span class="filter-lbl">— off → fav/dog boost coeffs applied flat</span>
-    </label>
-  </div>
-
-  <div class="profile-col">
-    <div class="profile-h">V3 only <span class="filter-lbl">(logit-linear margin)</span></div>
-    <div class="profile-sub">Logit margin (level, tilt)</div>
-    <label>1UP level
-      <input type="number" step="any" name="ONEUP_MARGIN_LEVEL"
-             value="{{ coeffs['ONEUP_MARGIN_LEVEL'] }}" required>
-    </label>
-    <label>1UP tilt
-      <input type="number" step="any" name="ONEUP_MARGIN_TILT"
-             value="{{ coeffs['ONEUP_MARGIN_TILT'] }}" required>
-    </label>
-    <label>2UP level
-      <input type="number" step="any" name="TWOUP_MARGIN_LEVEL"
-             value="{{ coeffs['TWOUP_MARGIN_LEVEL'] }}" required>
-    </label>
-    <label>2UP tilt
-      <input type="number" step="any" name="TWOUP_MARGIN_TILT"
-             value="{{ coeffs['TWOUP_MARGIN_TILT'] }}" required>
-    </label>
-    <div class="profile-sub">Odds boost % (per side)</div>
-    <label>1UP favorite boost %
-      <input type="number" step="any" name="ONEUP_FAVORITE_ODDS_BOOST_PCT"
-             value="{{ coeffs['ONEUP_FAVORITE_ODDS_BOOST_PCT'] }}" required>
-    </label>
-    <label>1UP underdog boost %
-      <input type="number" step="any" name="ONEUP_UNDERDOG_ODDS_BOOST_PCT"
-             value="{{ coeffs['ONEUP_UNDERDOG_ODDS_BOOST_PCT'] }}" required>
-    </label>
-    <label>2UP favorite boost %
-      <input type="number" step="any" name="TWOUP_FAVORITE_ODDS_BOOST_PCT"
-             value="{{ coeffs['TWOUP_FAVORITE_ODDS_BOOST_PCT'] }}" required>
-    </label>
-    <label>2UP underdog boost %
-      <input type="number" step="any" name="TWOUP_UNDERDOG_ODDS_BOOST_PCT"
-             value="{{ coeffs['TWOUP_UNDERDOG_ODDS_BOOST_PCT'] }}" required>
-    </label>
-    <label>Near-even threshold
-      <input type="number" step="any" name="NEAR_EVEN_THRESHOLD"
-             value="{{ coeffs['NEAR_EVEN_THRESHOLD'] }}" required>
-    </label>
-    <div class="filter-lbl" style="margin-top:6px;line-height:1.4">
-      level 0 = fair, &lt;0 = boost; tilt &gt;1 favors favorites;
-      boost % lengthens that side's odds (skipped near-even).
+{% macro pair(name, label, value, hint="") %}
+  <div class="cfg-field">
+    <label>{{ label }}</label>
+    <div class="cfg-pair">
+      <input class="cfg-in cfg-in-sm" type="number" step="any" data-k="{{ name }}_slope"
+             name="{{ name }}_slope" value="{{ value[0] }}" required aria-label="{{ label }} slope">
+      <span class="cfg-op">· p +</span>
+      <input class="cfg-in cfg-in-sm" type="number" step="any" data-k="{{ name }}_intercept"
+             name="{{ name }}_intercept" value="{{ value[1] }}" required aria-label="{{ label }} intercept">
     </div>
+    {% if hint %}<span class="cfg-hint">{{ hint }}</span>{% endif %}
+  </div>
+{% endmacro %}
+
+{% macro toggle(name, label, value, hint="") %}
+  <label class="cfg-toggle">
+    <input type="checkbox" data-k="{{ name }}" name="{{ name }}" {% if value %}checked{% endif %}>
+    <span class="cfg-switch"></span>
+    <span class="cfg-toggle-text">{{ label }}{% if hint %}<em>{{ hint }}</em>{% endif %}</span>
+  </label>
+{% endmacro %}
+
+<div class="cfg">
+  <div class="cfg-legend">
+    <span class="cfg-leg" data-eng="v1">V1</span>
+    <span class="cfg-leg" data-eng="v2">V2</span>
+    <span class="cfg-leg" data-eng="v3">V3</span>
+    <span class="cfg-legend-note">one box per engine — each is complete. Fields an engine shares
+      with another appear in both and stay in sync.</span>
   </div>
 
+  {# ============================== V1 ============================== #}
+  <details class="cfg-panel" data-eng="v1">
+    <summary>
+      <span class="cfg-badge">V1</span>
+      <span class="cfg-title">Original engine</span>
+      <span class="cfg-desc">additive margin + heuristic trailing reductions</span>
+    </summary>
+    <div class="cfg-subhead">1UP</div>
+    <div class="cfg-grid">
+      {{ pair("ONEUP_FAVORITE_MARGIN", "Favorite margin", coeffs["ONEUP_FAVORITE_MARGIN"]) }}
+      {{ pair("ONEUP_UNDERDOG_MARGIN", "Underdog margin", coeffs["ONEUP_UNDERDOG_MARGIN"]) }}
+      {{ num("ONEUP_MIN_GUARANTEED_REDUCTION", "Min cap gap", coeffs["ONEUP_MIN_GUARANTEED_REDUCTION"]) }}
+      {{ num("ONEUP_TRAILING_MIN_REDUCTION", "Trailing reduction min", coeffs["ONEUP_TRAILING_MIN_REDUCTION"]) }}
+      {{ num("ONEUP_TRAILING_MAX_REDUCTION", "Trailing reduction max", coeffs["ONEUP_TRAILING_MAX_REDUCTION"]) }}
+    </div>
+    <div class="cfg-subhead">2UP</div>
+    <div class="cfg-grid">
+      {{ pair("TWOUP_FAVORITE_MARGIN", "Favorite margin", coeffs["TWOUP_FAVORITE_MARGIN"]) }}
+      {{ pair("TWOUP_UNDERDOG_MARGIN", "Underdog margin", coeffs["TWOUP_UNDERDOG_MARGIN"]) }}
+      {{ num("TWOUP_FAVORITE_BOOST_COEFFICIENT", "Favorite boost coeff", coeffs["TWOUP_FAVORITE_BOOST_COEFFICIENT"]) }}
+      {{ num("TWOUP_UNDERDOG_BOOST_COEFFICIENT", "Underdog boost coeff", coeffs["TWOUP_UNDERDOG_BOOST_COEFFICIENT"]) }}
+      {{ num("TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION", "Favorite cap gap", coeffs["TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION"]) }}
+      {{ num("TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION", "Underdog cap gap", coeffs["TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION"]) }}
+      {{ num("TWOUP_TRAILING_MIN_REDUCTION", "Trailing reduction min", coeffs["TWOUP_TRAILING_MIN_REDUCTION"]) }}
+      {{ num("TWOUP_TRAILING_MAX_REDUCTION", "Trailing reduction max", coeffs["TWOUP_TRAILING_MAX_REDUCTION"]) }}
+    </div>
+    <div class="cfg-toggles">
+      {{ toggle("ONEUP_MARGIN_BLEND_ENABLED", "1UP margin blend", coeffs.get("ONEUP_MARGIN_BLEND_ENABLED", True), "off → fav/dog flat") }}
+      {{ toggle("TWOUP_MARGIN_BLEND_ENABLED", "2UP margin blend", coeffs.get("TWOUP_MARGIN_BLEND_ENABLED", True), "off → fav/dog flat") }}
+      {{ toggle("TWOUP_BOOST_BLEND_ENABLED", "2UP boost blend", coeffs.get("TWOUP_BOOST_BLEND_ENABLED", True), "off → fav/dog flat") }}
+    </div>
+  </details>
+
+  {# ============================== V2 ============================== #}
+  <details class="cfg-panel" data-eng="v2">
+    <summary>
+      <span class="cfg-badge">V2</span>
+      <span class="cfg-title">Unified-DP engine</span>
+      <span class="cfg-desc">additive margin + dedicated trailing margin pair</span>
+    </summary>
+    <div class="cfg-subhead">1UP</div>
+    <div class="cfg-grid">
+      {{ pair("ONEUP_FAVORITE_MARGIN", "Favorite margin", coeffs["ONEUP_FAVORITE_MARGIN"]) }}
+      {{ pair("ONEUP_UNDERDOG_MARGIN", "Underdog margin", coeffs["ONEUP_UNDERDOG_MARGIN"]) }}
+      {{ pair("ONEUP_TRAILING_FAVORITE_MARGIN", "Trailing favorite margin", coeffs["ONEUP_TRAILING_FAVORITE_MARGIN"]) }}
+      {{ pair("ONEUP_TRAILING_UNDERDOG_MARGIN", "Trailing underdog margin", coeffs["ONEUP_TRAILING_UNDERDOG_MARGIN"]) }}
+      {{ num("ONEUP_MIN_GUARANTEED_REDUCTION", "Min cap gap", coeffs["ONEUP_MIN_GUARANTEED_REDUCTION"]) }}
+    </div>
+    <div class="cfg-subhead">2UP</div>
+    <div class="cfg-grid">
+      {{ pair("TWOUP_FAVORITE_MARGIN", "Favorite margin", coeffs["TWOUP_FAVORITE_MARGIN"]) }}
+      {{ pair("TWOUP_UNDERDOG_MARGIN", "Underdog margin", coeffs["TWOUP_UNDERDOG_MARGIN"]) }}
+      {{ num("TWOUP_FAVORITE_BOOST_COEFFICIENT", "Favorite boost coeff", coeffs["TWOUP_FAVORITE_BOOST_COEFFICIENT"]) }}
+      {{ num("TWOUP_UNDERDOG_BOOST_COEFFICIENT", "Underdog boost coeff", coeffs["TWOUP_UNDERDOG_BOOST_COEFFICIENT"]) }}
+      {{ num("TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION", "Favorite cap gap", coeffs["TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION"]) }}
+      {{ num("TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION", "Underdog cap gap", coeffs["TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION"]) }}
+    </div>
+    <div class="cfg-toggles">
+      {{ toggle("ONEUP_MARGIN_BLEND_ENABLED", "1UP margin blend", coeffs.get("ONEUP_MARGIN_BLEND_ENABLED", True), "off → fav/dog flat") }}
+      {{ toggle("TWOUP_MARGIN_BLEND_ENABLED", "2UP margin blend", coeffs.get("TWOUP_MARGIN_BLEND_ENABLED", True), "off → fav/dog flat") }}
+      {{ toggle("TWOUP_BOOST_BLEND_ENABLED", "2UP boost blend", coeffs.get("TWOUP_BOOST_BLEND_ENABLED", True), "off → fav/dog flat") }}
+    </div>
+  </details>
+
+  {# ============================== V3 ============================== #}
+  <details class="cfg-panel" data-eng="v3" open>
+    <summary>
+      <span class="cfg-badge">V3</span>
+      <span class="cfg-title">Logit-margin engine</span>
+      <span class="cfg-desc">implied = sigmoid(level + tilt · logit p) + per-side odds boost</span>
+    </summary>
+    <div class="cfg-subhead">1UP <em>level 0 = fair, &lt;0 = giveaway · tilt &gt;1 favours favourites</em></div>
+    <div class="cfg-grid">
+      {{ num("ONEUP_MARGIN_LEVEL", "Margin level", coeffs["ONEUP_MARGIN_LEVEL"]) }}
+      {{ num("ONEUP_MARGIN_TILT", "Margin tilt", coeffs["ONEUP_MARGIN_TILT"]) }}
+      {{ num("ONEUP_FAVORITE_ODDS_BOOST_PCT", "Favorite odds boost %", coeffs["ONEUP_FAVORITE_ODDS_BOOST_PCT"]) }}
+      {{ num("ONEUP_UNDERDOG_ODDS_BOOST_PCT", "Underdog odds boost %", coeffs["ONEUP_UNDERDOG_ODDS_BOOST_PCT"]) }}
+      {{ num("ONEUP_MIN_GUARANTEED_REDUCTION", "Min cap gap", coeffs["ONEUP_MIN_GUARANTEED_REDUCTION"]) }}
+    </div>
+    <div class="cfg-subhead">2UP</div>
+    <div class="cfg-grid">
+      {{ num("TWOUP_MARGIN_LEVEL", "Margin level", coeffs["TWOUP_MARGIN_LEVEL"]) }}
+      {{ num("TWOUP_MARGIN_TILT", "Margin tilt", coeffs["TWOUP_MARGIN_TILT"]) }}
+      {{ num("TWOUP_FAVORITE_ODDS_BOOST_PCT", "Favorite odds boost %", coeffs["TWOUP_FAVORITE_ODDS_BOOST_PCT"]) }}
+      {{ num("TWOUP_UNDERDOG_ODDS_BOOST_PCT", "Underdog odds boost %", coeffs["TWOUP_UNDERDOG_ODDS_BOOST_PCT"]) }}
+      {{ num("TWOUP_FAVORITE_BOOST_COEFFICIENT", "Favorite boost coeff", coeffs["TWOUP_FAVORITE_BOOST_COEFFICIENT"]) }}
+      {{ num("TWOUP_UNDERDOG_BOOST_COEFFICIENT", "Underdog boost coeff", coeffs["TWOUP_UNDERDOG_BOOST_COEFFICIENT"]) }}
+      {{ num("TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION", "Favorite cap gap", coeffs["TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION"]) }}
+      {{ num("TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION", "Underdog cap gap", coeffs["TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION"]) }}
+    </div>
+    <div class="cfg-subhead">Global</div>
+    <div class="cfg-grid">
+      {{ num("NEAR_EVEN_THRESHOLD", "Near-even threshold", coeffs["NEAR_EVEN_THRESHOLD"], "|p_home − p_away| below this = no odds boost") }}
+    </div>
+    <div class="cfg-toggles">
+      {{ toggle("TWOUP_BOOST_BLEND_ENABLED", "2UP boost blend", coeffs.get("TWOUP_BOOST_BLEND_ENABLED", True), "off → fav/dog flat") }}
+    </div>
+  </details>
 </div>
+
+<script>
+  // Keep coefficients that several engines share consistent across panels:
+  // all copies carry the same form `name` + data-k; editing one mirrors to
+  // the rest so the single submitted value is unambiguous.
+  (function () {
+    const fields = document.querySelectorAll('.cfg [data-k]');
+    fields.forEach(function (el) {
+      const evt = el.type === 'checkbox' ? 'change' : 'input';
+      el.addEventListener(evt, function () {
+        const k = el.getAttribute('data-k');
+        document.querySelectorAll('.cfg [data-k="' + k + '"]').forEach(function (o) {
+          if (o === el) return;
+          if (el.type === 'checkbox') o.checked = el.checked;
+          else o.value = el.value;
+        });
+      });
+    });
+  })();
+</script>
+
+<style>
+  /* ===== Pricer config — per-engine control panels (terminal aesthetic) ===== */
+  .cfg { --c-v1:#60a5fa; --c-v2:#22d3ee; --c-v3:#4ade80;
+         display:flex; flex-direction:column; gap:10px; margin-top:6px; }
+
+  .cfg-legend { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:6px 2px 2px; }
+  .cfg-leg { font-size:10px; text-transform:uppercase; letter-spacing:0.06em;
+             padding:2px 9px; border-radius:999px; color:#0a0a0a; font-weight:700; }
+  .cfg-leg[data-eng="v1"]{ background:var(--c-v1); }
+  .cfg-leg[data-eng="v2"]{ background:var(--c-v2); }
+  .cfg-leg[data-eng="v3"]{ background:var(--c-v3); }
+  .cfg-legend-note { font-size:10px; color:#6b7280; margin-left:8px; font-style:italic; flex:1; min-width:200px; }
+
+  .cfg-panel { background:#0b0b0e; border:1px solid #18181d; border-left-width:3px;
+               border-radius:6px; overflow:hidden; }
+  .cfg-panel[data-eng="v1"]{ border-left-color:var(--c-v1); }
+  .cfg-panel[data-eng="v2"]{ border-left-color:var(--c-v2); }
+  .cfg-panel[data-eng="v3"]{ border-left-color:var(--c-v3); }
+
+  .cfg-panel > summary { list-style:none; cursor:pointer; user-select:none;
+      display:flex; align-items:baseline; gap:10px; padding:10px 12px;
+      background:#0e0e12; transition:background .12s ease; }
+  .cfg-panel > summary::-webkit-details-marker { display:none; }
+  .cfg-panel > summary:hover { background:#141419; }
+  .cfg-panel > summary::after { content:"▾"; margin-left:auto; color:#4b5563;
+      font-size:11px; transition:transform .15s ease; }
+  .cfg-panel:not([open]) > summary::after { transform:rotate(-90deg); }
+  .cfg-badge { font-size:10px; font-weight:700; letter-spacing:0.08em;
+      padding:2px 9px; border-radius:4px; background:#000; white-space:nowrap; }
+  .cfg-panel[data-eng="v1"] .cfg-badge{ color:var(--c-v1); border:1px solid var(--c-v1); }
+  .cfg-panel[data-eng="v2"] .cfg-badge{ color:var(--c-v2); border:1px solid var(--c-v2); }
+  .cfg-panel[data-eng="v3"] .cfg-badge{ color:var(--c-v3); border:1px solid var(--c-v3); }
+  .cfg-title { color:#f3f4f6; font-size:13px; font-weight:600; }
+  .cfg-desc { color:#6b7280; font-size:10px; }
+
+  .cfg-subhead { padding:11px 12px 0; color:#9ca3af; font-size:10px;
+      text-transform:uppercase; letter-spacing:0.07em; font-weight:600; }
+  .cfg-subhead em { color:#6b7280; font-style:normal; text-transform:none;
+      letter-spacing:0; font-weight:400; margin-left:8px; }
+  .cfg-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr));
+      gap:10px 18px; padding:8px 12px 4px; }
+
+  .cfg-field { display:flex; flex-direction:column; gap:3px; }
+  .cfg-field label { color:#cbd5e1; font-size:11px; }
+  .cfg-in { background:#050507; border:1px solid #23232b; border-radius:4px;
+      color:#e5e7eb; padding:5px 8px; font-family:ui-monospace, monospace;
+      font-size:12px; width:100%; transition:border-color .12s ease, box-shadow .12s ease; }
+  .cfg-in:focus { outline:none; border-color:#4ade80; box-shadow:0 0 0 2px rgba(74,222,128,0.12); }
+  .cfg-in:hover { border-color:#2f2f38; }
+  .cfg-pair { display:flex; align-items:center; gap:6px; }
+  .cfg-in-sm { width:72px; flex:0 0 auto; text-align:right; }
+  .cfg-op { color:#6b7280; font-size:11px; white-space:nowrap; }
+  .cfg-hint { color:#6b7280; font-size:10px; line-height:1.35; }
+
+  .cfg-toggles { display:flex; flex-wrap:wrap; gap:10px 24px; padding:12px; }
+  .cfg-toggle { display:flex; align-items:center; gap:9px; cursor:pointer; }
+  .cfg-toggle input { position:absolute; opacity:0; width:0; height:0; }
+  .cfg-switch { position:relative; flex:0 0 auto; width:34px; height:18px;
+      background:#23232b; border-radius:999px; transition:background .15s ease; }
+  .cfg-switch::after { content:""; position:absolute; top:2px; left:2px; width:14px; height:14px;
+      border-radius:50%; background:#6b7280; transition:transform .15s ease, background .15s ease; }
+  .cfg-toggle input:checked + .cfg-switch { background:#143a23; }
+  .cfg-toggle input:checked + .cfg-switch::after { transform:translateX(16px); background:#4ade80; }
+  .cfg-toggle input:focus-visible + .cfg-switch { box-shadow:0 0 0 2px rgba(74,222,128,0.25); }
+  .cfg-toggle-text { color:#cbd5e1; font-size:11px; }
+  .cfg-toggle-text em { color:#6b7280; font-style:normal; margin-left:5px; }
+</style>
