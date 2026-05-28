@@ -56,6 +56,21 @@ def test_init_schema_is_idempotent(conn):
     assert rows[0][0] == SCHEMA_VERSION
 
 
+def test_v10_adds_v3_columns(conn):
+    init_schema(conn)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(pricer_live_results)").fetchall()}
+    for c in (
+        "v3_p_home_1", "v3_p_away_1",
+        "v3_1up_home_fair", "v3_1up_home_capped",
+        "v3_1up_away_fair", "v3_1up_away_capped",
+        "v3_p_home_2", "v3_p_away_2",
+        "v3_2up_home_fair", "v3_2up_home_capped",
+        "v3_2up_away_fair", "v3_2up_away_capped",
+    ):
+        assert c in cols, f"missing {c}"
+    assert SCHEMA_VERSION >= 10
+
+
 def test_v2_adds_country_and_league_columns(conn):
     init_schema(conn)
     cols = {r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()}

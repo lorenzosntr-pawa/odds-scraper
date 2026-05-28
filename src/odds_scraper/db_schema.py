@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import Callable
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _BASE_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -257,6 +257,24 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
         ("v2_2up_home_capped", "REAL"),
         ("v2_2up_away_fair",   "REAL"),
         ("v2_2up_away_capped", "REAL"),
+    ]),
+    # v10: per-tick V3 engine output beside V2. live_writer writes both
+    # every tick; backfill_v3 fills existing rows. Nullable so pre-v10
+    # rows keep loading until backfilled. Lambdas/basis are shared (V3's
+    # lambda derivation is identical to V2's) so they are not duplicated.
+    10: lambda conn: _add_columns_if_missing(conn, "pricer_live_results", [
+        ("v3_p_home_1",        "REAL"),
+        ("v3_p_away_1",        "REAL"),
+        ("v3_1up_home_fair",   "REAL"),
+        ("v3_1up_home_capped", "REAL"),
+        ("v3_1up_away_fair",   "REAL"),
+        ("v3_1up_away_capped", "REAL"),
+        ("v3_p_home_2",        "REAL"),
+        ("v3_p_away_2",        "REAL"),
+        ("v3_2up_home_fair",   "REAL"),
+        ("v3_2up_home_capped", "REAL"),
+        ("v3_2up_away_fair",   "REAL"),
+        ("v3_2up_away_capped", "REAL"),
     ]),
 }
 
