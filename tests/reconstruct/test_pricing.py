@@ -179,3 +179,22 @@ def test_moments_no_ftts_when_active_line_absent():
     ]
     m = list(pricing.moments_from_rows(rows))[0]
     assert m["ftts_home"] is None and m["ftts_away"] is None
+
+
+def test_run_pricing_tracks_max_lead_across_event_moments():
+    # Two live moments for one event: 1-0 then 1-1. At 1-1 the engine must
+    # know home previously led by 1 (max_home_lead=1) for correct 1UP deactivation.
+    base = dict(event_id="E1", sr_id="s", brand="ng", event_name="A vs B",
+                sr_start_time="2026-05-01 18:00:00", in_play=True,
+                total_ou=[(2.5, 0.55)], home_ou=[(1.5, 0.5)], away_ou=[(1.5, 0.45)],
+                ftts_home=0.45, ftts_away=0.40, max_input_staleness_seconds=50,
+                p_home_raw=0.5, p_draw_raw=0.3, p_away_raw=0.4)
+    m1 = {**base, "moment_ts": "2026-05-01 18:20:00", "home_score": 1, "away_score": 0}
+    m2 = {**base, "moment_ts": "2026-05-01 18:40:00", "home_score": 1, "away_score": 1}
+    restore = pricing.install_dp_cache()
+    try:
+        rows = list(pricing.run_pricing([m1, m2], run_ts="2026-05-29 00:00:00"))
+    finally:
+        restore()
+    assert len(rows) == 2
+    assert all(r["run_ts"] == "2026-05-29 00:00:00" for r in rows)

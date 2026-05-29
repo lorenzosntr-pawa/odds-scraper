@@ -246,3 +246,22 @@ def _parse_ts(s):
     if isinstance(s, datetime):
         return s
     return datetime.strptime(str(s)[:19], _TS_FMT)
+
+
+def run_pricing(moments_iter, *, run_ts: str):
+    """Price a stream of moments, tracking per-event max lead so live
+    deactivation is history-aware across the moments we observed. Moments must
+    be grouped by event_id contiguously (extraction SQL ORDER BY guarantees
+    it). Yields output rows (skips None)."""
+    cur_event = object()
+    max_h = max_a = 0
+    for m in moments_iter:
+        if m["event_id"] != cur_event:
+            cur_event, max_h, max_a = m["event_id"], 0, 0
+        diff = int(m["home_score"]) - int(m["away_score"])
+        max_h = max(max_h, diff)
+        max_a = max(max_a, -diff)
+        row = price_moment(m, run_ts=run_ts,
+                           max_home_lead=max_h, max_away_lead=max_a)
+        if row is not None:
+            yield row
