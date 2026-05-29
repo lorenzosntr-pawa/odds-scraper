@@ -96,7 +96,12 @@ Flags:
   as 0-0. Prematch is always correct regardless.
 - `--brand` — restrict to one brand. The source duplicates each event across ~13 brands,
   and `true_proba` is brand-independent, so **one brand is already a complete set of
-  reconstructed odds**. Recommended (it's ~1/13th of 250M rows).
+  reconstructed odds**.
+- `--aggregate-brands` — pool **all** brands per event into one denser timeline (don't
+  combine with `--brand`). Because `true_proba` is identical across brands, this just
+  samples the same signal at more timestamps → **more moments at higher confidence**
+  (the 1X2 anchor finds closer O/U / next-goal captures). Output rows are tagged
+  `brand='ALL'`. Preferred for generating the sim's odds set.
 - `--limit` — cap rows scanned (smoke runs only).
 - `--recreate` — drop + recreate the output table first. Use it the first time, or after
   any schema change.
@@ -141,8 +146,11 @@ Column groups:
 
 **How a moment is built (carry-forward):** 1X2, O/U, and next-goal are captured at
 slightly different times. We read rows in time order per (brand, event, prematch/live,
-**score**), keep the latest value of each market/line/selection, and whenever a full 1X2
-is on hand at a timestamp we emit a moment using the freshest value of everything.
+**score**), keep the latest value of each market/line/selection, and emit a moment **at
+each timestamp where a 1X2 was captured** — using the freshest carried O/U / next-goal.
+Anchoring on the 1X2 snapshot mirrors the sim: a 1UP/2UP bet replaces a 1X2 bet placed
+at that moment, so we price at the times a 1X2 was actually offered (not at O/U-only
+timestamps).
 
 **Score consistency:** the carry-forward is segmented by **score**, so a moment never
 mixes inputs captured at different scores (e.g. a 0-0 1X2 won't be carried into a 2-0

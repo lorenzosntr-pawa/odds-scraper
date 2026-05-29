@@ -207,10 +207,27 @@ def test_moments_no_ftts_when_active_line_absent():
     assert m["ftts_home"] is None and m["ftts_away"] is None
 
 
-def test_moments_carry_forward_across_timestamps():
-    # 1X2 captured at T1; an O/U arrives later at T2 with no 1X2 row. The
-    # carried 1X2 must still produce a moment at T2 with the new O/U, and the
-    # T2 moment's staleness must reflect the older 1X2 capture.
+def test_moments_carry_forward_anchored_on_1x2():
+    # O/U captured at T1; the 1X2 arrives later at T2. We emit only at the 1X2
+    # snapshot (T2), carrying the older O/U forward — and the moment's staleness
+    # reflects that the O/U is 30 min old. An O/U-only timestamp (T1) yields no
+    # moment (it was never a 1X2 bet moment).
+    rows = [
+        _row(c.MARKET_OU_TOTAL, c.SEL_OVER, 0.55, line=2.5, ts="2026-05-01 17:00:00"),
+        _row(c.MARKET_1X2, c.SEL_HOME, 0.5, ts="2026-05-01 17:30:00"),
+        _row(c.MARKET_1X2, c.SEL_DRAW, 0.3, ts="2026-05-01 17:30:00"),
+        _row(c.MARKET_1X2, c.SEL_AWAY, 0.4, ts="2026-05-01 17:30:00"),
+    ]
+    moments = list(pricing.moments_from_rows(rows))
+    assert len(moments) == 1                              # only the 1X2 ts emits
+    m = moments[0]
+    assert m["moment_ts"] == "2026-05-01 17:30:00"
+    assert m["total_ou"] == [(2.5, 0.55)]                 # O/U carried forward
+    assert m["max_input_staleness_seconds"] == 1800       # O/U is 30 min stale
+
+
+def test_moments_no_emit_at_ou_only_timestamp():
+    # A full 1X2 then a later O/U-only update: no second moment (not a 1X2 ts).
     rows = [
         _row(c.MARKET_1X2, c.SEL_HOME, 0.5, ts="2026-05-01 17:00:00"),
         _row(c.MARKET_1X2, c.SEL_DRAW, 0.3, ts="2026-05-01 17:00:00"),
@@ -218,12 +235,23 @@ def test_moments_carry_forward_across_timestamps():
         _row(c.MARKET_OU_TOTAL, c.SEL_OVER, 0.55, line=2.5, ts="2026-05-01 17:30:00"),
     ]
     moments = list(pricing.moments_from_rows(rows))
-    assert len(moments) == 2
-    first, second = moments
-    assert first["moment_ts"] == "2026-05-01 17:00:00" and first["total_ou"] == []
-    assert second["moment_ts"] == "2026-05-01 17:30:00"
-    assert second["total_ou"] == [(2.5, 0.55)]           # O/U carried in at T2
-    assert second["max_input_staleness_seconds"] == 1800  # 1X2 is 30 min stale
+    assert [m["moment_ts"] for m in moments] == ["2026-05-01 17:00:00"]
+
+
+def test_moments_aggregate_brands_pools_and_tags_all():
+    # Same event, two brands: O/U from one brand, 1X2 from another at a later
+    # ts. Aggregated, the O/U carries into the 1X2-anchored moment, tagged ALL.
+    rows = [
+        {**_row(c.MARKET_OU_TOTAL, c.SEL_OVER, 0.55, line=2.5,
+                ts="2026-05-01 17:00:00"), "brand": "ng"},
+        {**_row(c.MARKET_1X2, c.SEL_HOME, 0.5, ts="2026-05-01 17:10:00"), "brand": "other"},
+        {**_row(c.MARKET_1X2, c.SEL_DRAW, 0.3, ts="2026-05-01 17:10:00"), "brand": "other"},
+        {**_row(c.MARKET_1X2, c.SEL_AWAY, 0.4, ts="2026-05-01 17:10:00"), "brand": "other"},
+    ]
+    moments = list(pricing.moments_from_rows(rows, aggregate_brands=True))
+    assert len(moments) == 1
+    assert moments[0]["brand"] == "ALL"
+    assert moments[0]["total_ou"] == [(2.5, 0.55)]        # pooled across brands
 
 
 def test_moments_reset_state_between_events():

@@ -25,8 +25,11 @@ def main() -> None:
     ap.add_argument("--run-ts", required=True,
                     help="run identifier timestamp 'YYYY-MM-DD HH:MM:SS'")
     ap.add_argument("--brand", default=None,
-                    help="restrict to one brand (e.g. betpawa-ghana); recommended "
-                         "for a first run — the source duplicates events across ~13 brands")
+                    help="restrict to one brand (e.g. betpawa-ghana)")
+    ap.add_argument("--aggregate-brands", action="store_true",
+                    help="pool ALL brands per event into one denser timeline "
+                         "(true_proba is brand-independent) — more moments at higher "
+                         "confidence; output rows are tagged brand='ALL'")
     ap.add_argument("--sample-mod", type=int, default=None,
                     help="representative smoke: keep ~1/N of events (whole events) "
                          "spread across the id range, e.g. --sample-mod 200. "
@@ -60,7 +63,10 @@ def main() -> None:
     valid = {"v3", "v4"}
     if not engines or set(engines) - valid:
         ap.error(f"--engines must be a comma list from {sorted(valid)}; got {args.engines!r}")
-    print(f"engines: {', '.join(engines)}", flush=True)
+    if args.aggregate_brands and args.brand:
+        ap.error("--aggregate-brands pools all brands; do not also pass --brand")
+    print(f"engines: {', '.join(engines)}"
+          f"{' | aggregating brands' if args.aggregate_brands else ''}", flush=True)
 
     client = chio.connect()
     if args.mode != "prematch":
@@ -95,9 +101,11 @@ def main() -> None:
 
         sql = queries.extraction_sql(args.source, brand=args.brand,
                                      in_play=in_play, sample_mod=args.sample_mod,
-                                     limit=args.limit)
+                                     limit=args.limit,
+                                     aggregate_brands=args.aggregate_brands)
         rows_stream = _counting_scan(chio.stream_rows(client, sql))
-        moments = pricing.moments_from_rows(rows_stream)
+        moments = pricing.moments_from_rows(rows_stream,
+                                            aggregate_brands=args.aggregate_brands)
         priced = pricing.run_pricing(moments, run_ts=args.run_ts, engines=engines)
 
         def _accounting(it):

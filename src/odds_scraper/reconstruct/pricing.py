@@ -271,19 +271,29 @@ def _emit_moment(state: "_CarryState", meta: dict, score, dt, ts_str):
     }
 
 
-def moments_from_rows(rows):
+def moments_from_rows(rows, *, aggregate_brands: bool = False):
     """Carry-forward alignment. Stream raw selection rows (one per
-    market/line/selection/timestamp) ordered by (brand, event_id, in_play,
-    odds_timestamp) and emit one Moment per distinct timestamp at which a full
-    1X2 triple has been seen, using the latest carried value of every other
-    series.
+    market/line/selection/timestamp) and emit one Moment per distinct timestamp
+    at which a full 1X2 triple has been seen, using the latest carried value of
+    every other series.
 
-    State resets at each (brand, event_id, in_play, score) boundary. brand is
-    in the key because the source duplicates each event across brands; **score
-    is in the key so inputs are never mixed across a goal** — carrying a 0-0
-    1X2 or O/U line into a 2-0 moment would feed the engine inconsistent odds.
-    Score is component-wise non-decreasing over time, so score-states stay
-    contiguous in the (…, odds_timestamp) ordering.
+    State resets at each (event_id, in_play, score) boundary — plus brand
+    unless `aggregate_brands`. **score is in the key so inputs are never mixed
+    across a goal** (carrying a 0-0 1X2 into a 2-0 moment would feed the engine
+    inconsistent odds); score is component-wise non-decreasing over time so
+    score-states stay contiguous in time order.
+
+    `aggregate_brands` pools every brand's captures for an event into one
+    denser timeline (valid because true_proba is brand-independent), yielding
+    fresher inputs / more moments; emitted rows are tagged brand="ALL". The
+    rows must then be ordered (event_id, in_play, odds_timestamp); otherwise
+    (brand, event_id, in_play, odds_timestamp).
+
+    A moment is emitted only at a timestamp where a 1X2 was actually captured
+    (the freshest carried O/U / next-goal fill it in). This mirrors the sim:
+    a 1UP/2UP bet stands in for a 1X2 bet placed at that moment, so we price at
+    the 1X2 snapshot times — not at O/U-only timestamps that were never 1X2
+    bet moments.
 
     Each row must have: event_id, sr_id, brand, event_name, sr_start_time,
     in_play, ts, home_score, away_score, market_name, line, selection_name,
@@ -293,15 +303,19 @@ def moments_from_rows(rows):
     meta = None
     score = (0, 0)
     cur_dt = cur_ts_str = None
+    x12_at_cur_ts = False       # did a 1X2 row arrive at the ts we're accumulating?
 
     for r in rows:
         r_score = (int(r["home_score"]), int(r["away_score"]))
-        block = (r["brand"], r["event_id"], r["in_play"], r_score)
+        if aggregate_brands:
+            block = (r["event_id"], r["in_play"], r_score)
+        else:
+            block = (r["brand"], r["event_id"], r["in_play"], r_score)
         dt, ts_str = _ts_pair(r["ts"])
         new_block = block != cur_block
         new_ts = new_block or cur_ts_str is None or ts_str != cur_ts_str
 
-        if new_ts and state is not None:
+        if new_ts and state is not None and x12_at_cur_ts:
             m = _emit_moment(state, meta, score, cur_dt, cur_ts_str)
             if m is not None:
                 yield m
@@ -310,14 +324,19 @@ def moments_from_rows(rows):
             cur_block = block
             state = _CarryState()
             meta = {k: r[k] for k in _META_KEYS}
+            if aggregate_brands:
+                meta["brand"] = "ALL"
             score = r_score
         if new_ts:
             cur_dt, cur_ts_str = dt, ts_str
+            x12_at_cur_ts = False
 
         state.update(r["market_name"], _to_line(r["line"]),
                      r["selection_name"], r["true_proba"], dt)
+        if r["market_name"] == MARKET_1X2:
+            x12_at_cur_ts = True
 
-    if state is not None:
+    if state is not None and x12_at_cur_ts:
         m = _emit_moment(state, meta, score, cur_dt, cur_ts_str)
         if m is not None:
             yield m

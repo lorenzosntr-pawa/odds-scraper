@@ -38,7 +38,7 @@ def _check_ident(name: str) -> str:
 
 def extraction_sql(source_table: str, *, brand: str | None = None,
                    in_play: int | None = None, sample_mod: int | None = None,
-                   limit: int | None = None) -> str:
+                   limit: int | None = None, aggregate_brands: bool = False) -> str:
     """Return one row per (selection, timestamp) for every relevant market,
     ordered by (brand, event_id, in_play, odds_timestamp) so the Python
     carry-forward reducer sees each (brand, event)'s prematch then live
@@ -65,13 +65,19 @@ def extraction_sql(source_table: str, *, brand: str | None = None,
         if int(sample_mod) < 1:
             raise ValueError("sample_mod must be >= 1")
         where.append(f"cityHash64(event_id) % {int(sample_mod)} = 0")
+    # Aggregate mode pools all brands (true_proba is brand-independent), so we
+    # order by event first (not brand) — every brand's captures for an event
+    # interleave by time, densifying the timeline. Otherwise brand leads so the
+    # reducer keeps each brand's stream separate.
+    order_by = ("event_id, in_play, odds_timestamp" if aggregate_brands
+                else "brand, event_id, in_play, odds_timestamp")
     sql = f"""
 SELECT event_id, sr_id, brand, event_name, sr_start_time, in_play,
        odds_timestamp AS ts, home_score, away_score,
        market_name, handicap / 4.0 AS line, selection_name, true_proba
 FROM {source_table}
 WHERE {' AND '.join(where)}
-ORDER BY brand, event_id, in_play, odds_timestamp
+ORDER BY {order_by}
 """
     if limit is not None:
         sql = sql.rstrip() + f"\nLIMIT {int(limit)}\n"
