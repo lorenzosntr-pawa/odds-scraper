@@ -15,12 +15,12 @@ from odds_scraper.pricer import configs as config_mod, runner, runner_v2
 
 
 # The simulator page submits zero or more `engine` checkbox values, each
-# one of runner_v2.VALID_ENGINES ("v1"/"v2"/"v3"). We normalise to canonical
-# (v1, v2, v3) order so CSV columns and the run-history string are stable
-# regardless of checkbox order. Empty selection falls back to the latest
-# engine. A lone "v1" with no profile B stays on the lean pre-V2 runner
+# one of runner_v2.VALID_ENGINES ("v1"/"v2"/"v3"/"v4"). We normalise to
+# canonical (v1, v2, v3, v4) order so CSV columns and the run-history string
+# are stable regardless of checkbox order. Empty selection falls back to the
+# latest engine. A lone "v1" with no profile B stays on the lean pre-V2 runner
 # (byte-identical layout); anything else routes through the dual runner.
-LATEST_ENGINE = "v3"
+LATEST_ENGINE = "v4"
 
 from . import queries
 
