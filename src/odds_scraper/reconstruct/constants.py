@@ -11,14 +11,19 @@ MARKET_1X2 = "1X2 - FT"
 MARKET_OU_TOTAL = "Total Score Over/Under - FT"
 MARKET_OU_HOME = "Total Score Over/Under - FT - Home Team"
 MARKET_OU_AWAY = "Total Score Over/Under - FT - Away Team"
-# Next-goal market name is "{n} Goal" with handicap = n*4 (handicap/4.0 == n).
+# The next-goal market name is the LITERAL template string "{handicap} Goal"
+# (braces included); the goal number lives in the `handicap` column, so
+# handicap/4.0 gives the goal index (handicap 4 -> goal #1, the prematch next goal).
+MARKET_NEXT_GOAL = "{handicap} Goal"
 
 OU_MARKETS = (MARKET_OU_TOTAL, MARKET_OU_HOME, MARKET_OU_AWAY)
 
-# --- selection labels (verify against live table) ---
-SEL_HOME, SEL_DRAW, SEL_AWAY = "Home", "Draw", "Away"
+# --- selection labels (as spelled in the table) ---
+# 1X2 (and next-goal team sides) use "1"/"X"/"2"; O/U uses "Over"/"Under";
+# next-goal no-goal is "None".
+SEL_HOME, SEL_DRAW, SEL_AWAY = "1", "X", "2"
 SEL_OVER, SEL_UNDER = "Over", "Under"
-SEL_NG_HOME, SEL_NG_AWAY, SEL_NG_NONE = "Home", "Away", "None"
+SEL_NG_HOME, SEL_NG_AWAY, SEL_NG_NONE = "1", "2", "None"
 
 # --- tunables ---
 CAP_MARGIN = 0.02          # flat brand-neutral margin baked into cap reference odds

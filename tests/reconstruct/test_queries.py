@@ -1,3 +1,5 @@
+import pytest
+
 from odds_scraper.reconstruct import queries
 from odds_scraper.reconstruct import constants as c
 
@@ -8,17 +10,27 @@ def test_extraction_sql_mentions_source_and_markets():
     assert c.MARKET_1X2 in sql
     assert "handicap / 4.0" in sql or "handicap/4.0" in sql
     assert "true_proba" in sql
-    # single ordered scan for the Python carry-forward reducer (no SQL join)
-    assert "ORDER BY event_id, in_play, odds_timestamp" in sql
+    # single ordered scan, brand-first so brands don't interleave (no SQL join)
+    assert "ORDER BY brand, event_id, in_play, odds_timestamp" in sql
     assert "JOIN" not in sql.upper()
-    # next-goal markets matched by the "{n} Goal" pattern, not a fixed handicap
-    assert "Goal" in sql
+    # next-goal market is the literal "{handicap} Goal" template string
+    assert "{handicap} Goal" in sql
+
+
+def test_extraction_sql_brand_and_limit():
+    sql = queries.extraction_sql("bi_Samuel.tbl_x", brand="betpawa-ghana", limit=5000)
+    assert "brand = 'betpawa-ghana'" in sql
+    assert "LIMIT 5000" in sql
 
 
 def test_extraction_sql_rejects_unsafe_table_name():
-    import pytest
     with pytest.raises(ValueError):
         queries.extraction_sql("bad; DROP TABLE x")
+
+
+def test_extraction_sql_rejects_unsafe_brand():
+    with pytest.raises(ValueError):
+        queries.extraction_sql("bi_Samuel.tbl_x", brand="x'; DROP")
 
 
 def test_output_ddl_targets_table_and_lists_columns():

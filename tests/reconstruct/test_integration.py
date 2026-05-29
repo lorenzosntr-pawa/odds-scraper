@@ -23,11 +23,11 @@ def test_source_vocabulary_matches_constants():
         f"SELECT DISTINCT market_name FROM {SOURCE} LIMIT 200").result_rows}
     assert c.MARKET_1X2 in names
     assert c.MARKET_OU_TOTAL in names
-    # at least one "{n} Goal" next-goal market exists
-    assert any(n.endswith(" Goal") and n[:-5].isdigit() for n in names)
+    # the next-goal market is the literal "{handicap} Goal" template string
+    assert c.MARKET_NEXT_GOAL in names
     sels = {r[0] for r in client.query(
         f"SELECT DISTINCT selection_name FROM {SOURCE} "
-        f"WHERE market_name LIKE '% Goal' LIMIT 50").result_rows}
+        f"WHERE market_name = '{c.MARKET_NEXT_GOAL}' LIMIT 50").result_rows}
     assert {c.SEL_NG_HOME, c.SEL_NG_AWAY, c.SEL_NG_NONE} <= sels
 
 

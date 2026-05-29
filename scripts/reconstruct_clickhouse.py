@@ -24,6 +24,11 @@ def main() -> None:
     ap.add_argument("--report", required=True)
     ap.add_argument("--run-ts", required=True,
                     help="run identifier timestamp 'YYYY-MM-DD HH:MM:SS'")
+    ap.add_argument("--brand", default=None,
+                    help="restrict to one brand (e.g. betpawa-ghana); recommended "
+                         "for a first run — the source duplicates events across ~13 brands")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="cap total source rows scanned (smoke run)")
     ap.add_argument("--batch-size", type=int, default=10_000)
     args = ap.parse_args()
 
@@ -38,10 +43,13 @@ def main() -> None:
             nonlocal n_scanned
             for r in it:
                 n_scanned += 1
+                if n_scanned % 1_000_000 == 0:
+                    print(f"  ...scanned {n_scanned:,} source rows, "
+                          f"emitted {n_out:,} priced rows", flush=True)
                 yield r
 
-        rows_stream = _counting_scan(
-            chio.stream_rows(client, queries.extraction_sql(args.source)))
+        sql = queries.extraction_sql(args.source, brand=args.brand, limit=args.limit)
+        rows_stream = _counting_scan(chio.stream_rows(client, sql))
         moments = pricing.moments_from_rows(rows_stream)
         priced = pricing.run_pricing(moments, run_ts=args.run_ts)
 
@@ -60,6 +68,8 @@ def main() -> None:
                     "renorm_drift": row["renorm_drift"]})
                 yield row
 
+        print(f"streaming source{' (brand=' + args.brand + ')' if args.brand else ''}"
+              f"{' limit=' + str(args.limit) if args.limit else ''} ...", flush=True)
         inserted = chio.insert_rows(client, args.output, _accounting(priced),
                                     columns=c.OUTPUT_COLUMNS,
                                     batch_size=args.batch_size)

@@ -137,13 +137,13 @@ def _row(market, sel, proba, line=0.0, ts="2026-05-01 17:30:00",
 
 def test_moments_from_rows_builds_one_moment_per_timestamp():
     rows = [
-        _row(c.MARKET_1X2, "Home", 0.5),
-        _row(c.MARKET_1X2, "Draw", 0.3),
-        _row(c.MARKET_1X2, "Away", 0.4),
-        _row(c.MARKET_OU_TOTAL, "Over", 0.55, line=2.5),
-        _row("1 Goal", "Home", 0.46, line=1.0),
-        _row("1 Goal", "Away", 0.40, line=1.0),
-        _row("1 Goal", "None", 0.14, line=1.0),
+        _row(c.MARKET_1X2, c.SEL_HOME, 0.5),
+        _row(c.MARKET_1X2, c.SEL_DRAW, 0.3),
+        _row(c.MARKET_1X2, c.SEL_AWAY, 0.4),
+        _row(c.MARKET_OU_TOTAL, c.SEL_OVER, 0.55, line=2.5),
+        _row(c.MARKET_NEXT_GOAL, c.SEL_NG_HOME, 0.46, line=1.0),
+        _row(c.MARKET_NEXT_GOAL, c.SEL_NG_AWAY, 0.40, line=1.0),
+        _row(c.MARKET_NEXT_GOAL, c.SEL_NG_NONE, 0.14, line=1.0),
     ]
     moments = list(pricing.moments_from_rows(rows))
     assert len(moments) == 1
@@ -154,16 +154,16 @@ def test_moments_from_rows_builds_one_moment_per_timestamp():
 
 
 def test_moments_active_next_goal_line_follows_score():
-    # 1-1 -> active next goal is line #3; line #1 must be ignored for ftts
+    # 1-1 -> active next goal is line #3 (handicap/4=3); line #1 ignored for ftts
     rows = [
-        _row(c.MARKET_1X2, "Home", 0.5, in_play=True, hs=1, as_=1),
-        _row(c.MARKET_1X2, "Draw", 0.3, in_play=True, hs=1, as_=1),
-        _row(c.MARKET_1X2, "Away", 0.4, in_play=True, hs=1, as_=1),
-        _row(c.MARKET_OU_TOTAL, "Over", 0.6, line=3.5, in_play=True, hs=1, as_=1),
-        _row("1 Goal", "Home", 0.9, line=1.0, in_play=True, hs=1, as_=1),
-        _row("3 Goal", "Home", 0.30, line=3.0, in_play=True, hs=1, as_=1),
-        _row("3 Goal", "Away", 0.25, line=3.0, in_play=True, hs=1, as_=1),
-        _row("3 Goal", "None", 0.45, line=3.0, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_1X2, c.SEL_HOME, 0.5, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_1X2, c.SEL_DRAW, 0.3, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_1X2, c.SEL_AWAY, 0.4, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_OU_TOTAL, c.SEL_OVER, 0.6, line=3.5, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_NEXT_GOAL, c.SEL_NG_HOME, 0.9, line=1.0, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_NEXT_GOAL, c.SEL_NG_HOME, 0.30, line=3.0, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_NEXT_GOAL, c.SEL_NG_AWAY, 0.25, line=3.0, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_NEXT_GOAL, c.SEL_NG_NONE, 0.45, line=3.0, in_play=True, hs=1, as_=1),
     ]
     m = list(pricing.moments_from_rows(rows))[0]
     assert m["ftts_home"] == 0.30 and m["ftts_away"] == 0.25   # line #3, not #1
@@ -171,10 +171,10 @@ def test_moments_active_next_goal_line_follows_score():
 
 def test_moments_no_ftts_when_active_line_absent():
     rows = [
-        _row(c.MARKET_1X2, "Home", 0.5, in_play=True, hs=2, as_=0),
-        _row(c.MARKET_1X2, "Draw", 0.3, in_play=True, hs=2, as_=0),
-        _row(c.MARKET_1X2, "Away", 0.4, in_play=True, hs=2, as_=0),
-        _row(c.MARKET_OU_TOTAL, "Over", 0.6, line=3.5, in_play=True, hs=2, as_=0),
+        _row(c.MARKET_1X2, c.SEL_HOME, 0.5, in_play=True, hs=2, as_=0),
+        _row(c.MARKET_1X2, c.SEL_DRAW, 0.3, in_play=True, hs=2, as_=0),
+        _row(c.MARKET_1X2, c.SEL_AWAY, 0.4, in_play=True, hs=2, as_=0),
+        _row(c.MARKET_OU_TOTAL, c.SEL_OVER, 0.6, line=3.5, in_play=True, hs=2, as_=0),
     ]
     m = list(pricing.moments_from_rows(rows))[0]
     assert m["ftts_home"] is None and m["ftts_away"] is None
@@ -185,10 +185,10 @@ def test_moments_carry_forward_across_timestamps():
     # carried 1X2 must still produce a moment at T2 with the new O/U, and the
     # T2 moment's staleness must reflect the older 1X2 capture.
     rows = [
-        _row(c.MARKET_1X2, "Home", 0.5, ts="2026-05-01 17:00:00"),
-        _row(c.MARKET_1X2, "Draw", 0.3, ts="2026-05-01 17:00:00"),
-        _row(c.MARKET_1X2, "Away", 0.4, ts="2026-05-01 17:00:00"),
-        _row(c.MARKET_OU_TOTAL, "Over", 0.55, line=2.5, ts="2026-05-01 17:30:00"),
+        _row(c.MARKET_1X2, c.SEL_HOME, 0.5, ts="2026-05-01 17:00:00"),
+        _row(c.MARKET_1X2, c.SEL_DRAW, 0.3, ts="2026-05-01 17:00:00"),
+        _row(c.MARKET_1X2, c.SEL_AWAY, 0.4, ts="2026-05-01 17:00:00"),
+        _row(c.MARKET_OU_TOTAL, c.SEL_OVER, 0.55, line=2.5, ts="2026-05-01 17:30:00"),
     ]
     moments = list(pricing.moments_from_rows(rows))
     assert len(moments) == 2
@@ -201,15 +201,28 @@ def test_moments_carry_forward_across_timestamps():
 
 def test_moments_reset_state_between_events():
     rows = [
-        _row(c.MARKET_1X2, "Home", 0.5, event_id="E1"),
-        _row(c.MARKET_1X2, "Draw", 0.3, event_id="E1"),
-        _row(c.MARKET_1X2, "Away", 0.4, event_id="E1"),
+        _row(c.MARKET_1X2, c.SEL_HOME, 0.5, event_id="E1"),
+        _row(c.MARKET_1X2, c.SEL_DRAW, 0.3, event_id="E1"),
+        _row(c.MARKET_1X2, c.SEL_AWAY, 0.4, event_id="E1"),
         # E2 has only one 1X2 leg -> no full triple -> no moment, and must not
         # inherit E1's carried legs.
-        _row(c.MARKET_1X2, "Home", 0.6, event_id="E2"),
+        _row(c.MARKET_1X2, c.SEL_HOME, 0.6, event_id="E2"),
     ]
     moments = list(pricing.moments_from_rows(rows))
     assert [m["event_id"] for m in moments] == ["E1"]
+
+
+def test_moments_do_not_interleave_across_brands():
+    # Same event_id captured under two brands must stay separate streams; a
+    # single 1X2 leg per brand must NOT combine into a full triple.
+    rows = [
+        _row(c.MARKET_1X2, c.SEL_HOME, 0.5, event_id="E1"),
+        _row(c.MARKET_1X2, c.SEL_DRAW, 0.3, event_id="E1"),
+        _row(c.MARKET_1X2, c.SEL_AWAY, 0.4, event_id="E1"),
+    ]
+    rows[2] = {**rows[2], "brand": "other"}   # the Away leg belongs to a 2nd brand
+    moments = list(pricing.moments_from_rows(rows))
+    assert moments == []   # neither brand has a complete triple on its own
 
 
 def test_run_pricing_tracks_max_lead_across_event_moments():

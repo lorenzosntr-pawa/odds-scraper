@@ -13,7 +13,8 @@ from typing import Optional
 
 from .constants import CAP_MARGIN
 from .constants import (MARKET_1X2, MARKET_OU_TOTAL, MARKET_OU_HOME,
-                        MARKET_OU_AWAY, SEL_HOME, SEL_DRAW, SEL_AWAY,
+                        MARKET_OU_AWAY, MARKET_NEXT_GOAL,
+                        SEL_HOME, SEL_DRAW, SEL_AWAY,
                         SEL_OVER, SEL_NG_HOME, SEL_NG_AWAY)
 from odds_scraper.pricer import engine_v2, engine_v3, engine_v4
 
@@ -169,7 +170,7 @@ _META_KEYS = ("event_id", "sr_id", "brand", "event_name", "sr_start_time", "in_p
 
 
 def _is_next_goal(market_name) -> bool:
-    return bool(market_name) and market_name.endswith(" Goal") and market_name[:-5].isdigit()
+    return market_name == MARKET_NEXT_GOAL
 
 
 def _ts_pair(v):
@@ -251,10 +252,12 @@ def _emit_moment(state: "_CarryState", meta: dict, score, dt, ts_str):
 
 def moments_from_rows(rows):
     """Carry-forward alignment. Stream raw selection rows (one per
-    market/line/selection/timestamp) ordered by (event_id, in_play,
+    market/line/selection/timestamp) ordered by (brand, event_id, in_play,
     odds_timestamp) and emit one Moment per distinct timestamp at which a full
     1X2 triple has been seen, using the latest carried value of every other
-    series. State resets at each (event_id, in_play) boundary.
+    series. State resets at each (brand, event_id, in_play) boundary — the
+    source duplicates each event across brands, so brand must be part of the
+    key or different brands' captures would interleave.
 
     Each row must have: event_id, sr_id, brand, event_name, sr_start_time,
     in_play, ts, home_score, away_score, market_name, line, selection_name,
@@ -266,7 +269,7 @@ def moments_from_rows(rows):
     cur_dt = cur_ts_str = None
 
     for r in rows:
-        block = (r["event_id"], r["in_play"])
+        block = (r["brand"], r["event_id"], r["in_play"])
         dt, ts_str = _ts_pair(r["ts"])
         new_block = block != cur_block
         new_ts = new_block or cur_ts_str is None or ts_str != cur_ts_str
@@ -297,15 +300,15 @@ def moments_from_rows(rows):
 
 
 def run_pricing(moments_iter, *, run_ts: str):
-    """Price a stream of moments, tracking per-event max lead so live
+    """Price a stream of moments, tracking per-(brand, event) max lead so live
     deactivation is history-aware across the moments we observed. Moments must
-    be grouped by event_id contiguously (extraction SQL ORDER BY guarantees
-    it). Yields output rows (skips None)."""
+    be grouped by (brand, event_id) contiguously (extraction SQL ORDER BY
+    guarantees it). Yields output rows (skips None)."""
     cur_event = object()
     max_h = max_a = 0
     for m in moments_iter:
-        if m["event_id"] != cur_event:
-            cur_event, max_h, max_a = m["event_id"], 0, 0
+        if (m["brand"], m["event_id"]) != cur_event:
+            cur_event, max_h, max_a = (m["brand"], m["event_id"]), 0, 0
         diff = int(m["home_score"]) - int(m["away_score"])
         max_h = max(max_h, diff)
         max_a = max(max_a, -diff)

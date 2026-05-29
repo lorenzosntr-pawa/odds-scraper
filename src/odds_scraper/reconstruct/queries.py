@@ -11,20 +11,23 @@ from __future__ import annotations
 import re
 
 from .constants import (MARKET_1X2, MARKET_OU_TOTAL, MARKET_OU_HOME,
-                        MARKET_OU_AWAY, OUTPUT_COLUMNS)
+                        MARKET_OU_AWAY, MARKET_NEXT_GOAL, OUTPUT_COLUMNS)
 
 # All selections we need, in one scan: 1X2, the three O/U families, and the
-# next-goal markets (matched by the "{n} Goal" name pattern so live can use any
-# line; the active line is chosen in Python by score).
+# next-goal market. The next-goal market_name is the literal "{handicap} Goal"
+# (the goal number is in the handicap column); we keep every goal line so live
+# can pick the active one in Python by score. MARKET_NEXT_GOAL already holds
+# the literal braces, so interpolating it here needs no f-string escaping.
 _MARKET_FILTER = (
     f"market_name = '{MARKET_1X2}' "
     f"OR market_name IN ('{MARKET_OU_TOTAL}', '{MARKET_OU_HOME}', '{MARKET_OU_AWAY}') "
-    f"OR match(market_name, '^[0-9]+ Goal$')"
+    f"OR market_name = '{MARKET_NEXT_GOAL}'"
 )
 
 # Operator-supplied identifiers (db.table). Guard so a malformed name fails
 # loudly here rather than producing confusing SQL.
 _IDENT_RE = re.compile(r"^[A-Za-z0-9_.]+$")
+_BRAND_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _check_ident(name: str) -> str:
@@ -33,22 +36,35 @@ def _check_ident(name: str) -> str:
     return name
 
 
-def extraction_sql(source_table: str) -> str:
+def extraction_sql(source_table: str, *, brand: str | None = None,
+                   limit: int | None = None) -> str:
     """Return one row per (selection, timestamp) for every relevant market,
-    ordered by (event_id, in_play, odds_timestamp) so the Python carry-forward
-    reducer sees each event's prematch then live captures in time order.
+    ordered by (brand, event_id, in_play, odds_timestamp) so the Python
+    carry-forward reducer sees each (brand, event)'s prematch then live
+    captures in time order — the table duplicates each event across brands, so
+    brand must lead the grouping or brands would interleave.
+
+    Optional `brand` restricts to one brand (recommended for a first run on
+    this 250M-row table); `limit` caps total rows scanned for a smoke run.
     Columns: event_id, sr_id, brand, event_name, sr_start_time, in_play, ts,
     home_score, away_score, market_name, line, selection_name, true_proba."""
     _check_ident(source_table)
-    return f"""
+    where = [f"({_MARKET_FILTER})", "true_proba IS NOT NULL", "true_proba != 0"]
+    if brand is not None:
+        if not _BRAND_RE.match(brand):
+            raise ValueError(f"unsafe brand filter: {brand!r}")
+        where.append(f"brand = '{brand}'")
+    sql = f"""
 SELECT event_id, sr_id, brand, event_name, sr_start_time, in_play,
        odds_timestamp AS ts, home_score, away_score,
        market_name, handicap / 4.0 AS line, selection_name, true_proba
 FROM {source_table}
-WHERE ({_MARKET_FILTER})
-  AND true_proba IS NOT NULL AND true_proba != 0
-ORDER BY event_id, in_play, odds_timestamp
+WHERE {' AND '.join(where)}
+ORDER BY brand, event_id, in_play, odds_timestamp
 """
+    if limit is not None:
+        sql = sql.rstrip() + f"\nLIMIT {int(limit)}\n"
+    return sql
 
 
 def output_ddl(output_table: str) -> str:
