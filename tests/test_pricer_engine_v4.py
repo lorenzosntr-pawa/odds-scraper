@@ -162,3 +162,15 @@ def test_v4_oneup_prob_ge_twoup_prob(balanced_match, score):
         if p1 is None or p2 is None:
             continue
         assert p1 >= p2 - 1e-9, f"{one_k}={p1} < {two_k}={p2} at score {score}"
+
+
+def test_v4_tunables_are_subset_of_v3_only_names():
+    """v4 defines no config key outside the existing V3_ONLY set, so
+    configs.py needs no v4-specific handling and with_v4_coefficients'
+    hasattr filter covers it. (The removed regression-model names must be
+    absent on engine_v4.)"""
+    from odds_scraper.pricer import configs
+    for name in configs.V3_ONLY_TUNABLE_NAMES:
+        assert hasattr(ep_v4, name), f"v4 missing expected tunable {name}"
+    assert not hasattr(ep_v4, "ONEUP_FAVORITE_MODEL")
+    assert not hasattr(ep_v4, "ONEUP_UNDERDOG_MODEL")
