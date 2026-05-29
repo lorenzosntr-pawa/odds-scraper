@@ -23,6 +23,13 @@ def test_extraction_sql_brand_and_limit():
     assert "LIMIT 5000" in sql
 
 
+def test_extraction_sql_shard():
+    sql = queries.extraction_sql("bi_Samuel.tbl_x", shard_index=3, shard_count=30)
+    assert "cityHash64(event_id) % 30 = 3" in sql
+    with pytest.raises(ValueError):
+        queries.extraction_sql("bi_Samuel.tbl_x", shard_index=30, shard_count=30)
+
+
 def test_extraction_sql_next_goal_toggle():
     with_ng = queries.extraction_sql("bi_Samuel.tbl_x", include_next_goal=True)
     without_ng = queries.extraction_sql("bi_Samuel.tbl_x", include_next_goal=False)

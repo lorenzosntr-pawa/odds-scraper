@@ -114,8 +114,18 @@ Flags:
   every emitted row has `max_input_staleness_seconds <= SEC` (high confidence) and stops
   a rarely-recaptured fringe O/U line from polluting λ or the staleness metric — e.g.
   `--max-staleness 1800` (≤30 min). Trades some coverage for quality.
+- `--shards N` — split the work into N bounded chunks (by `cityHash64(event_id) % N`),
+  each its own short-lived query/connection. **Use this for any full run** — a single
+  giant multi-hour query over the Teleport proxy eventually gets its connection reset
+  (`WinError 10054`); sharding keeps each connection short so it survives. Whole events
+  (and all their brands, when aggregating) stay within one shard, so correctness is
+  unchanged. e.g. `--shards 30`.
+- `--start-shard K` — resume a sharded run from shard K (best-effort). If a shard died
+  mid-insert, its partial rows remain; for an exact resume, delete that shard first
+  (`ALTER TABLE <out> DELETE WHERE cityHash64(event_id) % N >= K AND run_ts = '<ts>'`)
+  or just re-run from scratch with `--recreate` (cheap, since shards are bounded).
 - `--recreate` — drop + recreate the output table first. Use it the first time, or after
-  any schema change.
+  any schema change. (With `--shards`, the drop happens once, before shard 0.)
 - `--run-ts` — a tag stamped on every row so you can tell runs apart. Use the current
   date/time; it does not need to be exact.
 

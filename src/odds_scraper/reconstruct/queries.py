@@ -42,7 +42,9 @@ def _check_ident(name: str) -> str:
 def extraction_sql(source_table: str, *, brand: str | None = None,
                    in_play: int | None = None, sample_mod: int | None = None,
                    limit: int | None = None, aggregate_brands: bool = False,
-                   include_next_goal: bool = True) -> str:
+                   include_next_goal: bool = True,
+                   shard_index: int | None = None,
+                   shard_count: int | None = None) -> str:
     """Return one row per (selection, timestamp) for every relevant market,
     ordered by (brand, event_id, in_play, odds_timestamp) so the Python
     carry-forward reducer sees each (brand, event)'s prematch then live
@@ -70,6 +72,10 @@ def extraction_sql(source_table: str, *, brand: str | None = None,
         if int(sample_mod) < 1:
             raise ValueError("sample_mod must be >= 1")
         where.append(f"cityHash64(event_id) % {int(sample_mod)} = 0")
+    if shard_count is not None:
+        if not (0 <= int(shard_index or 0) < int(shard_count)) or int(shard_count) < 1:
+            raise ValueError("require 0 <= shard_index < shard_count")
+        where.append(f"cityHash64(event_id) % {int(shard_count)} = {int(shard_index)}")
     # Aggregate mode pools all brands (true_proba is brand-independent), so we
     # order by event first (not brand) — every brand's captures for an event
     # interleave by time, densifying the timeline. Otherwise brand leads so the

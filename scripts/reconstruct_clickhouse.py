@@ -47,6 +47,13 @@ def main() -> None:
     ap.add_argument("--recreate", action="store_true",
                     help="DROP and recreate the output table first (use after a "
                          "schema change, or to start a clean table)")
+    ap.add_argument("--shards", type=int, default=1,
+                    help="split the work into N bounded chunks (by event_id hash), "
+                         "each its own short-lived query/connection — avoids the proxy "
+                         "resetting one giant long-running query. e.g. --shards 30 for a "
+                         "full run. Whole events stay within a shard.")
+    ap.add_argument("--start-shard", type=int, default=0,
+                    help="resume a sharded run from this shard index (0-based)")
     # Which in-play states to price. NOTE: this table has no live home/away
     # score (it is always 0-0), so live rows are NOT score-accurate — a side
     # already ahead won't be deactivated. --prematch is the only fully-correct
@@ -75,11 +82,14 @@ def main() -> None:
           f"{' | aggregating brands' if args.aggregate_brands else ''}"
           f"{'' if include_next_goal else ' | next-goal skipped (V4-only)'}", flush=True)
 
-    client = chio.connect()
+    if args.shards < 1 or not (0 <= args.start_shard < args.shards):
+        ap.error("require --shards >= 1 and 0 <= --start-shard < --shards")
+
+    setup_client = chio.connect()
     if args.mode != "prematch":
         # Probe whether the source actually carries a live score; only warn if
         # it doesn't (the table was historically all 0-0 for live).
-        has_live_score = bool(client.query(
+        has_live_score = bool(setup_client.query(
             queries.live_score_probe_sql(args.source, brand=args.brand)).result_rows)
         if has_live_score:
             print("live scores present in source — live rows priced with real scores.",
@@ -88,58 +98,68 @@ def main() -> None:
             print("WARNING: no live home/away score found in source; live rows are "
                   "priced as 0-0, so already-ahead sides are NOT deactivated. "
                   "Use --prematch for fully-correct output.", flush=True)
-    if args.recreate:
-        client.command(queries.drop_table_sql(args.output))
-    client.command(queries.output_ddl(args.output))
+    # --recreate only makes sense before the first shard; resuming must not drop.
+    if args.recreate and args.start_shard == 0:
+        setup_client.command(queries.drop_table_sql(args.output))
+    setup_client.command(queries.output_ddl(args.output))
 
     restore = pricing.install_dp_cache()
-    n_scanned = n_out = n_1up = n_prematch = n_live = flagged = stale_max = 0
+    n_scanned = n_out = n_1up = n_prematch = n_live = flagged = stale_max = inserted = 0
     stale_samples = []          # 1-in-N sample of staleness for report percentiles
     STALE_SAMPLE_EVERY = 25
+
+    def _counting_scan(it):
+        nonlocal n_scanned
+        for r in it:
+            n_scanned += 1
+            if n_scanned % 1_000_000 == 0:
+                print(f"  ...scanned {n_scanned:,} source rows, "
+                      f"emitted {n_out:,} priced rows", flush=True)
+            yield r
+
+    def _accounting(it):
+        nonlocal n_out, n_1up, n_prematch, n_live, flagged, stale_max
+        for row in it:
+            n_out += 1
+            # "1UP priced" = actual V4 1UP output (V4 prematch 1UP is DP-direct
+            # and needs no next-goal data), not FTTS availability.
+            n_1up += 1 if row.get("v4_1up_home_odds") is not None else 0
+            n_prematch += 0 if row["in_play"] else 1
+            n_live += 1 if row["in_play"] else 0
+            if abs(row["renorm_drift"]) > c.RENORM_DRIFT_TOL:
+                flagged += 1
+            s = row["max_input_staleness_seconds"]
+            if s > stale_max:
+                stale_max = s
+            if n_out % STALE_SAMPLE_EVERY == 0:   # bounded-memory sample
+                stale_samples.append(s)
+            yield row
+
+    sharded = args.shards > 1
     try:
-        def _counting_scan(it):
-            nonlocal n_scanned
-            for r in it:
-                n_scanned += 1
-                if n_scanned % 1_000_000 == 0:
-                    print(f"  ...scanned {n_scanned:,} source rows, "
-                          f"emitted {n_out:,} priced rows", flush=True)
-                yield r
-
-        sql = queries.extraction_sql(args.source, brand=args.brand,
-                                     in_play=in_play, sample_mod=args.sample_mod,
-                                     limit=args.limit,
-                                     aggregate_brands=args.aggregate_brands,
-                                     include_next_goal=include_next_goal)
-        rows_stream = _counting_scan(chio.stream_rows(client, sql))
-        moments = pricing.moments_from_rows(rows_stream,
-                                            aggregate_brands=args.aggregate_brands,
-                                            fresh_seconds=args.max_staleness)
-        priced = pricing.run_pricing(moments, run_ts=args.run_ts, engines=engines)
-
-        def _accounting(it):
-            nonlocal n_out, n_1up, n_prematch, n_live, flagged, stale_max
-            for row in it:
-                n_out += 1
-                # "1UP priced" = actual V4 1UP output (V4 prematch 1UP is
-                # DP-direct and needs no next-goal data), not FTTS availability.
-                n_1up += 1 if row.get("v4_1up_home_odds") is not None else 0
-                n_prematch += 0 if row["in_play"] else 1
-                n_live += 1 if row["in_play"] else 0
-                if abs(row["renorm_drift"]) > c.RENORM_DRIFT_TOL:
-                    flagged += 1
-                s = row["max_input_staleness_seconds"]
-                if s > stale_max:
-                    stale_max = s
-                if n_out % STALE_SAMPLE_EVERY == 0:   # bounded-memory sample
-                    stale_samples.append(s)
-                yield row
-
-        print(f"streaming source{' (brand=' + args.brand + ')' if args.brand else ''}"
-              f"{' limit=' + str(args.limit) if args.limit else ''} ...", flush=True)
-        inserted = chio.insert_rows(client, args.output, _accounting(priced),
-                                    columns=c.OUTPUT_COLUMNS,
-                                    batch_size=args.batch_size)
+        for k in range(args.start_shard, args.shards):
+            # Fresh connection per shard so no single query/connection lives long
+            # enough for the proxy to reset it.
+            client = chio.connect()
+            sql = queries.extraction_sql(
+                args.source, brand=args.brand, in_play=in_play,
+                sample_mod=args.sample_mod, limit=args.limit,
+                aggregate_brands=args.aggregate_brands,
+                include_next_goal=include_next_goal,
+                shard_index=k if sharded else None,
+                shard_count=args.shards if sharded else None)
+            label = f"shard {k + 1}/{args.shards}" if sharded else "source"
+            print(f"streaming {label} ...", flush=True)
+            rows_stream = _counting_scan(chio.stream_rows(client, sql))
+            moments = pricing.moments_from_rows(
+                rows_stream, aggregate_brands=args.aggregate_brands,
+                fresh_seconds=args.max_staleness)
+            priced = pricing.run_pricing(moments, run_ts=args.run_ts, engines=engines)
+            inserted += chio.insert_rows(client, args.output, _accounting(priced),
+                                         columns=c.OUTPUT_COLUMNS,
+                                         batch_size=args.batch_size)
+            if sharded:
+                print(f"  {label} done — {inserted:,} rows so far", flush=True)
         cache_info = pricing.dp_cache_info()
     finally:
         restore()
