@@ -27,6 +27,21 @@ def test_cap_odds_none_for_nonpositive_prob():
     assert pricing.cap_odds_from_prob(0.0) is None
 
 
+def test_confidence_weight_bands():
+    # fully fresh + consistent -> 1.0
+    assert pricing.confidence_weight(0, 0.0) == 1.0
+    assert pricing.confidence_weight(300, 0.02) == 1.0
+    # fully stale or fully drifted -> 0.0
+    assert pricing.confidence_weight(1800, 0.0) == 0.0
+    assert pricing.confidence_weight(0, 0.05) == 0.0
+    # sign of drift is irrelevant (magnitude only)
+    assert pricing.confidence_weight(0, -0.05) == 0.0
+    # midpoints multiply: staleness halfway (1050s) AND drift halfway (0.035)
+    assert pricing.confidence_weight(1050, 0.035) == 0.25
+    # combined: fresh but mid-drift -> just the drift factor
+    assert pricing.confidence_weight(0, 0.035) == 0.5
+
+
 def test_next_goal_index_prematch_is_one():
     assert pricing.next_goal_index(0, 0) == 1
 

@@ -11,7 +11,8 @@ import functools
 from datetime import datetime
 from typing import Optional
 
-from .constants import CAP_MARGIN
+from .constants import (CAP_MARGIN, STALE_GOOD_SEC, STALE_BAD_SEC,
+                        DRIFT_GOOD, DRIFT_BAD)
 from .constants import (MARKET_1X2, MARKET_OU_TOTAL, MARKET_OU_HOME,
                         MARKET_OU_AWAY, MARKET_NEXT_GOAL,
                         SEL_HOME, SEL_DRAW, SEL_AWAY,
@@ -34,6 +35,24 @@ def cap_odds_from_prob(prob: float, margin: float = CAP_MARGIN) -> Optional[floa
     if implied <= 0:
         return None
     return 1.0 / implied
+
+
+def _band(value: float, good: float, bad: float) -> float:
+    """1.0 at/below `good`, 0.0 at/above `bad`, linear in between."""
+    if value <= good:
+        return 1.0
+    if value >= bad:
+        return 0.0
+    return 1.0 - (value - good) / (bad - good)
+
+
+def confidence_weight(staleness_seconds: float, renorm_drift: float) -> float:
+    """A 0..1 trust weight the sim can multiply by: the freshness band times
+    the 1X2-consistency band (drift magnitude; sign ignored). 1.0 = fresh and
+    consistent, 0.0 = stale or badly inconsistent."""
+    w = _band(staleness_seconds, STALE_GOOD_SEC, STALE_BAD_SEC) * \
+        _band(abs(renorm_drift), DRIFT_GOOD, DRIFT_BAD)
+    return round(w, 4)
 
 
 def next_goal_index(home_score: int, away_score: int) -> int:
@@ -156,6 +175,7 @@ def price_moment(moment: dict, *, run_ts: str,
         "has_1up": has_1up,
         "max_input_staleness_seconds": int(moment["max_input_staleness_seconds"]),
         "renorm_drift": round(drift, 6),
+        "confidence": confidence_weight(moment["max_input_staleness_seconds"], drift),
     }
     for name, res in results.items():
         row.update(_side_cells(f"{name}_1up", res, "market_1up", "p_home_1", "p_away_1"))

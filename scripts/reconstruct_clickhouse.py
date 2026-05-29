@@ -81,7 +81,9 @@ def main() -> None:
             nonlocal n_out, n_1up, n_prematch, n_live, flagged
             for row in it:
                 n_out += 1
-                n_1up += 1 if row["has_1up"] else 0
+                # "1UP priced" = actual V4 1UP output (V4 prematch 1UP is
+                # DP-direct and needs no next-goal data), not FTTS availability.
+                n_1up += 1 if row.get("v4_1up_home_odds") is not None else 0
                 n_prematch += 0 if row["in_play"] else 1
                 n_live += 1 if row["in_play"] else 0
                 if abs(row["renorm_drift"]) > c.RENORM_DRIFT_TOL:

@@ -122,9 +122,16 @@ Column groups:
 - **Reconstructed inputs:** `p_home/p_draw/p_away` (fair 1X2, renormalized to sum 1),
   `lambda_home/lambda_away` (implied scoring rates from O/U), `ftts_home/ftts_away`
   (next-goal probabilities; blank when next-goal data wasn't available).
-- **Confidence:** `max_input_staleness_seconds`, `renorm_drift` (see below).
+- **Confidence:** `max_input_staleness_seconds`, `renorm_drift`, and `confidence`
+  (a 0–1 weight combining the two — see below; multiply your row value by it).
 - **Prices:** for each engine (`v3`, `v4`) × market (`1up`, `2up`) × side (`home`,
   `away`): `_odds`, `_prob`, `_ev` (= prob × odds − 1). e.g. `v4_2up_home_odds`.
+
+> **V4 1UP needs no next-goal data.** V4's prematch 1UP is computed directly from the
+> scoring-rate DP (no FTTS / next-goal regression), so V4 produces a 1UP price on *every*
+> priceable row — its 1UP coverage ≈ its 2UP coverage. (V2/V3 level-1UP *do* need the
+> next-goal market, so their 1UP is sparser.) The report's "V4 1UP priced" line counts
+> actual V4 1UP output, not next-goal availability.
 
 **How a moment is built (carry-forward):** 1X2, O/U, and next-goal are captured at
 slightly different times. We read rows in time order per (brand, event, prematch/live),
@@ -159,6 +166,22 @@ they summed to under 1, positive to over 1).
 **Bottom line for simulations:** trust a row when staleness is **low (ideally < 5 min)**
 *and* drift is **small (< 0.02, sign ignored)**. Drop or down-weight anything with
 staleness over ~30 min or drift over 0.05.
+
+### `confidence` — the two combined into one weight (0–1)
+
+`confidence` packages the two checks into a single number so you can **multiply each
+row's value by it** instead of hand-picking cutoffs:
+
+- each input maps to a 0–1 band — staleness: 1.0 at ≤300s, 0.0 at ≥1800s, linear between;
+  drift: 1.0 at ≤0.02, 0.0 at ≥0.05, linear between (sign ignored) —
+- `confidence = staleness_band × drift_band`.
+
+So `1.0` = fresh **and** consistent (full weight); `0.0` = stale **or** badly inconsistent
+(ignore); values between scale smoothly. Use it directly as a row weight, or keep only
+rows above a threshold (e.g. `confidence > 0`, or `> 0.5` to be strict).
+
+`scripts/usable_counts.py --table <t>` reports coverage and how many V4 rows survive the
+strict / moderate / custom bands.
 
 ---
 

@@ -23,8 +23,8 @@ def build_report(*, source_table, output_table, n_out, n_1up, n_prematch,
     lines += [
         f"- rows emitted: {n_out:,}",
         f"- prematch: {n_prematch:,} | live: {n_live:,}",
-        f"- rows with 1UP priced: {n_1up:,} ({(100*n_1up/n_out if n_out else 0):.0f}%)",
-        f"- 2UP-only rows: {n_out - n_1up:,}",
+        f"- rows with V4 1UP priced: {n_1up:,} ({(100*n_1up/n_out if n_out else 0):.0f}%)",
+        f"- rows without V4 1UP: {n_out - n_1up:,}",
         f"- 1X2 renorm-drift flagged (> tol): {flagged_drift:,}",
     ]
     if cache_info is not None:

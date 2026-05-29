@@ -30,6 +30,11 @@ CAP_MARGIN = 0.02          # flat brand-neutral margin baked into cap reference 
 FRESH_SECONDS = 3600       # <1h staleness window for an emitted moment
 RENORM_DRIFT_TOL = 0.05    # |sum(1X2 true_proba) - 1| beyond this is flagged
 
+# Confidence-weight bands (full trust at GOOD, zero at BAD, linear between).
+# Drives the per-row `confidence` weight (0..1) the sim multiplies by.
+STALE_GOOD_SEC, STALE_BAD_SEC = 300, 1800      # <=5min full, >=30min none
+DRIFT_GOOD, DRIFT_BAD = 0.02, 0.05             # |renorm_drift| bands
+
 # --- output ---
 DEFAULT_OUTPUT_TABLE = "risk_Lorenzo.oneup_twoup_reconstructed"
 
@@ -38,7 +43,7 @@ OUTPUT_COLUMNS = [
     "in_play", "moment_ts", "home_score", "away_score",
     "p_home", "p_draw", "p_away", "lambda_home", "lambda_away",
     "ftts_home", "ftts_away",
-    "max_input_staleness_seconds", "renorm_drift",
+    "max_input_staleness_seconds", "renorm_drift", "confidence",
 ]
 for _e in ("v3", "v4"):
     for _m in ("1up", "2up"):
