@@ -33,7 +33,25 @@ def main() -> None:
     ap.add_argument("--recreate", action="store_true",
                     help="DROP and recreate the output table first (use after a "
                          "schema change, or to start a clean table)")
+    # Which in-play states to price. NOTE: this table has no live home/away
+    # score (it is always 0-0), so live rows are NOT score-accurate — a side
+    # already ahead won't be deactivated. --prematch is the only fully-correct
+    # mode. Default is --complete (no filter) so the choice is explicit.
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--prematch", dest="mode", action="store_const", const="prematch",
+                      help="price prematch only (in_play=0, score 0-0) — fully correct")
+    mode.add_argument("--live", dest="mode", action="store_const", const="live",
+                      help="price live only (in_play=1) — NOT score-accurate (no live score in source)")
+    mode.add_argument("--complete", dest="mode", action="store_const", const="complete",
+                      help="price both prematch and live (default)")
+    ap.set_defaults(mode="complete")
     args = ap.parse_args()
+
+    in_play = {"prematch": 0, "live": 1, "complete": None}[args.mode]
+    if args.mode != "prematch":
+        print("WARNING: live rows are priced with score 0-0 — this source has no "
+              "live home/away score, so already-ahead sides are NOT deactivated. "
+              "Use --prematch for fully-correct output.", flush=True)
 
     client = chio.connect()
     if args.recreate:
@@ -53,7 +71,8 @@ def main() -> None:
                           f"emitted {n_out:,} priced rows", flush=True)
                 yield r
 
-        sql = queries.extraction_sql(args.source, brand=args.brand, limit=args.limit)
+        sql = queries.extraction_sql(args.source, brand=args.brand,
+                                     in_play=in_play, limit=args.limit)
         rows_stream = _counting_scan(chio.stream_rows(client, sql))
         moments = pricing.moments_from_rows(rows_stream)
         priced = pricing.run_pricing(moments, run_ts=args.run_ts)

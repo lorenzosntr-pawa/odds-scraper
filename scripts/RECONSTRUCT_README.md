@@ -84,6 +84,12 @@ uv run python scripts/reconstruct_clickhouse.py `
 ```
 
 Flags:
+- `--prematch` / `--live` / `--complete` — which in-play states to price.
+  **Default is `--complete` (both).** ⚠️ This source has **no live home/away score**
+  (`home_score`/`away_score` are always 0), so `--live`/`--complete` rows are priced as
+  if 0-0 and a side already ahead is **not** deactivated — they are *not* score-accurate.
+  **`--prematch` is the only fully-correct mode** (prematch is genuinely 0-0). The script
+  prints a warning whenever live rows are included.
 - `--brand` — restrict to one brand. The source duplicates each event across ~13 brands,
   and `true_proba` is brand-independent, so **one brand is already a complete set of
   reconstructed odds**. Recommended (it's ~1/13th of 250M rows).
@@ -92,6 +98,12 @@ Flags:
   any schema change.
 - `--run-ts` — a tag stamped on every row so you can tell runs apart. Use the current
   date/time; it does not need to be exact.
+
+> **Live scoring caveat.** This betslip log records *that* goals were scored (the
+> next-goal market's `handicap`/4 = the next goal number, so total goals = that minus 1)
+> but never *who* scored — `home_score`/`away_score` and `current_score_*` are empty for
+> every row and brand. So the running home/away split needed to deactivate live 1UP/2UP
+> isn't available. Until a match-results/score feed can be joined in, prefer `--prematch`.
 
 It prints a progress line every 1M source rows and a final summary, and writes the
 markdown report.

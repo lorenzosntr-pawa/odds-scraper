@@ -23,6 +23,13 @@ def test_extraction_sql_brand_and_limit():
     assert "LIMIT 5000" in sql
 
 
+def test_extraction_sql_in_play_filter():
+    assert "in_play = 0" in queries.extraction_sql("bi_Samuel.tbl_x", in_play=0)
+    assert "in_play = 1" in queries.extraction_sql("bi_Samuel.tbl_x", in_play=1)
+    # both/None => no in_play filter in the WHERE clause
+    assert "in_play = " not in queries.extraction_sql("bi_Samuel.tbl_x", in_play=None)
+
+
 def test_extraction_sql_rejects_unsafe_table_name():
     with pytest.raises(ValueError):
         queries.extraction_sql("bad; DROP TABLE x")

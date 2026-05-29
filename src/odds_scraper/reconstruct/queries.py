@@ -37,7 +37,7 @@ def _check_ident(name: str) -> str:
 
 
 def extraction_sql(source_table: str, *, brand: str | None = None,
-                   limit: int | None = None) -> str:
+                   in_play: int | None = None, limit: int | None = None) -> str:
     """Return one row per (selection, timestamp) for every relevant market,
     ordered by (brand, event_id, in_play, odds_timestamp) so the Python
     carry-forward reducer sees each (brand, event)'s prematch then live
@@ -45,7 +45,8 @@ def extraction_sql(source_table: str, *, brand: str | None = None,
     brand must lead the grouping or brands would interleave.
 
     Optional `brand` restricts to one brand (recommended for a first run on
-    this 250M-row table); `limit` caps total rows scanned for a smoke run.
+    this 250M-row table). `in_play` selects 0 (prematch only), 1 (live only),
+    or None (both). `limit` caps total rows scanned for a smoke run.
     Columns: event_id, sr_id, brand, event_name, sr_start_time, in_play, ts,
     home_score, away_score, market_name, line, selection_name, true_proba."""
     _check_ident(source_table)
@@ -54,6 +55,8 @@ def extraction_sql(source_table: str, *, brand: str | None = None,
         if not _BRAND_RE.match(brand):
             raise ValueError(f"unsafe brand filter: {brand!r}")
         where.append(f"brand = '{brand}'")
+    if in_play is not None:
+        where.append(f"in_play = {int(bool(in_play))}")
     sql = f"""
 SELECT event_id, sr_id, brand, event_name, sr_start_time, in_play,
        odds_timestamp AS ts, home_score, away_score,
