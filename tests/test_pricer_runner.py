@@ -788,3 +788,27 @@ def test_prices_fingerprint_detects_odds_change():
                       "odds": 1.70, "probability": 0.54}]}  # odds moved
     assert runner.prices_fingerprint(a) == runner.prices_fingerprint(b)
     assert runner.prices_fingerprint(a) != runner.prices_fingerprint(c)
+
+
+def test_run_simulation_row_width_matches_csv_columns(db, tmp_path):
+    """Guard against a silent column shift: the lean V1 runner builds each
+    row positionally against csv_export.CSV_COLUMNS and pads blank cells for
+    the v2/v3/v4 engine blocks it doesn't emit. Adding an engine column block
+    without growing those blank pads would misalign every downstream column.
+    Assert the emitted header AND data row each have exactly one value per
+    declared column."""
+    from odds_scraper.pricer import csv_export
+    _seed_event_with_priced_snapshot(db, "E1")
+    default = configs.load_default(db)
+    csv_path = tmp_path / "sim" / "width.csv"
+    runner.run_simulation(
+        db, config=default, regime="any", density="all",
+        scope={"country": "", "league": "", "date": "", "search": ""},
+        csv_path=csv_path,
+    )
+    with open(csv_path, encoding="utf-8") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        data = next(reader)
+    assert len(header) == len(csv_export.CSV_COLUMNS)
+    assert len(data) == len(csv_export.CSV_COLUMNS)

@@ -369,7 +369,8 @@ def run_simulation(
                         p_h2, p_a2,
                         res["market_2up"]["home_fair"], cap_2h, _ev(p_h2, cap_2h),
                         res["market_2up"]["away_fair"], cap_2a, _ev(p_a2, cap_2a),
-                        # V2 + V3 blocks — 16 blanks each in V1-only runs.
+                        # V2 + V3 + V4 blocks — 16 blanks each in V1-only runs.
+                        *(("",) * 16),
                         *(("",) * 16),
                         *(("",) * 16),
                         # BP — prob, odds, EV per selection.
@@ -392,9 +393,9 @@ def run_simulation(
                         bp_1x2_h, bp_1x2_d, bp_1x2_a,
                         sb_1x2_h, sb_1x2_d, sb_1x2_a,
                         cap_src_home, cap_src_away,
-                        # Profile B blocks — V1 + V2 + V3 OUR (16+16+16) +
-                        # BP/SB EV (4+4) = 56 blanks in single-profile runs.
-                        *((""),) * 56,
+                        # Profile B blocks — V1 + V2 + V3 + V4 OUR (16*4) +
+                        # BP/SB EV (4+4) = 72 blanks in single-profile runs.
+                        *((""),) * 72,
                     ))
                     seen_events.add(event_id)
             if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:
