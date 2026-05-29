@@ -24,6 +24,7 @@ from .runner import (
     VALID_REGIMES, VALID_DENSITIES, _PROGRESS_BATCH, _ev,
     _select_ticks, _load_tick_prices, _extract_quoted_up,
     _book_1x2_odds, prices_fingerprint,
+    _our_block_dict, _book_block_dict, _book_odds_only_dict, _pb_book_ev_dict,
     with_coefficients as with_v1_coefficients,
 )
 
@@ -87,28 +88,6 @@ def with_v4_coefficients(overrides: dict) -> Iterator[None]:
     finally:
         for k, v in saved.items():
             setattr(engine_v4, k, v)
-
-
-_EMPTY_OUR = ("",) * 16
-
-
-def _our_block(res: Optional[dict], p_h1, p_a1, p_h2, p_a2):
-    """Per-engine 16-cell OUR block: probs + fair + capped + capped_ev
-    for 1UP and 2UP home/away. Returns blanks when `res` is None."""
-    if res is None:
-        return _EMPTY_OUR
-    cap_1h = res["market_1up"]["home_margin"]
-    cap_1a = res["market_1up"]["away_margin"]
-    cap_2h = res["market_2up"]["home_margin"]
-    cap_2a = res["market_2up"]["away_margin"]
-    return (
-        p_h1, p_a1,
-        res["market_1up"]["home_fair"], cap_1h, _ev(p_h1, cap_1h),
-        res["market_1up"]["away_fair"], cap_1a, _ev(p_a1, cap_1a),
-        p_h2, p_a2,
-        res["market_2up"]["home_fair"], cap_2h, _ev(p_h2, cap_2h),
-        res["market_2up"]["away_fair"], cap_2a, _ev(p_a2, cap_2a),
-    )
 
 
 def run_simulation_dual(
@@ -311,78 +290,17 @@ def run_simulation_dual(
             cap_src_home = engine_inputs.get("_cap_source_home", "")
             cap_src_away = engine_inputs.get("_cap_source_away", "")
 
-            # EV against bookmaker odds uses V1's prob when V1 ran, then
-            # V2, then V3. V1 stays the engine-of-record for live EVs.
+            # EV against bookmaker odds uses V1's prob when V1 ran, then V2,
+            # then V3, then V4. V1 stays the engine-of-record for live EVs.
             ev_src = r_v1 if r_v1 is not None else (
                 r_v2 if r_v2 is not None else (r_v3 if r_v3 is not None else r_v4))
-            p_h1 = ev_src["p_home_1"]
-            p_a1 = ev_src["p_away_1"]
-            p_h2 = ev_src["p_home_2"]
-            p_a2 = ev_src["p_away_2"]
-
-            v1_block = _our_block(
-                r_v1,
-                r_v1["p_home_1"] if r_v1 else None,
-                r_v1["p_away_1"] if r_v1 else None,
-                r_v1["p_home_2"] if r_v1 else None,
-                r_v1["p_away_2"] if r_v1 else None,
-            )
-            v2_block = _our_block(
-                r_v2,
-                r_v2["p_home_1"] if r_v2 else None,
-                r_v2["p_away_1"] if r_v2 else None,
-                r_v2["p_home_2"] if r_v2 else None,
-                r_v2["p_away_2"] if r_v2 else None,
-            )
-            v3_block = _our_block(
-                r_v3,
-                r_v3["p_home_1"] if r_v3 else None,
-                r_v3["p_away_1"] if r_v3 else None,
-                r_v3["p_home_2"] if r_v3 else None,
-                r_v3["p_away_2"] if r_v3 else None,
-            )
-            v4_block = _our_block(
-                r_v4,
-                r_v4["p_home_1"] if r_v4 else None,
-                r_v4["p_away_1"] if r_v4 else None,
-                r_v4["p_home_2"] if r_v4 else None,
-                r_v4["p_away_2"] if r_v4 else None,
-            )
-
+            p_h1, p_a1 = ev_src["p_home_1"], ev_src["p_away_1"]
+            p_h2, p_a2 = ev_src["p_home_2"], ev_src["p_away_2"]
             lambdas_src = r_v1 if r_v1 is not None else (
                 r_v2 if r_v2 is not None else (r_v3 if r_v3 is not None else r_v4))
 
-            # Profile B's blocks. Same shape as Profile A's; the OUR
-            # blocks come from r_v1_b / r_v2_b, the BP/SB EV cells use
-            # Profile B's probability against the same book odds.
-            pB_v1_block = _our_block(
-                r_v1_b,
-                r_v1_b["p_home_1"] if r_v1_b else None,
-                r_v1_b["p_away_1"] if r_v1_b else None,
-                r_v1_b["p_home_2"] if r_v1_b else None,
-                r_v1_b["p_away_2"] if r_v1_b else None,
-            )
-            pB_v2_block = _our_block(
-                r_v2_b,
-                r_v2_b["p_home_1"] if r_v2_b else None,
-                r_v2_b["p_away_1"] if r_v2_b else None,
-                r_v2_b["p_home_2"] if r_v2_b else None,
-                r_v2_b["p_away_2"] if r_v2_b else None,
-            )
-            pB_v3_block = _our_block(
-                r_v3_b,
-                r_v3_b["p_home_1"] if r_v3_b else None,
-                r_v3_b["p_away_1"] if r_v3_b else None,
-                r_v3_b["p_home_2"] if r_v3_b else None,
-                r_v3_b["p_away_2"] if r_v3_b else None,
-            )
-            pB_v4_block = _our_block(
-                r_v4_b,
-                r_v4_b["p_home_1"] if r_v4_b else None,
-                r_v4_b["p_away_1"] if r_v4_b else None,
-                r_v4_b["p_home_2"] if r_v4_b else None,
-                r_v4_b["p_away_2"] if r_v4_b else None,
-            )
+            # Profile B's probabilities drive the pB_* bookmaker EV cells
+            # (same book odds as Profile A). None when no Profile B ran.
             pB_ev_src = r_v1_b if r_v1_b is not None else (
                 r_v2_b if r_v2_b is not None else (r_v3_b if r_v3_b is not None else r_v4_b))
             pB_p_h1 = pB_ev_src["p_home_1"] if pB_ev_src else None
@@ -390,50 +308,45 @@ def run_simulation_dual(
             pB_p_h2 = pB_ev_src["p_home_2"] if pB_ev_src else None
             pB_p_a2 = pB_ev_src["p_away_2"] if pB_ev_src else None
 
-            rows.append((
-                engines_cell,
-                profile_a_name, profile_b_name,
-                t["snapshot_id"], event_id,
-                t["home"], t["away"], t["kickoff_utc"],
-                ts_utc,
-                t["status"], t["match_minute"],
-                t["score_home"], t["score_away"],
-                basis,
-                lambdas_src["lambda_home"], lambdas_src["lambda_away"],
+            # Row assembled by column name (see csv_export.write_csv). Each
+            # engine's OUR block is emitted only if that engine ran; omitted
+            # blocks and all pB_* cells with no Profile B are blanked by
+            # write_csv — no positional padding to keep in sync.
+            rows.append({
+                "engines": engines_cell,
+                "profile_a": profile_a_name, "profile_b": profile_b_name,
+                "snapshot_id": t["snapshot_id"], "event_id": event_id,
+                "home": t["home"], "away": t["away"], "kickoff_utc": t["kickoff_utc"],
+                "ts_utc": ts_utc,
+                "status": t["status"], "match_minute": t["match_minute"],
+                "score_home": t["score_home"], "score_away": t["score_away"],
+                "basis_used": basis,
+                "lambda_home": lambdas_src["lambda_home"], "lambda_away": lambdas_src["lambda_away"],
                 # 1x2 + next-goal reference (profile-independent inputs).
-                engine_inputs["p_home_win"], engine_inputs["p_draw"],
-                engine_inputs["p_away_win"],
-                engine_inputs.get("ftts_home_prob"),
-                engine_inputs.get("ftts_away_prob"),
-                engine_inputs["home_1x2_odds"], engine_inputs["away_1x2_odds"],
-                *v1_block,
-                *v2_block,
-                *v3_block,
-                *v4_block,
-                bp["1up_home"][1], bp["1up_home"][0], _ev(p_h1, bp["1up_home"][0]),
-                bp["1up_away"][1], bp["1up_away"][0], _ev(p_a1, bp["1up_away"][0]),
-                bp["2up_home"][1], bp["2up_home"][0], _ev(p_h2, bp["2up_home"][0]),
-                bp["2up_away"][1], bp["2up_away"][0], _ev(p_a2, bp["2up_away"][0]),
-                sb["1up_home"][1], sb["1up_home"][0], _ev(p_h1, sb["1up_home"][0]),
-                sb["1up_away"][1], sb["1up_away"][0], _ev(p_a1, sb["1up_away"][0]),
-                sb["2up_home"][1], sb["2up_home"][0], _ev(p_h2, sb["2up_home"][0]),
-                sb["2up_away"][1], sb["2up_away"][0], _ev(p_a2, sb["2up_away"][0]),
-                b9j["1up_home"][0], b9j["1up_away"][0],
-                b9j["2up_home"][0], b9j["2up_away"][0],
-                bw["1up_home"][0],  bw["1up_away"][0],
-                bw["2up_home"][0],  bw["2up_away"][0],
-                bp_1x2_h, bp_1x2_d, bp_1x2_a,
-                sb_1x2_h, sb_1x2_d, sb_1x2_a,
-                cap_src_home, cap_src_away,
-                *pB_v1_block,
-                *pB_v2_block,
-                *pB_v3_block,
-                *pB_v4_block,
-                _ev(pB_p_h1, bp["1up_home"][0]), _ev(pB_p_a1, bp["1up_away"][0]),
-                _ev(pB_p_h2, bp["2up_home"][0]), _ev(pB_p_a2, bp["2up_away"][0]),
-                _ev(pB_p_h1, sb["1up_home"][0]), _ev(pB_p_a1, sb["1up_away"][0]),
-                _ev(pB_p_h2, sb["2up_home"][0]), _ev(pB_p_a2, sb["2up_away"][0]),
-            ))
+                "p_home_win": engine_inputs["p_home_win"], "p_draw": engine_inputs["p_draw"],
+                "p_away_win": engine_inputs["p_away_win"],
+                "ftts_home_prob": engine_inputs.get("ftts_home_prob"),
+                "ftts_away_prob": engine_inputs.get("ftts_away_prob"),
+                "cap_1x2_home_odds": engine_inputs["home_1x2_odds"],
+                "cap_1x2_away_odds": engine_inputs["away_1x2_odds"],
+                **_our_block_dict("our_", "our_", r_v1),
+                **_our_block_dict("v2_", "v2_our_", r_v2),
+                **_our_block_dict("v3_", "v3_our_", r_v3),
+                **_our_block_dict("v4_", "v4_our_", r_v4),
+                **_book_block_dict("bp", bp, p_h1, p_a1, p_h2, p_a2),
+                **_book_block_dict("sb", sb, p_h1, p_a1, p_h2, p_a2),
+                **_book_odds_only_dict("b9j", b9j),
+                **_book_odds_only_dict("bw", bw),
+                "bp_1x2_home_odds": bp_1x2_h, "bp_1x2_draw_odds": bp_1x2_d, "bp_1x2_away_odds": bp_1x2_a,
+                "sb_1x2_home_odds": sb_1x2_h, "sb_1x2_draw_odds": sb_1x2_d, "sb_1x2_away_odds": sb_1x2_a,
+                "cap_source_home": cap_src_home, "cap_source_away": cap_src_away,
+                **_our_block_dict("pB_our_", "pB_our_", r_v1_b),
+                **_our_block_dict("pB_v2_", "pB_v2_our_", r_v2_b),
+                **_our_block_dict("pB_v3_", "pB_v3_our_", r_v3_b),
+                **_our_block_dict("pB_v4_", "pB_v4_our_", r_v4_b),
+                **_pb_book_ev_dict("bp", bp, pB_p_h1, pB_p_a1, pB_p_h2, pB_p_a2),
+                **_pb_book_ev_dict("sb", sb, pB_p_h1, pB_p_a1, pB_p_h2, pB_p_a2),
+            })
             seen_events.add(event_id)
             if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:
                 on_progress(i + 1, n_total)

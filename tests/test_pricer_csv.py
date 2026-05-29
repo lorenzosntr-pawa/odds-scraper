@@ -93,7 +93,9 @@ def _build_row(**overrides) -> tuple:
         "cap_source_home": "", "cap_source_away": "",
     }
     defaults.update(overrides)
-    return tuple(defaults[c] for c in csv_export.CSV_COLUMNS)
+    # write_csv consumes {column: value} mappings (csv.DictWriter), so the row
+    # IS the dict — no positional tuple to keep aligned with CSV_COLUMNS.
+    return defaults
 
 
 def test_write_csv_emits_header_and_rows(tmp_path: Path):
@@ -206,3 +208,40 @@ def test_csv_columns_include_v4_block_after_v3():
         assert c in cols, f"missing {c}"
         assert v3_end < cols.index(c) < bp_start, f"{c} out of position"
     assert cols.index("pB_v4_p_home_1") > cols.index("pB_v3_our_2up_away_capped_ev")
+
+
+def test_write_csv_blanks_omitted_columns(tmp_path: Path):
+    """A row that omits columns gets them written blank (restval='') — this is
+    how a runner that didn't run an engine leaves its block empty without any
+    positional padding."""
+    out = tmp_path / "sparse.csv"
+    csv_export.write_csv(out, [{"engines": "v1", "event_id": "E1", "our_p_home_1": 0.5}])
+    with open(out, encoding="utf-8") as f:
+        row = next(csv.DictReader(f))
+    assert row["engines"] == "v1"
+    assert row["our_p_home_1"] == "0.5"
+    # Every column not provided is present but blank — incl. the whole v4 block.
+    assert row["v4_p_home_1"] == ""
+    assert row["pB_v2_our_2up_away_capped"] == ""
+    assert row["bp_1up_home_odds"] == ""
+
+
+def test_write_csv_raises_on_unknown_column(tmp_path: Path):
+    """A typo'd / stale column name must fail loudly (extrasaction='raise')
+    rather than silently dropping or shifting cells."""
+    import pytest
+    out = tmp_path / "bad.csv"
+    with pytest.raises(ValueError):
+        csv_export.write_csv(out, [{"engines": "v1", "v5_p_home_1": 0.5}])
+
+
+def test_our_block_cols_matches_csv_columns_slices():
+    """The block-name generator is the single source of truth: the names it
+    produces for each engine must equal the contiguous slice that actually
+    appears in CSV_COLUMNS (header and runner-emitted dict keys can't drift)."""
+    cols = csv_export.CSV_COLUMNS
+    for prob_prefix, odds_prefix in csv_export.OUR_ENGINE_PREFIXES + csv_export.PB_ENGINE_PREFIXES:
+        block = csv_export.our_block_cols(prob_prefix, odds_prefix)
+        assert len(block) == 16
+        start = cols.index(block[0])
+        assert cols[start:start + 16] == block, f"{prob_prefix} block not contiguous/ordered in CSV_COLUMNS"
