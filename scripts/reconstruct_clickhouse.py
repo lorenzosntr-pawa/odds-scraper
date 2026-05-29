@@ -30,9 +30,14 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None,
                     help="cap total source rows scanned (smoke run)")
     ap.add_argument("--batch-size", type=int, default=10_000)
+    ap.add_argument("--recreate", action="store_true",
+                    help="DROP and recreate the output table first (use after a "
+                         "schema change, or to start a clean table)")
     args = ap.parse_args()
 
     client = chio.connect()
+    if args.recreate:
+        client.command(queries.drop_table_sql(args.output))
     client.command(queries.output_ddl(args.output))
 
     restore = pricing.install_dp_cache()

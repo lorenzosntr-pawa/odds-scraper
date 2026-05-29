@@ -33,6 +33,7 @@ def test_source_vocabulary_matches_constants():
 
 def test_end_to_end_small_slice_prices_and_inserts():
     client = _client()
+    client.command(queries.drop_table_sql("risk_Lorenzo.recon_smoke_test"))
     client.command(queries.output_ddl("risk_Lorenzo.recon_smoke_test"))
     # one event's worth of rows
     sql = queries.extraction_sql(SOURCE).rstrip()

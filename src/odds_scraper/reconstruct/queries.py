@@ -67,22 +67,37 @@ ORDER BY brand, event_id, in_play, odds_timestamp
     return sql
 
 
+def drop_table_sql(table: str) -> str:
+    _check_ident(table)
+    return f"DROP TABLE IF EXISTS {table}"
+
+
 def output_ddl(output_table: str) -> str:
-    """MergeTree DDL covering OUTPUT_COLUMNS. Strings for ids/labels, Float64
-    for probs/odds, Int for scores, DateTime for timestamps."""
-    string_cols = {"run_ts", "brand", "event_id", "sr_id", "event_name",
-                   "sr_start_time", "moment_ts"}
+    """MergeTree DDL covering OUTPUT_COLUMNS. Column types match the Python
+    values we insert (which in turn mirror the source column types): event_id
+    is the source UInt64, sr_start_time a DateTime, scores Int32, in_play a
+    flag, has_1up a Bool, everything numeric Nullable(Float64)."""
     _check_ident(output_table)
+    string_cols = {"run_ts", "brand", "sr_id", "event_name", "moment_ts"}
+    uint64_cols = {"event_id"}
+    datetime_cols = {"sr_start_time"}
     int_cols = {"home_score", "away_score", "max_input_staleness_seconds"}
-    bool_cols = {"in_play", "has_1up"}
+    uint8_cols = {"in_play"}
+    bool_cols = {"has_1up"}
     defs = []
     for col in OUTPUT_COLUMNS:
         if col in string_cols:
             t = "String"
+        elif col in uint64_cols:
+            t = "UInt64"
+        elif col in datetime_cols:
+            t = "DateTime"
         elif col in int_cols:
             t = "Int32"
-        elif col in bool_cols:
+        elif col in uint8_cols:
             t = "UInt8"
+        elif col in bool_cols:
+            t = "Bool"
         else:
             t = "Nullable(Float64)"
         defs.append(f"    `{col}` {t}")
