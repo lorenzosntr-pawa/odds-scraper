@@ -37,7 +37,8 @@ def _check_ident(name: str) -> str:
 
 
 def extraction_sql(source_table: str, *, brand: str | None = None,
-                   in_play: int | None = None, limit: int | None = None) -> str:
+                   in_play: int | None = None, sample_mod: int | None = None,
+                   limit: int | None = None) -> str:
     """Return one row per (selection, timestamp) for every relevant market,
     ordered by (brand, event_id, in_play, odds_timestamp) so the Python
     carry-forward reducer sees each (brand, event)'s prematch then live
@@ -46,7 +47,10 @@ def extraction_sql(source_table: str, *, brand: str | None = None,
 
     Optional `brand` restricts to one brand (recommended for a first run on
     this 250M-row table). `in_play` selects 0 (prematch only), 1 (live only),
-    or None (both). `limit` caps total rows scanned for a smoke run.
+    or None (both). `sample_mod` keeps ~1/N of events spread across the whole
+    id range (whole events, so carry-forward stays intact) — a representative
+    smoke, unlike `limit` which just grabs the lowest event_ids. `limit` caps
+    total rows scanned.
     Columns: event_id, sr_id, brand, event_name, sr_start_time, in_play, ts,
     home_score, away_score, market_name, line, selection_name, true_proba."""
     _check_ident(source_table)
@@ -57,6 +61,10 @@ def extraction_sql(source_table: str, *, brand: str | None = None,
         where.append(f"brand = '{brand}'")
     if in_play is not None:
         where.append(f"in_play = {int(bool(in_play))}")
+    if sample_mod is not None:
+        if int(sample_mod) < 1:
+            raise ValueError("sample_mod must be >= 1")
+        where.append(f"cityHash64(event_id) % {int(sample_mod)} = 0")
     sql = f"""
 SELECT event_id, sr_id, brand, event_name, sr_start_time, in_play,
        odds_timestamp AS ts, home_score, away_score,

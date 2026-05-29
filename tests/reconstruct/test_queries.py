@@ -23,6 +23,13 @@ def test_extraction_sql_brand_and_limit():
     assert "LIMIT 5000" in sql
 
 
+def test_extraction_sql_sample_mod():
+    sql = queries.extraction_sql("bi_Samuel.tbl_x", sample_mod=200)
+    assert "cityHash64(event_id) % 200 = 0" in sql
+    with pytest.raises(ValueError):
+        queries.extraction_sql("bi_Samuel.tbl_x", sample_mod=0)
+
+
 def test_extraction_sql_in_play_filter():
     assert "in_play = 0" in queries.extraction_sql("bi_Samuel.tbl_x", in_play=0)
     assert "in_play = 1" in queries.extraction_sql("bi_Samuel.tbl_x", in_play=1)

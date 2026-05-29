@@ -27,8 +27,12 @@ def main() -> None:
     ap.add_argument("--brand", default=None,
                     help="restrict to one brand (e.g. betpawa-ghana); recommended "
                          "for a first run — the source duplicates events across ~13 brands")
+    ap.add_argument("--sample-mod", type=int, default=None,
+                    help="representative smoke: keep ~1/N of events (whole events) "
+                         "spread across the id range, e.g. --sample-mod 200. "
+                         "Unbiased, unlike --limit which takes the lowest event_ids.")
     ap.add_argument("--limit", type=int, default=None,
-                    help="cap total source rows scanned (smoke run)")
+                    help="cap total source rows scanned (biased to lowest event_ids)")
     ap.add_argument("--engines", default="v3,v4",
                     help="comma-separated engines to compute: v3, v4, or v3,v4 "
                          "(default v3,v4). V4 alone needs no next-goal data.")
@@ -90,7 +94,8 @@ def main() -> None:
                 yield r
 
         sql = queries.extraction_sql(args.source, brand=args.brand,
-                                     in_play=in_play, limit=args.limit)
+                                     in_play=in_play, sample_mod=args.sample_mod,
+                                     limit=args.limit)
         rows_stream = _counting_scan(chio.stream_rows(client, sql))
         moments = pricing.moments_from_rows(rows_stream)
         priced = pricing.run_pricing(moments, run_ts=args.run_ts, engines=engines)
