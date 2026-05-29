@@ -123,28 +123,27 @@ def test_price_moment_drops_1up_without_ftts():
     assert row["v2_1up_home_odds"] is None
 
 
-def _long(market, sel, proba, line=0.0, x12_sel="Home", x12_proba=0.5,
-          ts="2026-05-01 17:30:00", sel_ts="2026-05-01 17:29:00",
-          in_play=False, hs=0, as_=0):
+def _row(market, sel, proba, line=0.0, ts="2026-05-01 17:30:00",
+         in_play=False, hs=0, as_=0, event_id="E1"):
+    """One raw extraction row: a single selection at one timestamp."""
     return {
-        "event_id": "E1", "sr_id": "sr1", "brand": "ng",
+        "event_id": event_id, "sr_id": "sr1", "brand": "ng",
         "event_name": "A vs B", "sr_start_time": "2026-05-01 18:00:00",
-        "in_play": in_play, "moment_ts": ts, "home_score": hs, "away_score": as_,
-        "x12_selection": x12_sel, "x12_proba": x12_proba,
+        "in_play": in_play, "ts": ts, "home_score": hs, "away_score": as_,
         "market_name": market, "line": line, "selection_name": sel,
-        "true_proba": proba, "sel_ts": sel_ts,
+        "true_proba": proba,
     }
 
 
 def test_moments_from_rows_builds_one_moment_per_timestamp():
     rows = [
-        _long(c.MARKET_1X2, "Home", 0.5, x12_sel="Home", x12_proba=0.5),
-        _long(c.MARKET_1X2, "Draw", 0.3, x12_sel="Draw", x12_proba=0.3),
-        _long(c.MARKET_1X2, "Away", 0.4, x12_sel="Away", x12_proba=0.4),
-        _long(c.MARKET_OU_TOTAL, "Over", 0.55, line=2.5),
-        _long("1 Goal", "Home", 0.46, line=1.0),
-        _long("1 Goal", "Away", 0.40, line=1.0),
-        _long("1 Goal", "None", 0.14, line=1.0),
+        _row(c.MARKET_1X2, "Home", 0.5),
+        _row(c.MARKET_1X2, "Draw", 0.3),
+        _row(c.MARKET_1X2, "Away", 0.4),
+        _row(c.MARKET_OU_TOTAL, "Over", 0.55, line=2.5),
+        _row("1 Goal", "Home", 0.46, line=1.0),
+        _row("1 Goal", "Away", 0.40, line=1.0),
+        _row("1 Goal", "None", 0.14, line=1.0),
     ]
     moments = list(pricing.moments_from_rows(rows))
     assert len(moments) == 1
@@ -157,14 +156,14 @@ def test_moments_from_rows_builds_one_moment_per_timestamp():
 def test_moments_active_next_goal_line_follows_score():
     # 1-1 -> active next goal is line #3; line #1 must be ignored for ftts
     rows = [
-        _long(c.MARKET_1X2, "Home", 0.5, in_play=True, hs=1, as_=1),
-        _long(c.MARKET_1X2, "Draw", 0.3, x12_sel="Draw", in_play=True, hs=1, as_=1),
-        _long(c.MARKET_1X2, "Away", 0.4, x12_sel="Away", in_play=True, hs=1, as_=1),
-        _long(c.MARKET_OU_TOTAL, "Over", 0.6, line=3.5, in_play=True, hs=1, as_=1),
-        _long("1 Goal", "Home", 0.9, line=1.0, in_play=True, hs=1, as_=1),
-        _long("3 Goal", "Home", 0.30, line=3.0, in_play=True, hs=1, as_=1),
-        _long("3 Goal", "Away", 0.25, line=3.0, in_play=True, hs=1, as_=1),
-        _long("3 Goal", "None", 0.45, line=3.0, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_1X2, "Home", 0.5, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_1X2, "Draw", 0.3, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_1X2, "Away", 0.4, in_play=True, hs=1, as_=1),
+        _row(c.MARKET_OU_TOTAL, "Over", 0.6, line=3.5, in_play=True, hs=1, as_=1),
+        _row("1 Goal", "Home", 0.9, line=1.0, in_play=True, hs=1, as_=1),
+        _row("3 Goal", "Home", 0.30, line=3.0, in_play=True, hs=1, as_=1),
+        _row("3 Goal", "Away", 0.25, line=3.0, in_play=True, hs=1, as_=1),
+        _row("3 Goal", "None", 0.45, line=3.0, in_play=True, hs=1, as_=1),
     ]
     m = list(pricing.moments_from_rows(rows))[0]
     assert m["ftts_home"] == 0.30 and m["ftts_away"] == 0.25   # line #3, not #1
@@ -172,13 +171,45 @@ def test_moments_active_next_goal_line_follows_score():
 
 def test_moments_no_ftts_when_active_line_absent():
     rows = [
-        _long(c.MARKET_1X2, "Home", 0.5, in_play=True, hs=2, as_=0),
-        _long(c.MARKET_1X2, "Draw", 0.3, x12_sel="Draw", in_play=True, hs=2, as_=0),
-        _long(c.MARKET_1X2, "Away", 0.4, x12_sel="Away", in_play=True, hs=2, as_=0),
-        _long(c.MARKET_OU_TOTAL, "Over", 0.6, line=3.5, in_play=True, hs=2, as_=0),
+        _row(c.MARKET_1X2, "Home", 0.5, in_play=True, hs=2, as_=0),
+        _row(c.MARKET_1X2, "Draw", 0.3, in_play=True, hs=2, as_=0),
+        _row(c.MARKET_1X2, "Away", 0.4, in_play=True, hs=2, as_=0),
+        _row(c.MARKET_OU_TOTAL, "Over", 0.6, line=3.5, in_play=True, hs=2, as_=0),
     ]
     m = list(pricing.moments_from_rows(rows))[0]
     assert m["ftts_home"] is None and m["ftts_away"] is None
+
+
+def test_moments_carry_forward_across_timestamps():
+    # 1X2 captured at T1; an O/U arrives later at T2 with no 1X2 row. The
+    # carried 1X2 must still produce a moment at T2 with the new O/U, and the
+    # T2 moment's staleness must reflect the older 1X2 capture.
+    rows = [
+        _row(c.MARKET_1X2, "Home", 0.5, ts="2026-05-01 17:00:00"),
+        _row(c.MARKET_1X2, "Draw", 0.3, ts="2026-05-01 17:00:00"),
+        _row(c.MARKET_1X2, "Away", 0.4, ts="2026-05-01 17:00:00"),
+        _row(c.MARKET_OU_TOTAL, "Over", 0.55, line=2.5, ts="2026-05-01 17:30:00"),
+    ]
+    moments = list(pricing.moments_from_rows(rows))
+    assert len(moments) == 2
+    first, second = moments
+    assert first["moment_ts"] == "2026-05-01 17:00:00" and first["total_ou"] == []
+    assert second["moment_ts"] == "2026-05-01 17:30:00"
+    assert second["total_ou"] == [(2.5, 0.55)]           # O/U carried in at T2
+    assert second["max_input_staleness_seconds"] == 1800  # 1X2 is 30 min stale
+
+
+def test_moments_reset_state_between_events():
+    rows = [
+        _row(c.MARKET_1X2, "Home", 0.5, event_id="E1"),
+        _row(c.MARKET_1X2, "Draw", 0.3, event_id="E1"),
+        _row(c.MARKET_1X2, "Away", 0.4, event_id="E1"),
+        # E2 has only one 1X2 leg -> no full triple -> no moment, and must not
+        # inherit E1's carried legs.
+        _row(c.MARKET_1X2, "Home", 0.6, event_id="E2"),
+    ]
+    moments = list(pricing.moments_from_rows(rows))
+    assert [m["event_id"] for m in moments] == ["E1"]
 
 
 def test_run_pricing_tracks_max_lead_across_event_moments():

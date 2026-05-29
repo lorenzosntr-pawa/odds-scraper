@@ -43,7 +43,7 @@ Columns consumed:
 | `in_play` | prematch (false) vs live (true) | critical split |
 | `true_proba` | fair model probability | **primary engine input** |
 | `price` | offered odds | reference only (NOT an engine input — see §5) |
-| `odds_timestamp` | snapshot time | asof alignment |
+| `odds_timestamp` | snapshot time | carry-forward alignment |
 | `home_score` / `away_score` | score at snapshot | live `score` input + next-goal line |
 
 Markets included (filter):
@@ -77,34 +77,41 @@ Four units, each understandable and testable in isolation:
 1. **`clickhouse_io.py`** — connection adapter. `query_arrow(sql) -> table/iterator` for
    reads; `insert(table, rows)` for batched writes. Reads connection config from env.
    No business logic, no SQL strings baked in beyond what the caller passes.
-2. **Extraction SQL** (in `reconstruct_clickhouse.py` or a `queries.py`) — selects the
-   market families, applies `handicap/4.0`, and uses ClickHouse **`ASOF JOIN`** to snap
-   each O/U line and next-goal selection to the nearest 1X2 `odds_timestamp` per
-   `(event_id, in_play)`. Returns tidy long rows tagged with a pricing-moment key
-   (the anchoring 1X2 timestamp).
-3. **`reconstruct.py`** — pure-Python pricing. Consumes pricing-moment groups, does
-   renormalization, input assembly, next-goal-line selection, and calls the engines.
-   Mostly ported from the existing `pm_reconstruct.py` (`assemble_inputs`,
-   `reconstruct_row`, `_side_cells`, DP cache), with devig removed and IO swapped.
-4. **`reconstruct_clickhouse.py`** — CLI orchestrator: optional drift pass, stream +
-   price, batched insert to `risk_Lorenzo`, write a reliability report.
+2. **Extraction SQL** (`queries.py`) — a single ordered scan selecting the market
+   families and applying `handicap/4.0`, ordered by `(event_id, in_play,
+   odds_timestamp)`. **Alignment is NOT done in SQL.** ClickHouse `ASOF JOIN` is
+   strictly 1:1 (one right-row match per left-row), so it cannot gather every O/U line
+   plus all three next-goal selections for a single moment — it was the wrong tool.
+   Instead the scan returns one row per `(selection, timestamp)` and the Python reducer
+   carries values forward.
+3. **`pricing.py`** — pure-Python pricing + alignment. `moments_from_rows` is a
+   carry-forward reducer (the ClickHouse equivalent of the CSV deriver's `MarketState`):
+   streaming the ordered scan, it keeps the latest `true_proba` per
+   `(market, line, selection)` and emits one Moment per distinct timestamp at which a
+   full 1X2 triple has been seen, resetting state at each `(event_id, in_play)`
+   boundary. Then renormalization, input assembly (no devig), next-goal-line selection,
+   and the engine calls. Ported from `pm_reconstruct.py` (`_side_cells`, DP cache).
+4. **`reconstruct_clickhouse.py`** — CLI orchestrator: stream + price, batched insert to
+   `risk_Lorenzo`, write a reliability report.
 
-ClickHouse owns the heavy alignment (what it is built for); Python stays a thin
-pricing + IO layer that streams per event so memory stays flat and runs are resumable
-per `event_id`.
+Python owns the carry-forward alignment; ClickHouse just streams the ordered scan.
+Streaming per `(event_id, in_play)` keeps memory flat and runs resumable per event.
 
 ## 4. Data flow
 
 ```
 ClickHouse bi_Samuel.<table>
-   │  extraction SQL + ASOF JOIN (align O/U & next-goal → nearest 1X2 ts)
+   │  extraction SQL: single ordered scan (event_id, in_play, odds_timestamp)
    ▼
-pricing-moment rows  (event_id, in_play, moment_ts, brand, sr_id, score,
-                      1X2 true_proba triple, O/U (line, over_prob) list,
-                      next-goal home/away/none true_proba by line)
-   │  stream grouped by (event_id, in_play, moment_ts)
+raw selection rows  (one per market/line/selection/timestamp)
+   │  moments_from_rows: carry-forward reducer → one Moment per timestamp
+   │  with a full carried 1X2 triple (latest O/U + next-goal carried forward)
    ▼
-reconstruct.py
+pricing-moment  (event_id, in_play, moment_ts, brand, sr_id, score,
+                 1X2 true_proba triple, O/U (line, over_prob) list,
+                 next-goal home/away/none true_proba by line)
+   ▼
+pricing.py
    ├─ renormalize 1X2 to Σ≈1.0
    ├─ derive cap odds = 1 / (p * 1.02)   (flat 2% margin, brand-neutral)
    ├─ pick next-goal line = home_score + away_score + 1  (prematch ⇒ goal #1)
@@ -199,7 +206,8 @@ Unit (synthetic in-memory rows, no live ClickHouse):
 - Cap-odds derivation `1/(p*1.02)`.
 - Next-goal-line selection by score (prematch ⇒ goal #1; 1-1 ⇒ goal #3; missing line ⇒
   1UP unpriced).
-- asof assembly: nearest-timestamp matching and per-moment input grouping.
+- carry-forward assembly: latest-value-per-series, one moment per full-1X2 timestamp,
+  state reset across event/in_play boundaries, staleness over used inputs.
 - Engine-input adaptation: probabilities passed without devig; deactivation when
   `score != (0,0)`.
 - Output-row shape: all `{v2,v3,v4}×{1up,2up}×{home,away}` cells present.

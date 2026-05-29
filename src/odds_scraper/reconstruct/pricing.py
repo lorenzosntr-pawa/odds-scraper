@@ -13,7 +13,8 @@ from typing import Optional
 
 from .constants import CAP_MARGIN
 from .constants import (MARKET_1X2, MARKET_OU_TOTAL, MARKET_OU_HOME,
-                        MARKET_OU_AWAY, SEL_OVER, SEL_NG_HOME, SEL_NG_AWAY)
+                        MARKET_OU_AWAY, SEL_HOME, SEL_DRAW, SEL_AWAY,
+                        SEL_OVER, SEL_NG_HOME, SEL_NG_AWAY)
 from odds_scraper.pricer import engine_v2, engine_v3, engine_v4
 
 
@@ -165,87 +166,135 @@ def price_moment(moment: dict, *, run_ts: str,
 _TS_FMT = "%Y-%m-%d %H:%M:%S"
 _OU_FAMILY = {MARKET_OU_TOTAL: "total_ou", MARKET_OU_HOME: "home_ou",
               MARKET_OU_AWAY: "away_ou"}
+_META_KEYS = ("event_id", "sr_id", "brand", "event_name", "sr_start_time", "in_play")
 
 
-def _is_next_goal(market_name: str) -> bool:
-    return market_name.endswith(" Goal") and market_name[:-5].isdigit()
+def _is_next_goal(market_name) -> bool:
+    return bool(market_name) and market_name.endswith(" Goal") and market_name[:-5].isdigit()
+
+
+def _ts_pair(v):
+    """Normalize a timestamp value (str or datetime) to (datetime, str)."""
+    if isinstance(v, datetime):
+        return v, v.strftime(_TS_FMT)
+    s = str(v)[:19]
+    return datetime.strptime(s, _TS_FMT), s
+
+
+def _to_line(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+class _CarryState:
+    """Latest (true_proba, capture_dt) per market series within one
+    (event_id, in_play) block, carried forward across opportunistic
+    snapshots — the ClickHouse equivalent of the CSV deriver's MarketState."""
+    __slots__ = ("x12", "ou", "ng")
+
+    def __init__(self):
+        self.x12 = {}                                              # selection -> (proba, dt)
+        self.ou = {"total_ou": {}, "home_ou": {}, "away_ou": {}}   # family -> {line: (proba, dt)}
+        self.ng = {}                                               # line -> {selection: (proba, dt)}
+
+    def update(self, market_name, line, selection, proba, dt):
+        if market_name == MARKET_1X2 and selection in (SEL_HOME, SEL_DRAW, SEL_AWAY):
+            self.x12[selection] = (proba, dt)
+        elif market_name in _OU_FAMILY and selection == SEL_OVER and line is not None:
+            self.ou[_OU_FAMILY[market_name]][line] = (proba, dt)
+        elif _is_next_goal(market_name) and line is not None:
+            self.ng.setdefault(line, {})[selection] = (proba, dt)
+
+    def has_full_1x2(self):
+        return self.x12.keys() >= {SEL_HOME, SEL_DRAW, SEL_AWAY}
+
+
+def _emit_moment(state: "_CarryState", meta: dict, score, dt, ts_str):
+    """Build a Moment from carried-forward state, or None if 1X2 incomplete.
+    Picks the next-goal line active for the current score and reports the
+    worst staleness among the inputs actually used."""
+    if not state.has_full_1x2():
+        return None
+    hs, as_ = score
+    active = float(next_goal_index(hs, as_))
+    used = [state.x12[s][1] for s in (SEL_HOME, SEL_DRAW, SEL_AWAY)]
+
+    def ou_list(family):
+        out = []
+        for line, (proba, d) in state.ou[family].items():
+            out.append((line, proba))
+            used.append(d)
+        return sorted(out)
+
+    total_ou = ou_list("total_ou")
+    home_ou = ou_list("home_ou")
+    away_ou = ou_list("away_ou")
+    ng_line = state.ng.get(active, {})
+    ftts_home = ftts_away = None
+    if SEL_NG_HOME in ng_line and SEL_NG_AWAY in ng_line:
+        ftts_home, ftts_home_dt = ng_line[SEL_NG_HOME]
+        ftts_away, ftts_away_dt = ng_line[SEL_NG_AWAY]
+        used.extend((ftts_home_dt, ftts_away_dt))
+    stale = int(round(max((dt - min(used)).total_seconds(), 0.0)))
+    return {
+        **meta, "moment_ts": ts_str,
+        "home_score": hs, "away_score": as_,
+        "p_home_raw": state.x12[SEL_HOME][0],
+        "p_draw_raw": state.x12[SEL_DRAW][0],
+        "p_away_raw": state.x12[SEL_AWAY][0],
+        "total_ou": total_ou, "home_ou": home_ou, "away_ou": away_ou,
+        "ftts_home": ftts_home, "ftts_away": ftts_away,
+        "max_input_staleness_seconds": stale,
+    }
 
 
 def moments_from_rows(rows):
-    """Group aligned long rows (Task 8 output) into Moment dicts, ordered as
-    the rows arrive. `rows` must be grouped by (event_id, in_play, moment_ts)
-    contiguously (the extraction SQL ORDER BY guarantees this)."""
-    def key(r):
-        return (r["event_id"], r["in_play"], r["moment_ts"])
+    """Carry-forward alignment. Stream raw selection rows (one per
+    market/line/selection/timestamp) ordered by (event_id, in_play,
+    odds_timestamp) and emit one Moment per distinct timestamp at which a full
+    1X2 triple has been seen, using the latest carried value of every other
+    series. State resets at each (event_id, in_play) boundary.
 
-    for (_eid, _ip, _mts), group in _groupby_contiguous(rows, key):
-        group = list(group)
-        head = group[0]
-        # 1X2 from the anchor selection columns (same on every row of the group)
-        p = {}
-        for r in group:
-            p[r["x12_selection"]] = r["x12_proba"]
-        if not ({"Home", "Draw", "Away"} <= set(p)):
-            continue
-        hs, as_ = int(head["home_score"]), int(head["away_score"])
-        active_line = float(next_goal_index(hs, as_))
-        ou = {"total_ou": {}, "home_ou": {}, "away_ou": {}}
-        ng = {}
-        sel_ts_used = []
-        for r in group:
-            mkt, sel = r["market_name"], r["selection_name"]
-            if mkt in _OU_FAMILY and sel == SEL_OVER:
-                ou[_OU_FAMILY[mkt]][float(r["line"])] = r["true_proba"]
-                sel_ts_used.append(r["sel_ts"])
-            elif _is_next_goal(mkt) and float(r["line"]) == active_line:
-                ng[sel] = r["true_proba"]
-                sel_ts_used.append(r["sel_ts"])
-        ftts_home = ng.get(SEL_NG_HOME)
-        ftts_away = ng.get(SEL_NG_AWAY)
-        if ftts_home is None or ftts_away is None:
-            ftts_home = ftts_away = None
-        moment_ts = head["moment_ts"]
-        stale = _staleness_seconds(moment_ts, sel_ts_used)
-        yield {
-            "event_id": head["event_id"], "sr_id": head["sr_id"],
-            "brand": head["brand"], "event_name": head["event_name"],
-            "sr_start_time": head["sr_start_time"],
-            "in_play": head["in_play"], "moment_ts": moment_ts,
-            "home_score": hs, "away_score": as_,
-            "p_home_raw": p["Home"], "p_draw_raw": p["Draw"], "p_away_raw": p["Away"],
-            "total_ou": sorted(ou["total_ou"].items()),
-            "home_ou": sorted(ou["home_ou"].items()),
-            "away_ou": sorted(ou["away_ou"].items()),
-            "ftts_home": ftts_home, "ftts_away": ftts_away,
-            "max_input_staleness_seconds": stale,
-        }
+    Each row must have: event_id, sr_id, brand, event_name, sr_start_time,
+    in_play, ts, home_score, away_score, market_name, line, selection_name,
+    true_proba."""
+    cur_block = None
+    state = None
+    meta = None
+    score = (0, 0)
+    cur_dt = cur_ts_str = None
 
-
-def _groupby_contiguous(rows, key):
-    cur_key, bucket = object(), []
     for r in rows:
-        k = key(r)
-        if k != cur_key and bucket:
-            yield cur_key, bucket
-            bucket = []
-        cur_key = k
-        bucket.append(r)
-    if bucket:
-        yield cur_key, bucket
+        block = (r["event_id"], r["in_play"])
+        dt, ts_str = _ts_pair(r["ts"])
+        new_block = block != cur_block
+        new_ts = new_block or cur_ts_str is None or ts_str != cur_ts_str
 
+        if new_ts and state is not None:
+            m = _emit_moment(state, meta, score, cur_dt, cur_ts_str)
+            if m is not None:
+                yield m
 
-def _staleness_seconds(moment_ts: str, sel_ts_list) -> int:
-    if not sel_ts_list:
-        return 0
-    t0 = _parse_ts(moment_ts)
-    worst = max((t0 - _parse_ts(s)).total_seconds() for s in sel_ts_list if s)
-    return int(round(max(worst, 0)))
+        if new_block:
+            cur_block = block
+            state = _CarryState()
+            meta = {k: r[k] for k in _META_KEYS}
+            score = (0, 0)
+        if new_ts:
+            cur_dt, cur_ts_str = dt, ts_str
 
+        state.update(r["market_name"], _to_line(r["line"]),
+                     r["selection_name"], r["true_proba"], dt)
+        hs, as_ = r.get("home_score"), r.get("away_score")
+        if hs is not None and as_ is not None:
+            score = (int(hs), int(as_))
 
-def _parse_ts(s):
-    if isinstance(s, datetime):
-        return s
-    return datetime.strptime(str(s)[:19], _TS_FMT)
+    if state is not None:
+        m = _emit_moment(state, meta, score, cur_dt, cur_ts_str)
+        if m is not None:
+            yield m
 
 
 def run_pricing(moments_iter, *, run_ts: str):
