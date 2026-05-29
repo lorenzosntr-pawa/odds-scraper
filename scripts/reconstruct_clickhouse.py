@@ -29,6 +29,9 @@ def main() -> None:
                          "for a first run — the source duplicates events across ~13 brands")
     ap.add_argument("--limit", type=int, default=None,
                     help="cap total source rows scanned (smoke run)")
+    ap.add_argument("--engines", default="v3,v4",
+                    help="comma-separated engines to compute: v3, v4, or v3,v4 "
+                         "(default v3,v4). V4 alone needs no next-goal data.")
     ap.add_argument("--batch-size", type=int, default=10_000)
     ap.add_argument("--recreate", action="store_true",
                     help="DROP and recreate the output table first (use after a "
@@ -48,6 +51,12 @@ def main() -> None:
     args = ap.parse_args()
 
     in_play = {"prematch": 0, "live": 1, "complete": None}[args.mode]
+
+    engines = tuple(e.strip() for e in args.engines.split(",") if e.strip())
+    valid = {"v3", "v4"}
+    if not engines or set(engines) - valid:
+        ap.error(f"--engines must be a comma list from {sorted(valid)}; got {args.engines!r}")
+    print(f"engines: {', '.join(engines)}", flush=True)
 
     client = chio.connect()
     if args.mode != "prematch":
@@ -84,7 +93,7 @@ def main() -> None:
                                      in_play=in_play, limit=args.limit)
         rows_stream = _counting_scan(chio.stream_rows(client, sql))
         moments = pricing.moments_from_rows(rows_stream)
-        priced = pricing.run_pricing(moments, run_ts=args.run_ts)
+        priced = pricing.run_pricing(moments, run_ts=args.run_ts, engines=engines)
 
         def _accounting(it):
             nonlocal n_out, n_1up, n_prematch, n_live, flagged, stale_max

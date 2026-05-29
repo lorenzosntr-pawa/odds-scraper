@@ -84,6 +84,10 @@ uv run python scripts/reconstruct_clickhouse.py `
 ```
 
 Flags:
+- `--engines` — comma list of engines to compute: `v3`, `v4`, or `v3,v4` (default
+  `v3,v4`). Engines not listed get NULL columns. **V4 alone needs no next-goal data**
+  (its prematch 1UP is DP-direct), so `--engines v4` prices every row without depending
+  on next-goal availability — and is faster.
 - `--prematch` / `--live` / `--complete` — which in-play states to price.
   **Default is `--complete` (both).** When live rows are included, the script **probes
   the source for a live score** and prints whether real scores are present. If they are,
@@ -136,9 +140,17 @@ Column groups:
 > actual V4 1UP output, not next-goal availability.
 
 **How a moment is built (carry-forward):** 1X2, O/U, and next-goal are captured at
-slightly different times. We read rows in time order per (brand, event, prematch/live),
-keep the latest value of each market/line/selection, and whenever a full 1X2 is on hand
-at a timestamp we emit a moment using the freshest value of everything.
+slightly different times. We read rows in time order per (brand, event, prematch/live,
+**score**), keep the latest value of each market/line/selection, and whenever a full 1X2
+is on hand at a timestamp we emit a moment using the freshest value of everything.
+
+**Score consistency:** the carry-forward is segmented by **score**, so a moment never
+mixes inputs captured at different scores (e.g. a 0-0 1X2 won't be carried into a 2-0
+moment). This prevents feeding the engine odds that are inconsistent with the current
+score. (Settled O/U lines — e.g. Over 1.5 once 2 goals are in — contribute nothing to λ
+anyway: the engine subtracts the current score off each line and ignores lines at/below
+it.) A consequence: a live moment only prices when a full 1X2 was captured *at that
+score*, so live coverage is lower than prematch — by design, to stay correct.
 
 ---
 

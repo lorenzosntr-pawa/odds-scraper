@@ -116,6 +116,19 @@ def test_price_moment_emits_all_engine_cells():
     assert math.isclose(row["p_home"] + row["p_draw"] + row["p_away"], 1.0, abs_tol=1e-9)
 
 
+def test_price_moment_engine_subset_v4_only():
+    restore = pricing.install_dp_cache()
+    try:
+        row = pricing.price_moment(_moment(), run_ts="t", max_home_lead=0,
+                                   max_away_lead=0, engines=("v4",))
+    finally:
+        restore()
+    assert row is not None
+    # v4 cells present, v3 cells absent (so they insert as NULL)
+    assert "v4_2up_home_odds" in row and "v4_1up_home_odds" in row
+    assert "v3_2up_home_odds" not in row
+
+
 def test_price_moment_returns_none_without_full_1x2():
     m = _moment(p_home_raw=0.0, p_draw_raw=0.0, p_away_raw=0.0)
     restore = pricing.install_dp_cache()
@@ -224,6 +237,20 @@ def test_moments_reset_state_between_events():
     ]
     moments = list(pricing.moments_from_rows(rows))
     assert [m["event_id"] for m in moments] == ["E1"]
+
+
+def test_moments_segment_by_score_no_stale_carry():
+    # 1X2 captured live at 0-0; then a goal -> 1-0 with only an O/U row.
+    # The 0-0 1X2 must NOT carry into the 1-0 state, so there's no 1-0 moment
+    # (and no mixing of 0-0 odds with a 1-0 score).
+    rows = [
+        _row(c.MARKET_1X2, c.SEL_HOME, 0.5, ts="2026-05-01 18:10:00", in_play=True, hs=0, as_=0),
+        _row(c.MARKET_1X2, c.SEL_DRAW, 0.3, ts="2026-05-01 18:10:00", in_play=True, hs=0, as_=0),
+        _row(c.MARKET_1X2, c.SEL_AWAY, 0.4, ts="2026-05-01 18:10:00", in_play=True, hs=0, as_=0),
+        _row(c.MARKET_OU_TOTAL, c.SEL_OVER, 0.6, line=2.5, ts="2026-05-01 18:25:00", in_play=True, hs=1, as_=0),
+    ]
+    moments = list(pricing.moments_from_rows(rows))
+    assert [(m["home_score"], m["away_score"]) for m in moments] == [(0, 0)]
 
 
 def test_moments_do_not_interleave_across_brands():

@@ -140,11 +140,15 @@ def _side_cells(prefix, res, market_key, prob_key_home, prob_key_away):
     }
 
 
-def price_moment(moment: dict, *, run_ts: str,
-                 max_home_lead: int, max_away_lead: int) -> dict | None:
-    """Price one moment with v2/v3/v4. Returns an OUTPUT_COLUMNS-shaped dict,
-    or None if the moment carries no priceable market (no full 1X2, or no
-    derivable lambda)."""
+DEFAULT_ENGINES = ("v3", "v4")
+
+
+def price_moment(moment: dict, *, run_ts: str, max_home_lead: int,
+                 max_away_lead: int, engines=DEFAULT_ENGINES) -> dict | None:
+    """Price one moment with the selected engines (subset of v3/v4). Returns an
+    OUTPUT_COLUMNS-shaped dict, or None if the moment carries no priceable
+    market (no full 1X2, or no derivable lambda). Cells for engines not in
+    `engines` are omitted (written NULL)."""
     ph, pd, pa, drift = renormalize_1x2(
         moment["p_home_raw"], moment["p_draw_raw"], moment["p_away_raw"])
     if not (ph > 0 and pd > 0 and pa > 0):
@@ -154,12 +158,10 @@ def price_moment(moment: dict, *, run_ts: str,
     kw["max_away_lead"] = max_away_lead
     has_1up = kw["ftts_home_prob"] is not None and kw["ftts_away_prob"] is not None
 
-    results = {}
-    for name, eng in _ENGINES.items():
-        res = eng.price_early_payout_markets(**kw)
-        results[name] = res
-    # Use v3 as the gate for derivable lambda (DP identical across engines).
-    if results["v3"]["lambda_home"] is None or results["v3"]["lambda_away"] is None:
+    results = {name: _ENGINES[name].price_early_payout_markets(**kw) for name in engines}
+    # The first selected engine gates lambda (the DP is identical across engines).
+    gate = results[engines[0]]
+    if gate["lambda_home"] is None or gate["lambda_away"] is None:
         return None
 
     row = {
@@ -169,8 +171,7 @@ def price_moment(moment: dict, *, run_ts: str,
         "in_play": moment["in_play"], "moment_ts": moment["moment_ts"],
         "home_score": int(moment["home_score"]), "away_score": int(moment["away_score"]),
         "p_home": ph, "p_draw": pd, "p_away": pa,
-        "lambda_home": results["v3"]["lambda_home"],
-        "lambda_away": results["v3"]["lambda_away"],
+        "lambda_home": gate["lambda_home"], "lambda_away": gate["lambda_away"],
         "ftts_home": kw["ftts_home_prob"], "ftts_away": kw["ftts_away_prob"],
         "has_1up": has_1up,
         "max_input_staleness_seconds": int(moment["max_input_staleness_seconds"]),
@@ -275,9 +276,14 @@ def moments_from_rows(rows):
     market/line/selection/timestamp) ordered by (brand, event_id, in_play,
     odds_timestamp) and emit one Moment per distinct timestamp at which a full
     1X2 triple has been seen, using the latest carried value of every other
-    series. State resets at each (brand, event_id, in_play) boundary — the
-    source duplicates each event across brands, so brand must be part of the
-    key or different brands' captures would interleave.
+    series.
+
+    State resets at each (brand, event_id, in_play, score) boundary. brand is
+    in the key because the source duplicates each event across brands; **score
+    is in the key so inputs are never mixed across a goal** — carrying a 0-0
+    1X2 or O/U line into a 2-0 moment would feed the engine inconsistent odds.
+    Score is component-wise non-decreasing over time, so score-states stay
+    contiguous in the (…, odds_timestamp) ordering.
 
     Each row must have: event_id, sr_id, brand, event_name, sr_start_time,
     in_play, ts, home_score, away_score, market_name, line, selection_name,
@@ -289,7 +295,8 @@ def moments_from_rows(rows):
     cur_dt = cur_ts_str = None
 
     for r in rows:
-        block = (r["brand"], r["event_id"], r["in_play"])
+        r_score = (int(r["home_score"]), int(r["away_score"]))
+        block = (r["brand"], r["event_id"], r["in_play"], r_score)
         dt, ts_str = _ts_pair(r["ts"])
         new_block = block != cur_block
         new_ts = new_block or cur_ts_str is None or ts_str != cur_ts_str
@@ -303,15 +310,12 @@ def moments_from_rows(rows):
             cur_block = block
             state = _CarryState()
             meta = {k: r[k] for k in _META_KEYS}
-            score = (0, 0)
+            score = r_score
         if new_ts:
             cur_dt, cur_ts_str = dt, ts_str
 
         state.update(r["market_name"], _to_line(r["line"]),
                      r["selection_name"], r["true_proba"], dt)
-        hs, as_ = r.get("home_score"), r.get("away_score")
-        if hs is not None and as_ is not None:
-            score = (int(hs), int(as_))
 
     if state is not None:
         m = _emit_moment(state, meta, score, cur_dt, cur_ts_str)
@@ -319,11 +323,12 @@ def moments_from_rows(rows):
             yield m
 
 
-def run_pricing(moments_iter, *, run_ts: str):
-    """Price a stream of moments, tracking per-(brand, event) max lead so live
-    deactivation is history-aware across the moments we observed. Moments must
-    be grouped by (brand, event_id) contiguously (extraction SQL ORDER BY
-    guarantees it). Yields output rows (skips None)."""
+def run_pricing(moments_iter, *, run_ts: str, engines=DEFAULT_ENGINES):
+    """Price a stream of moments with the selected engines, tracking
+    per-(brand, event) max lead so live deactivation is history-aware across
+    the moments we observed. Moments must be grouped by (brand, event_id)
+    contiguously (extraction SQL ORDER BY guarantees it). Yields output rows
+    (skips None)."""
     cur_event = object()
     max_h = max_a = 0
     for m in moments_iter:
@@ -332,7 +337,7 @@ def run_pricing(moments_iter, *, run_ts: str):
         diff = int(m["home_score"]) - int(m["away_score"])
         max_h = max(max_h, diff)
         max_a = max(max_a, -diff)
-        row = price_moment(m, run_ts=run_ts,
-                           max_home_lead=max_h, max_away_lead=max_a)
+        row = price_moment(m, run_ts=run_ts, max_home_lead=max_h,
+                           max_away_lead=max_a, engines=engines)
         if row is not None:
             yield row
