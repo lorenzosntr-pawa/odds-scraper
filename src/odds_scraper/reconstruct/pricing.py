@@ -7,9 +7,11 @@ margin (brand-neutral) — offered `price` is intentionally NOT used.
 """
 from __future__ import annotations
 
+import functools
 from typing import Optional
 
 from .constants import CAP_MARGIN
+from odds_scraper.pricer import engine_v2, engine_v3, engine_v4
 
 
 def renormalize_1x2(p_home: float, p_draw: float, p_away: float):
@@ -53,3 +55,38 @@ def assemble_engine_kwargs(moment: dict) -> dict:
         ftts_away_prob=moment["ftts_away"],
         score=(int(moment["home_score"]), int(moment["away_score"])),
     )
+
+
+_dp_cached = None
+
+
+def install_dp_cache(round_dp: int = 4):
+    """Monkeypatch ever_leads_probability in all three engines to share one
+    lru_cache keyed on rounded (lambda_h, lambda_a, initial_diff). The DP is
+    identical across engines. Returns restore()."""
+    global _dp_cached
+    originals = {
+        m: m.ever_leads_probability for m in (engine_v2, engine_v3, engine_v4)
+    }
+    base = engine_v2.ever_leads_probability
+
+    @functools.lru_cache(maxsize=200_000)
+    def _cached(lh: float, la: float, d: int):
+        return base(lh, la, d)
+
+    def wrapper(lambda_h, lambda_a, initial_diff):
+        return _cached(round(lambda_h, round_dp), round(lambda_a, round_dp), initial_diff)
+
+    _dp_cached = _cached
+    for m in originals:
+        m.ever_leads_probability = wrapper
+
+    def restore():
+        for m, fn in originals.items():
+            m.ever_leads_probability = fn
+
+    return restore
+
+
+def dp_cache_info():
+    return _dp_cached.cache_info()

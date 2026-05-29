@@ -63,3 +63,23 @@ def test_assemble_kwargs_uses_renormalized_probs_and_no_devig():
 def test_assemble_kwargs_drops_ftts_when_missing():
     kw = pricing.assemble_engine_kwargs(_moment(ftts_home=None, ftts_away=None))
     assert kw["ftts_home_prob"] is None and kw["ftts_away_prob"] is None
+
+
+from odds_scraper.pricer import engine_v2, engine_v3, engine_v4
+
+
+def test_install_dp_cache_patches_all_engines_and_restores():
+    orig2 = engine_v2.ever_leads_probability
+    restore = pricing.install_dp_cache()
+    try:
+        assert engine_v2.ever_leads_probability is not orig2
+        assert engine_v3.ever_leads_probability is engine_v2.ever_leads_probability
+        assert engine_v4.ever_leads_probability is engine_v2.ever_leads_probability
+        # cache actually memoizes
+        engine_v2.ever_leads_probability(1.2, 1.0, 0)
+        info_before = pricing.dp_cache_info().misses
+        engine_v2.ever_leads_probability(1.2, 1.0, 0)
+        assert pricing.dp_cache_info().misses == info_before  # second call hit cache
+    finally:
+        restore()
+    assert engine_v2.ever_leads_probability is orig2
