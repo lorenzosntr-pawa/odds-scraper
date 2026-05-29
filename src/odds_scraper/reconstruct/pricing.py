@@ -90,3 +90,65 @@ def install_dp_cache(round_dp: int = 4):
 
 def dp_cache_info():
     return _dp_cached.cache_info()
+
+
+_ENGINES = {"v2": engine_v2, "v3": engine_v3, "v4": engine_v4}
+
+
+def _ev(prob, odds):
+    if prob is None or odds is None:
+        return None
+    return prob * odds - 1.0
+
+
+def _side_cells(prefix, res, market_key, prob_key_home, prob_key_away):
+    m = res[market_key]
+    ph, pa = res[prob_key_home], res[prob_key_away]
+    oh, oa = m["home_margin"], m["away_margin"]
+    return {
+        f"{prefix}_home_odds": oh, f"{prefix}_home_prob": ph, f"{prefix}_home_ev": _ev(ph, oh),
+        f"{prefix}_away_odds": oa, f"{prefix}_away_prob": pa, f"{prefix}_away_ev": _ev(pa, oa),
+    }
+
+
+def price_moment(moment: dict, *, run_ts: str,
+                 max_home_lead: int, max_away_lead: int) -> dict | None:
+    """Price one moment with v2/v3/v4. Returns an OUTPUT_COLUMNS-shaped dict,
+    or None if the moment carries no priceable market (no full 1X2, or no
+    derivable lambda)."""
+    ph, pd, pa, drift = renormalize_1x2(
+        moment["p_home_raw"], moment["p_draw_raw"], moment["p_away_raw"])
+    if not (ph > 0 and pd > 0 and pa > 0):
+        return None
+    kw = assemble_engine_kwargs(moment)
+    kw["max_home_lead"] = max_home_lead
+    kw["max_away_lead"] = max_away_lead
+    has_1up = kw["ftts_home_prob"] is not None and kw["ftts_away_prob"] is not None
+
+    results = {}
+    for name, eng in _ENGINES.items():
+        res = eng.price_early_payout_markets(**kw)
+        results[name] = res
+    # Use v2 as the gate for derivable lambda (DP identical across engines).
+    if results["v2"]["lambda_home"] is None or results["v2"]["lambda_away"] is None:
+        return None
+
+    row = {
+        "run_ts": run_ts, "brand": moment["brand"],
+        "event_id": moment["event_id"], "sr_id": moment["sr_id"],
+        "event_name": moment["event_name"], "sr_start_time": moment["sr_start_time"],
+        "in_play": moment["in_play"], "moment_ts": moment["moment_ts"],
+        "home_score": int(moment["home_score"]), "away_score": int(moment["away_score"]),
+        "p_home": ph, "p_draw": pd, "p_away": pa,
+        "lambda_home": results["v2"]["lambda_home"],
+        "lambda_away": results["v2"]["lambda_away"],
+        "ftts_home": kw["ftts_home_prob"], "ftts_away": kw["ftts_away_prob"],
+        "has_1up": has_1up,
+        "max_input_staleness_seconds": int(moment["max_input_staleness_seconds"]),
+        "est_input_drift_pct": None,   # filled by the CLI drift pass
+        "renorm_drift": round(drift, 6),
+    }
+    for name, res in results.items():
+        row.update(_side_cells(f"{name}_1up", res, "market_1up", "p_home_1", "p_away_1"))
+        row.update(_side_cells(f"{name}_2up", res, "market_2up", "p_home_2", "p_away_2"))
+    return row

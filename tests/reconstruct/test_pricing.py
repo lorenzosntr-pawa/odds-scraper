@@ -83,3 +83,42 @@ def test_install_dp_cache_patches_all_engines_and_restores():
     finally:
         restore()
     assert engine_v2.ever_leads_probability is orig2
+
+
+def test_price_moment_emits_all_engine_cells():
+    restore = pricing.install_dp_cache()
+    try:
+        row = pricing.price_moment(_moment(), run_ts="2026-05-29 00:00:00",
+                                   max_home_lead=0, max_away_lead=0)
+    finally:
+        restore()
+    assert row is not None
+    for e in ("v2", "v3", "v4"):
+        for m in ("1up", "2up"):
+            for s in ("home", "away"):
+                assert f"{e}_{m}_{s}_odds" in row
+                assert f"{e}_{m}_{s}_prob" in row
+    assert row["has_1up"] is True
+    assert row["in_play"] is False
+    assert math.isclose(row["p_home"] + row["p_draw"] + row["p_away"], 1.0, abs_tol=1e-9)
+
+
+def test_price_moment_returns_none_without_full_1x2():
+    m = _moment(p_home_raw=0.0, p_draw_raw=0.0, p_away_raw=0.0)
+    restore = pricing.install_dp_cache()
+    try:
+        assert pricing.price_moment(m, run_ts="t", max_home_lead=0, max_away_lead=0) is None
+    finally:
+        restore()
+
+
+def test_price_moment_drops_1up_without_ftts():
+    restore = pricing.install_dp_cache()
+    try:
+        row = pricing.price_moment(_moment(ftts_home=None, ftts_away=None),
+                                   run_ts="t", max_home_lead=0, max_away_lead=0)
+    finally:
+        restore()
+    assert row is not None
+    assert row["has_1up"] is False
+    assert row["v2_1up_home_odds"] is None
