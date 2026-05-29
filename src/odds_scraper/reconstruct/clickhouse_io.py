@@ -23,9 +23,13 @@ def config_from_env() -> dict:
 
 def connect(config: dict | None = None):
     """Open a clickhouse-connect client. Imported lazily so unit tests that
-    inject a fake client need no driver/network."""
+    inject a fake client need no driver/network.
+
+    compress=False: clickhouse-connect defaults to lz4-compressed payloads,
+    which the Teleport HTTP DB proxy rejects ("unsupported compression method
+    lz4"). Over a localhost tunnel compression buys nothing, so disable it."""
     import clickhouse_connect
-    return clickhouse_connect.get_client(**(config or config_from_env()))
+    return clickhouse_connect.get_client(compress=False, **(config or config_from_env()))
 
 
 def stream_rows(client, sql: str):
