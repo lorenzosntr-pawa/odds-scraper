@@ -1,8 +1,7 @@
-"""Does the source actually carry live scores in home_score/away_score?
+"""Where is the live score in this table? home_score/away_score are all 0 for
+FT 1X2, so find what actually carries in-play score (or the goal progression).
 
-Checks the FT 1X2 rows (what we anchor on) for in-play score variety, so we
-can tell whether all-zero output scores are a data-slice artifact or a real
-bug. Usage (CH_* env set, tunnel up):
+Usage (CH_* env set, tunnel up):
   uv run python scripts/check_source_scores.py \
     --source bi_Samuel.tbl_oneup_backtest_odds_data_betslip_includingGoalInfo \
     --brand betpawa-ghana
@@ -25,8 +24,7 @@ def main() -> None:
     args = ap.parse_args()
     client = chio.connect()
     t = args.source
-    bf = f" AND brand = '{args.brand}'" if args.brand else ""
-    base = f"FROM {t} WHERE market_name = '1X2 - FT'{bf}"
+    bf = f"brand = '{args.brand}'" if args.brand else "1"
 
     def show(title, sql):
         print(f"\n=== {title} ===")
@@ -35,20 +33,33 @@ def main() -> None:
         for row in res.result_rows:
             print("  " + " | ".join(str(v) for v in row))
 
-    show("FT 1X2 rows by in_play, and how many have a non-zero score",
+    # 1. Across ALL markets: is home_score/away_score ever non-zero anywhere?
+    show("home/away_score presence by in_play (all markets)",
          f"SELECT in_play, count() AS rows, "
-         f"countIf(home_score != 0 OR away_score != 0) AS scored_rows, "
-         f"max(home_score) AS max_h, max(away_score) AS max_a {base} "
-         f"GROUP BY in_play ORDER BY in_play")
+         f"countIf(home_score != 0 OR away_score != 0) AS scored, "
+         f"max(home_score) AS max_h, max(away_score) AS max_a "
+         f"FROM {t} WHERE {bf} GROUP BY in_play ORDER BY in_play")
 
-    show("top (home_score, away_score) among LIVE FT 1X2 rows",
-         f"SELECT home_score, away_score, count() AS rows {base} AND in_play "
-         f"GROUP BY home_score, away_score ORDER BY rows DESC LIMIT 20")
+    # 2. If some market carries the score, surface it.
+    show("markets where a score is ever non-zero (top 25)",
+         f"SELECT market_name, count() AS rows, "
+         f"countIf(home_score != 0 OR away_score != 0) AS scored, "
+         f"max(home_score) AS max_h, max(away_score) AS max_a "
+         f"FROM {t} WHERE {bf} GROUP BY market_name "
+         f"HAVING scored > 0 ORDER BY scored DESC LIMIT 25")
 
-    show("sample LIVE FT 1X2 rows that DO have a score",
-         f"SELECT event_id, odds_timestamp, home_score, away_score, "
-         f"selection_name, true_proba {base} AND in_play "
-         f"AND (home_score != 0 OR away_score != 0) LIMIT 10")
+    # 3. What are the current_score_* columns? Sample live rows.
+    show("sample LIVE rows: home/away_score + current_score_from/to",
+         f"SELECT event_id, odds_timestamp, market_name, handicap, "
+         f"home_score, away_score, current_score_from, current_score_to "
+         f"FROM {t} WHERE {bf} AND in_play LIMIT 12")
+
+    # 4. Next-goal market encodes goal progression in handicap (=goal#*4).
+    #    For LIVE rows, handicap/4 - 1 = goals already scored at snapshot.
+    show("LIVE next-goal handicap distribution (handicap/4 = next goal number)",
+         f"SELECT handicap, intDiv(handicap, 4) AS next_goal_no, count() AS rows "
+         f"FROM {t} WHERE {bf} AND in_play AND market_name = '{{handicap}} Goal' "
+         f"GROUP BY handicap ORDER BY handicap LIMIT 20")
 
 
 if __name__ == "__main__":
