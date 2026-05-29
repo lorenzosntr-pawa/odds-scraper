@@ -40,7 +40,7 @@ OUTPUT_COLUMNS = [
     "ftts_home", "ftts_away", "has_1up",
     "max_input_staleness_seconds", "renorm_drift",
 ]
-for _e in ("v2", "v3", "v4"):
+for _e in ("v3", "v4"):
     for _m in ("1up", "2up"):
         for _s in ("home", "away"):
             OUTPUT_COLUMNS += [f"{_e}_{_m}_{_s}_odds",

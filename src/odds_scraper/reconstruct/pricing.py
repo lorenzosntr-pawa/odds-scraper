@@ -16,7 +16,7 @@ from .constants import (MARKET_1X2, MARKET_OU_TOTAL, MARKET_OU_HOME,
                         MARKET_OU_AWAY, MARKET_NEXT_GOAL,
                         SEL_HOME, SEL_DRAW, SEL_AWAY,
                         SEL_OVER, SEL_NG_HOME, SEL_NG_AWAY)
-from odds_scraper.pricer import engine_v2, engine_v3, engine_v4
+from odds_scraper.pricer import engine_v3, engine_v4
 
 
 def renormalize_1x2(p_home: float, p_draw: float, p_away: float):
@@ -74,9 +74,9 @@ def install_dp_cache(round_dp: int = 4):
     install captures the first wrapper as its base."""
     global _dp_cached
     originals = {
-        m: m.ever_leads_probability for m in (engine_v2, engine_v3, engine_v4)
+        m: m.ever_leads_probability for m in (engine_v3, engine_v4)
     }
-    base = engine_v2.ever_leads_probability
+    base = engine_v3.ever_leads_probability
 
     @functools.lru_cache(maxsize=200_000)
     def _cached(lh: float, la: float, d: int):
@@ -102,7 +102,7 @@ def dp_cache_info():
     return _dp_cached.cache_info()
 
 
-_ENGINES = {"v2": engine_v2, "v3": engine_v3, "v4": engine_v4}
+_ENGINES = {"v3": engine_v3, "v4": engine_v4}
 
 
 def _ev(prob, odds):
@@ -139,8 +139,8 @@ def price_moment(moment: dict, *, run_ts: str,
     for name, eng in _ENGINES.items():
         res = eng.price_early_payout_markets(**kw)
         results[name] = res
-    # Use v2 as the gate for derivable lambda (DP identical across engines).
-    if results["v2"]["lambda_home"] is None or results["v2"]["lambda_away"] is None:
+    # Use v3 as the gate for derivable lambda (DP identical across engines).
+    if results["v3"]["lambda_home"] is None or results["v3"]["lambda_away"] is None:
         return None
 
     row = {
@@ -150,8 +150,8 @@ def price_moment(moment: dict, *, run_ts: str,
         "in_play": moment["in_play"], "moment_ts": moment["moment_ts"],
         "home_score": int(moment["home_score"]), "away_score": int(moment["away_score"]),
         "p_home": ph, "p_draw": pd, "p_away": pa,
-        "lambda_home": results["v2"]["lambda_home"],
-        "lambda_away": results["v2"]["lambda_away"],
+        "lambda_home": results["v3"]["lambda_home"],
+        "lambda_away": results["v3"]["lambda_away"],
         "ftts_home": kw["ftts_home_prob"], "ftts_away": kw["ftts_away_prob"],
         "has_1up": has_1up,
         "max_input_staleness_seconds": int(moment["max_input_staleness_seconds"]),

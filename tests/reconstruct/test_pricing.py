@@ -2,7 +2,7 @@ import math
 import pytest
 from odds_scraper.reconstruct import pricing
 from odds_scraper.reconstruct import constants as c
-from odds_scraper.pricer import engine_v2, engine_v3, engine_v4
+from odds_scraper.pricer import engine_v3, engine_v4
 
 
 def test_renormalize_1x2_scales_to_one():
@@ -68,20 +68,19 @@ def test_assemble_kwargs_drops_ftts_when_missing():
 
 
 def test_install_dp_cache_patches_all_engines_and_restores():
-    orig2 = engine_v2.ever_leads_probability
+    orig3 = engine_v3.ever_leads_probability
     restore = pricing.install_dp_cache()
     try:
-        assert engine_v2.ever_leads_probability is not orig2
-        assert engine_v3.ever_leads_probability is engine_v2.ever_leads_probability
-        assert engine_v4.ever_leads_probability is engine_v2.ever_leads_probability
+        assert engine_v3.ever_leads_probability is not orig3
+        assert engine_v4.ever_leads_probability is engine_v3.ever_leads_probability
         # cache actually memoizes
-        engine_v2.ever_leads_probability(1.2, 1.0, 0)
+        engine_v3.ever_leads_probability(1.2, 1.0, 0)
         info_before = pricing.dp_cache_info().misses
-        engine_v2.ever_leads_probability(1.2, 1.0, 0)
+        engine_v3.ever_leads_probability(1.2, 1.0, 0)
         assert pricing.dp_cache_info().misses == info_before  # second call hit cache
     finally:
         restore()
-    assert engine_v2.ever_leads_probability is orig2
+    assert engine_v3.ever_leads_probability is orig3
 
 
 def test_price_moment_emits_all_engine_cells():
@@ -92,7 +91,7 @@ def test_price_moment_emits_all_engine_cells():
     finally:
         restore()
     assert row is not None
-    for e in ("v2", "v3", "v4"):
+    for e in ("v3", "v4"):
         for m in ("1up", "2up"):
             for s in ("home", "away"):
                 assert f"{e}_{m}_{s}_odds" in row
@@ -120,7 +119,7 @@ def test_price_moment_drops_1up_without_ftts():
         restore()
     assert row is not None
     assert row["has_1up"] is False
-    assert row["v2_1up_home_odds"] is None
+    assert row["v3_1up_home_odds"] is None
 
 
 def _row(market, sel, proba, line=0.0, ts="2026-05-01 17:30:00",
