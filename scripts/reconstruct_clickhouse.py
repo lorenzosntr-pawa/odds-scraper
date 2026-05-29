@@ -122,11 +122,13 @@ def main() -> None:
         setup_client.command(queries.delete_from_event_sql(args.output, int(m)),
                              settings={"mutations_sync": 2})
         min_event_id = int(m)
+    setup_client.close()        # shards open their own connections
 
     restore = pricing.install_dp_cache()
     n_scanned = n_out = n_1up = n_prematch = n_live = flagged = stale_max = inserted = 0
     stale_samples = []          # 1-in-N sample of staleness for report percentiles
     STALE_SAMPLE_EVERY = 25
+    STALE_SAMPLE_CAP = 500_000  # bound the sample even on huge runs
 
     def _counting_scan(it):
         nonlocal n_scanned
@@ -151,8 +153,8 @@ def main() -> None:
             s = row["max_input_staleness_seconds"]
             if s > stale_max:
                 stale_max = s
-            if n_out % STALE_SAMPLE_EVERY == 0:   # bounded-memory sample
-                stale_samples.append(s)
+            if n_out % STALE_SAMPLE_EVERY == 0 and len(stale_samples) < STALE_SAMPLE_CAP:
+                stale_samples.append(s)   # bounded-memory sample
             yield row
 
     sharded = args.shards > 1
@@ -171,14 +173,17 @@ def main() -> None:
                 min_event_id=min_event_id)
             label = f"shard {k + 1}/{args.shards}" if sharded else "source"
             print(f"streaming {label} ...", flush=True)
-            rows_stream = _counting_scan(chio.stream_rows(client, sql))
-            moments = pricing.moments_from_rows(
-                rows_stream, aggregate_brands=args.aggregate_brands,
-                fresh_seconds=args.max_staleness)
-            priced = pricing.run_pricing(moments, run_ts=args.run_ts, engines=engines)
-            inserted += chio.insert_rows(client, args.output, _accounting(priced),
-                                         columns=c.OUTPUT_COLUMNS,
-                                         batch_size=args.batch_size)
+            try:
+                rows_stream = _counting_scan(chio.stream_rows(client, sql))
+                moments = pricing.moments_from_rows(
+                    rows_stream, aggregate_brands=args.aggregate_brands,
+                    fresh_seconds=args.max_staleness)
+                priced = pricing.run_pricing(moments, run_ts=args.run_ts, engines=engines)
+                inserted += chio.insert_rows(client, args.output, _accounting(priced),
+                                             columns=c.OUTPUT_COLUMNS,
+                                             batch_size=args.batch_size)
+            finally:
+                client.close()   # free this shard's connection/sockets promptly
             if sharded:
                 print(f"  {label} done — {inserted:,} rows so far", flush=True)
         cache_info = pricing.dp_cache_info()
