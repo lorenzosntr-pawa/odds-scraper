@@ -22,7 +22,9 @@ that bring it in line with the latest Java pricing rewrite:
      BUT the 2UP boost-COEFFICIENT blend and _favorite_strength STILL use the
      PROBABILITY-based favourite (Java ThreeWayCommon) — unchanged from V3.
 
-EVERYTHING ELSE is identical to engine_v3.py. Module-isolated so
+EVERYTHING ELSE is identical to engine_v3.py except where the three deltas
+above require otherwise (e.g. the level path reuses its DP `stats` rather than
+recomputing). Module-isolated so
 with_coefficients overrides never cross-contaminate the other engines.
 """
 from __future__ import annotations
@@ -463,7 +465,8 @@ def price_early_payout_markets(
     total_ou: List[Tuple[float, float]],
     home_ou: List[Tuple[float, float]],
     away_ou: List[Tuple[float, float]],
-    # FTTS probabilities (pre-devigged). 1UP level-score needs both; trailing-team path does not.
+    # FTTS probabilities — RETAINED for runner/signature compatibility only;
+    # V4 reads neither (level-score 1UP is DP-direct, not regression-based).
     ftts_home_prob: Optional[float] = None,
     ftts_away_prob: Optional[float] = None,
     # Live score as (home_goals, away_goals). (0, 0) means prematch / level — default.
