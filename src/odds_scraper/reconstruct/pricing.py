@@ -33,3 +33,23 @@ def next_goal_index(home_score: int, away_score: int) -> int:
     """Goal number of the next goal = goals already scored + 1.
     The next-goal market line (handicap/4.0) equals this index."""
     return home_score + away_score + 1
+
+
+def assemble_engine_kwargs(moment: dict) -> dict:
+    """Build the kwargs accepted by every engine's price_early_payout_markets
+    from a Moment dict. Renormalizes 1X2, synthesizes cap odds, passes O/U
+    over-probabilities and FTTS through unchanged (already fair)."""
+    ph, pd, pa, _drift = renormalize_1x2(
+        moment["p_home_raw"], moment["p_draw_raw"], moment["p_away_raw"])
+    return dict(
+        p_home_win=ph, p_draw=pd, p_away_win=pa,
+        home_1x2_odds=cap_odds_from_prob(ph),
+        draw_1x2_odds=cap_odds_from_prob(pd),
+        away_1x2_odds=cap_odds_from_prob(pa),
+        total_ou=list(moment["total_ou"]),
+        home_ou=list(moment["home_ou"]),
+        away_ou=list(moment["away_ou"]),
+        ftts_home_prob=moment["ftts_home"],
+        ftts_away_prob=moment["ftts_away"],
+        score=(int(moment["home_score"]), int(moment["away_score"])),
+    )

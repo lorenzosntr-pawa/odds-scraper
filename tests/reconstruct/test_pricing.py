@@ -32,3 +32,34 @@ def test_next_goal_index_prematch_is_one():
 def test_next_goal_index_uses_total_goals_plus_one():
     assert pricing.next_goal_index(1, 1) == 3   # 2 scored -> next is goal #3
     assert pricing.next_goal_index(2, 0) == 3
+
+
+def _moment(**over):
+    m = {
+        "event_id": "E1", "sr_id": "sr1", "brand": "ng",
+        "event_name": "A vs B", "sr_start_time": "2026-05-01 18:00:00",
+        "in_play": False, "moment_ts": "2026-05-01 17:30:00",
+        "home_score": 0, "away_score": 0,
+        "p_home_raw": 0.5, "p_draw_raw": 0.3, "p_away_raw": 0.4,
+        "total_ou": [(2.5, 0.55)], "home_ou": [(1.5, 0.5)], "away_ou": [(1.5, 0.45)],
+        "ftts_home": 0.45, "ftts_away": 0.40,
+        "max_input_staleness_seconds": 100,
+    }
+    m.update(over)
+    return m
+
+
+def test_assemble_kwargs_uses_renormalized_probs_and_no_devig():
+    kw = pricing.assemble_engine_kwargs(_moment())
+    assert math.isclose(kw["p_home_win"] + kw["p_draw"] + kw["p_away_win"], 1.0, abs_tol=1e-9)
+    # O/U over-prob passed straight through (no devig)
+    assert kw["total_ou"] == [(2.5, 0.55)]
+    # cap odds derived from renormalized prob with 2% margin
+    assert math.isclose(kw["home_1x2_odds"], pricing.cap_odds_from_prob(kw["p_home_win"]), abs_tol=1e-9)
+    assert kw["ftts_home_prob"] == 0.45
+    assert kw["score"] == (0, 0)
+
+
+def test_assemble_kwargs_drops_ftts_when_missing():
+    kw = pricing.assemble_engine_kwargs(_moment(ftts_home=None, ftts_away=None))
+    assert kw["ftts_home_prob"] is None and kw["ftts_away_prob"] is None
