@@ -23,3 +23,12 @@ def test_cap_odds_applies_two_percent_margin():
 
 def test_cap_odds_none_for_nonpositive_prob():
     assert pricing.cap_odds_from_prob(0.0) is None
+
+
+def test_next_goal_index_prematch_is_one():
+    assert pricing.next_goal_index(0, 0) == 1
+
+
+def test_next_goal_index_uses_total_goals_plus_one():
+    assert pricing.next_goal_index(1, 1) == 3   # 2 scored -> next is goal #3
+    assert pricing.next_goal_index(2, 0) == 3

@@ -27,3 +27,9 @@ def cap_odds_from_prob(prob: float, margin: float = CAP_MARGIN) -> Optional[floa
     if implied <= 0:
         return None
     return 1.0 / implied
+
+
+def next_goal_index(home_score: int, away_score: int) -> int:
+    """Goal number of the next goal = goals already scored + 1.
+    The next-goal market line (handicap/4.0) equals this index."""
+    return home_score + away_score + 1
