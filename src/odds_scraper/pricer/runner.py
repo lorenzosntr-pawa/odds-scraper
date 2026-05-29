@@ -199,6 +199,61 @@ def _ev(our_prob, book_odds):
     return our_prob * book_odds - 1.0
 
 
+# ---- CSV row-block builders (shared by both runners) ----
+# Each returns a {column: value} fragment keyed exactly as csv_export.CSV_COLUMNS
+# expects. write_csv assembles rows by column name and blanks any column a row
+# omits, so a runner that didn't run an engine just leaves its block out — no
+# positional padding, no magic blank counts. Adding an engine touches only
+# csv_export.OUR_ENGINE_PREFIXES plus one `_our_block_dict` call per runner.
+
+def _our_block_dict(prob_prefix: str, odds_prefix: str, res: Optional[dict]) -> dict:
+    """One engine's 16-cell OUR block (probs + fair/capped/capped_ev for 1UP
+    and 2UP home/away). Empty dict when the engine didn't run (`res` is None)."""
+    if res is None:
+        return {}
+    p_h1, p_a1 = res["p_home_1"], res["p_away_1"]
+    p_h2, p_a2 = res["p_home_2"], res["p_away_2"]
+    m1, m2 = res["market_1up"], res["market_2up"]
+    values = (
+        p_h1, p_a1,
+        m1["home_fair"], m1["home_margin"], _ev(p_h1, m1["home_margin"]),
+        m1["away_fair"], m1["away_margin"], _ev(p_a1, m1["away_margin"]),
+        p_h2, p_a2,
+        m2["home_fair"], m2["home_margin"], _ev(p_h2, m2["home_margin"]),
+        m2["away_fair"], m2["away_margin"], _ev(p_a2, m2["away_margin"]),
+    )
+    return dict(zip(csv_export.our_block_cols(prob_prefix, odds_prefix), values))
+
+
+def _book_block_dict(prefix: str, q: dict, p_h1, p_a1, p_h2, p_a2) -> dict:
+    """12 cells for a book that carries a devigged prob (BP/SB): per selection
+    the book's prob, its odds, and OUR EV against those odds."""
+    return {
+        f"{prefix}_p_1up_home": q["1up_home"][1], f"{prefix}_1up_home_odds": q["1up_home"][0], f"{prefix}_1up_home_ev": _ev(p_h1, q["1up_home"][0]),
+        f"{prefix}_p_1up_away": q["1up_away"][1], f"{prefix}_1up_away_odds": q["1up_away"][0], f"{prefix}_1up_away_ev": _ev(p_a1, q["1up_away"][0]),
+        f"{prefix}_p_2up_home": q["2up_home"][1], f"{prefix}_2up_home_odds": q["2up_home"][0], f"{prefix}_2up_home_ev": _ev(p_h2, q["2up_home"][0]),
+        f"{prefix}_p_2up_away": q["2up_away"][1], f"{prefix}_2up_away_odds": q["2up_away"][0], f"{prefix}_2up_away_ev": _ev(p_a2, q["2up_away"][0]),
+    }
+
+
+def _book_odds_only_dict(prefix: str, q: dict) -> dict:
+    """4 odds-only cells for a book with no stored devigged prob (B9J/BW)."""
+    return {
+        f"{prefix}_1up_home_odds": q["1up_home"][0], f"{prefix}_1up_away_odds": q["1up_away"][0],
+        f"{prefix}_2up_home_odds": q["2up_home"][0], f"{prefix}_2up_away_odds": q["2up_away"][0],
+    }
+
+
+def _pb_book_ev_dict(book: str, q: dict, p_h1, p_a1, p_h2, p_a2) -> dict:
+    """4 Profile-B EV cells for a book (OUR Profile-B prob vs the same book
+    odds). Book prob+odds stay profile-independent in the main block; only EV
+    is duplicated. All None (→ blank) when no Profile B ran."""
+    return {
+        f"pB_{book}_1up_home_ev": _ev(p_h1, q["1up_home"][0]), f"pB_{book}_1up_away_ev": _ev(p_a1, q["1up_away"][0]),
+        f"pB_{book}_2up_home_ev": _ev(p_h2, q["2up_home"][0]), f"pB_{book}_2up_away_ev": _ev(p_a2, q["2up_away"][0]),
+    }
+
+
 def _book_1x2_odds(prices: list) -> tuple:
     """`(home_odds, draw_odds, away_odds)` for one book's tick. Missing or
     suspended sides become empty cells in the CSV so the reader can see
@@ -335,68 +390,37 @@ def run_simulation(
                     cap_src_away = engine_inputs.get("_cap_source_away", "")
                     p_h1, p_a1 = res["p_home_1"], res["p_away_1"]
                     p_h2, p_a2 = res["p_home_2"], res["p_away_2"]
-                    cap_1h = res["market_1up"]["home_margin"]
-                    cap_1a = res["market_1up"]["away_margin"]
-                    cap_2h = res["market_2up"]["home_margin"]
-                    cap_2a = res["market_2up"]["away_margin"]
-                    rows.append((
-                        # V1-only runner — engines marker, profile A
-                        # from the active config, no profile B, V2 block
-                        # and pB_* blocks all blank.
-                        "v1",
-                        config.name, "",
-                        t["snapshot_id"], event_id,
-                        t["home"], t["away"], t["kickoff_utc"],
-                        ts_utc,
-                        t["status"], t["match_minute"],
-                        t["score_home"], t["score_away"],
-                        basis,
-                        res["lambda_home"], res["lambda_away"],
-                        # 1x2 + next-goal reference: devigged 1x2 probs,
-                        # next-goal probs, and the resolved per-side cap
-                        # source odds the engine actually used.
-                        engine_inputs["p_home_win"], engine_inputs["p_draw"],
-                        engine_inputs["p_away_win"],
-                        engine_inputs.get("ftts_home_prob"),
-                        engine_inputs.get("ftts_away_prob"),
-                        engine_inputs["home_1x2_odds"], engine_inputs["away_1x2_odds"],
-                        # OUR 1UP / 2UP block — simulated capped EV
-                        # paired with each capped odds so the reader
-                        # sees the engine's embedded margin per side.
-                        p_h1, p_a1,
-                        res["market_1up"]["home_fair"], cap_1h, _ev(p_h1, cap_1h),
-                        res["market_1up"]["away_fair"], cap_1a, _ev(p_a1, cap_1a),
-                        p_h2, p_a2,
-                        res["market_2up"]["home_fair"], cap_2h, _ev(p_h2, cap_2h),
-                        res["market_2up"]["away_fair"], cap_2a, _ev(p_a2, cap_2a),
-                        # V2 + V3 + V4 blocks — 16 blanks each in V1-only runs.
-                        *(("",) * 16),
-                        *(("",) * 16),
-                        *(("",) * 16),
-                        # BP — prob, odds, EV per selection.
-                        bp["1up_home"][1], bp["1up_home"][0], _ev(p_h1, bp["1up_home"][0]),
-                        bp["1up_away"][1], bp["1up_away"][0], _ev(p_a1, bp["1up_away"][0]),
-                        bp["2up_home"][1], bp["2up_home"][0], _ev(p_h2, bp["2up_home"][0]),
-                        bp["2up_away"][1], bp["2up_away"][0], _ev(p_a2, bp["2up_away"][0]),
-                        # SB — same shape.
-                        sb["1up_home"][1], sb["1up_home"][0], _ev(p_h1, sb["1up_home"][0]),
-                        sb["1up_away"][1], sb["1up_away"][0], _ev(p_a1, sb["1up_away"][0]),
-                        sb["2up_home"][1], sb["2up_home"][0], _ev(p_h2, sb["2up_home"][0]),
-                        sb["2up_away"][1], sb["2up_away"][0], _ev(p_a2, sb["2up_away"][0]),
-                        # B9J / BW — odds only (no devigged prob stored).
-                        b9j["1up_home"][0], b9j["1up_away"][0],
-                        b9j["2up_home"][0], b9j["2up_away"][0],
-                        bw["1up_home"][0],  bw["1up_away"][0],
-                        bw["2up_home"][0],  bw["2up_away"][0],
-                        # 1x2 odds + which book the engine used per side
-                        # for the cap source.
-                        bp_1x2_h, bp_1x2_d, bp_1x2_a,
-                        sb_1x2_h, sb_1x2_d, sb_1x2_a,
-                        cap_src_home, cap_src_away,
-                        # Profile B blocks — V1 + V2 + V3 + V4 OUR (16*4) +
-                        # BP/SB EV (4+4) = 72 blanks in single-profile runs.
-                        *((""),) * 72,
-                    ))
+                    # V1-only runner: emit the V1 OUR block plus the bookmaker /
+                    # 1x2 cells. The V2/V3/V4 blocks and every pB_* column are
+                    # simply omitted — write_csv blanks any column not present,
+                    # so there's no positional padding to keep in sync.
+                    rows.append({
+                        "engines": "v1",
+                        "profile_a": config.name, "profile_b": "",
+                        "snapshot_id": t["snapshot_id"], "event_id": event_id,
+                        "home": t["home"], "away": t["away"], "kickoff_utc": t["kickoff_utc"],
+                        "ts_utc": ts_utc,
+                        "status": t["status"], "match_minute": t["match_minute"],
+                        "score_home": t["score_home"], "score_away": t["score_away"],
+                        "basis_used": basis,
+                        "lambda_home": res["lambda_home"], "lambda_away": res["lambda_away"],
+                        # 1x2 + next-goal reference: devigged 1x2 probs, next-goal
+                        # probs, and the resolved per-side cap source odds.
+                        "p_home_win": engine_inputs["p_home_win"], "p_draw": engine_inputs["p_draw"],
+                        "p_away_win": engine_inputs["p_away_win"],
+                        "ftts_home_prob": engine_inputs.get("ftts_home_prob"),
+                        "ftts_away_prob": engine_inputs.get("ftts_away_prob"),
+                        "cap_1x2_home_odds": engine_inputs["home_1x2_odds"],
+                        "cap_1x2_away_odds": engine_inputs["away_1x2_odds"],
+                        **_our_block_dict("our_", "our_", res),
+                        **_book_block_dict("bp", bp, p_h1, p_a1, p_h2, p_a2),
+                        **_book_block_dict("sb", sb, p_h1, p_a1, p_h2, p_a2),
+                        **_book_odds_only_dict("b9j", b9j),
+                        **_book_odds_only_dict("bw", bw),
+                        "bp_1x2_home_odds": bp_1x2_h, "bp_1x2_draw_odds": bp_1x2_d, "bp_1x2_away_odds": bp_1x2_a,
+                        "sb_1x2_home_odds": sb_1x2_h, "sb_1x2_draw_odds": sb_1x2_d, "sb_1x2_away_odds": sb_1x2_a,
+                        "cap_source_home": cap_src_home, "cap_source_away": cap_src_away,
+                    })
                     seen_events.add(event_id)
             if on_progress is not None and (i + 1) % _PROGRESS_BATCH == 0:
                 on_progress(i + 1, n_total)
