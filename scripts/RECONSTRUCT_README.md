@@ -104,7 +104,16 @@ Flags:
   samples the same signal at more timestamps → **more moments at higher confidence**
   (the 1X2 anchor finds closer O/U / next-goal captures). Output rows are tagged
   `brand='ALL'`. Preferred for generating the sim's odds set.
-- `--limit` — cap rows scanned (smoke runs only).
+- `--sample-mod N` — representative smoke: keep ~1/N of events (whole events) spread
+  across the id range, e.g. `--sample-mod 200`. Unbiased, unlike `--limit` (which grabs
+  the lowest event_ids).
+- `--limit` — cap rows scanned; biased to the lowest event_ids, so prefer `--sample-mod`
+  for smokes.
+- `--max-staleness SEC` — freshness cap. Exclude any carried input older than `SEC` when
+  building a moment, and drop the moment if the 1X2 anchor itself is older. Guarantees
+  every emitted row has `max_input_staleness_seconds <= SEC` (high confidence) and stops
+  a rarely-recaptured fringe O/U line from polluting λ or the staleness metric — e.g.
+  `--max-staleness 1800` (≤30 min). Trades some coverage for quality.
 - `--recreate` — drop + recreate the output table first. Use it the first time, or after
   any schema change.
 - `--run-ts` — a tag stamped on every row so you can tell runs apart. Use the current

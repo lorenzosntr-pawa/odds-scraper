@@ -232,12 +232,25 @@ class _CarryState:
         return self.x12.keys() >= {SEL_HOME, SEL_DRAW, SEL_AWAY}
 
 
-def _emit_moment(state: "_CarryState", meta: dict, score, dt, ts_str):
+def _emit_moment(state: "_CarryState", meta: dict, score, dt, ts_str,
+                 fresh_seconds=None):
     """Build a Moment from carried-forward state, or None if 1X2 incomplete.
-    Picks the next-goal line active for the current score and reports the
-    worst staleness among the inputs actually used."""
+    Picks the next-goal line active for the current score and reports the worst
+    staleness among the inputs actually used.
+
+    When `fresh_seconds` is set, inputs older than that (relative to the moment
+    ts) are excluded: the moment is dropped if any 1X2 leg is too old, and
+    stale O/U lines / next-goal are left out — so a rarely-recaptured fringe
+    line can't drag the price or the staleness metric."""
     if not state.has_full_1x2():
         return None
+
+    def fresh(capture_dt):
+        return fresh_seconds is None or (dt - capture_dt).total_seconds() <= fresh_seconds
+
+    if not all(fresh(state.x12[s][1]) for s in (SEL_HOME, SEL_DRAW, SEL_AWAY)):
+        return None   # the 1X2 anchor itself isn't fresh enough
+
     hs, as_ = score
     active = float(next_goal_index(hs, as_))
     used = [state.x12[s][1] for s in (SEL_HOME, SEL_DRAW, SEL_AWAY)]
@@ -245,6 +258,8 @@ def _emit_moment(state: "_CarryState", meta: dict, score, dt, ts_str):
     def ou_list(family):
         out = []
         for line, (proba, d) in state.ou[family].items():
+            if not fresh(d):
+                continue
             out.append((line, proba))
             used.append(d)
         return sorted(out)
@@ -254,7 +269,8 @@ def _emit_moment(state: "_CarryState", meta: dict, score, dt, ts_str):
     away_ou = ou_list("away_ou")
     ng_line = state.ng.get(active, {})
     ftts_home = ftts_away = None
-    if SEL_NG_HOME in ng_line and SEL_NG_AWAY in ng_line:
+    if SEL_NG_HOME in ng_line and SEL_NG_AWAY in ng_line \
+            and fresh(ng_line[SEL_NG_HOME][1]) and fresh(ng_line[SEL_NG_AWAY][1]):
         ftts_home, ftts_home_dt = ng_line[SEL_NG_HOME]
         ftts_away, ftts_away_dt = ng_line[SEL_NG_AWAY]
         used.extend((ftts_home_dt, ftts_away_dt))
@@ -271,7 +287,7 @@ def _emit_moment(state: "_CarryState", meta: dict, score, dt, ts_str):
     }
 
 
-def moments_from_rows(rows, *, aggregate_brands: bool = False):
+def moments_from_rows(rows, *, aggregate_brands: bool = False, fresh_seconds=None):
     """Carry-forward alignment. Stream raw selection rows (one per
     market/line/selection/timestamp) and emit one Moment per distinct timestamp
     at which a full 1X2 triple has been seen, using the latest carried value of
@@ -316,7 +332,7 @@ def moments_from_rows(rows, *, aggregate_brands: bool = False):
         new_ts = new_block or cur_ts_str is None or ts_str != cur_ts_str
 
         if new_ts and state is not None and x12_at_cur_ts:
-            m = _emit_moment(state, meta, score, cur_dt, cur_ts_str)
+            m = _emit_moment(state, meta, score, cur_dt, cur_ts_str, fresh_seconds)
             if m is not None:
                 yield m
 
@@ -337,7 +353,7 @@ def moments_from_rows(rows, *, aggregate_brands: bool = False):
             x12_at_cur_ts = True
 
     if state is not None and x12_at_cur_ts:
-        m = _emit_moment(state, meta, score, cur_dt, cur_ts_str)
+        m = _emit_moment(state, meta, score, cur_dt, cur_ts_str, fresh_seconds)
         if m is not None:
             yield m
 

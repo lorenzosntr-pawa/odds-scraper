@@ -226,6 +226,30 @@ def test_moments_carry_forward_anchored_on_1x2():
     assert m["max_input_staleness_seconds"] == 1800       # O/U is 30 min stale
 
 
+def test_moments_fresh_seconds_excludes_stale_ou_line():
+    # O/U captured 1h before the 1X2 anchor; with a 30-min cap that O/U is
+    # dropped (moment still emits on the fresh 1X2, but with no O/U).
+    rows = [
+        _row(c.MARKET_OU_TOTAL, c.SEL_OVER, 0.55, line=2.5, ts="2026-05-01 17:00:00"),
+        _row(c.MARKET_1X2, c.SEL_HOME, 0.5, ts="2026-05-01 18:00:00"),
+        _row(c.MARKET_1X2, c.SEL_DRAW, 0.3, ts="2026-05-01 18:00:00"),
+        _row(c.MARKET_1X2, c.SEL_AWAY, 0.4, ts="2026-05-01 18:00:00"),
+    ]
+    m = list(pricing.moments_from_rows(rows, fresh_seconds=1800))[0]
+    assert m["total_ou"] == []                       # 60-min-old O/U excluded
+    assert m["max_input_staleness_seconds"] == 0     # only the fresh 1X2 remains
+
+
+def test_moments_fresh_seconds_drops_moment_when_1x2_stale():
+    # Two 1X2 legs fresh, one carried from 2h earlier; a 30-min cap drops it.
+    rows = [
+        _row(c.MARKET_1X2, c.SEL_AWAY, 0.4, ts="2026-05-01 16:00:00"),
+        _row(c.MARKET_1X2, c.SEL_HOME, 0.5, ts="2026-05-01 18:00:00"),
+        _row(c.MARKET_1X2, c.SEL_DRAW, 0.3, ts="2026-05-01 18:00:00"),
+    ]
+    assert list(pricing.moments_from_rows(rows, fresh_seconds=1800)) == []
+
+
 def test_moments_no_emit_at_ou_only_timestamp():
     # A full 1X2 then a later O/U-only update: no second moment (not a 1X2 ts).
     rows = [

@@ -36,6 +36,10 @@ def main() -> None:
                          "Unbiased, unlike --limit which takes the lowest event_ids.")
     ap.add_argument("--limit", type=int, default=None,
                     help="cap total source rows scanned (biased to lowest event_ids)")
+    ap.add_argument("--max-staleness", type=int, default=None,
+                    help="freshness cap (seconds): exclude inputs older than this when "
+                         "building a moment; drop the moment if the 1X2 anchor is too old. "
+                         "Caps every emitted row's staleness — e.g. 1800 for <=30min.")
     ap.add_argument("--engines", default="v3,v4",
                     help="comma-separated engines to compute: v3, v4, or v3,v4 "
                          "(default v3,v4). V4 alone needs no next-goal data.")
@@ -109,7 +113,8 @@ def main() -> None:
                                      include_next_goal=include_next_goal)
         rows_stream = _counting_scan(chio.stream_rows(client, sql))
         moments = pricing.moments_from_rows(rows_stream,
-                                            aggregate_brands=args.aggregate_brands)
+                                            aggregate_brands=args.aggregate_brands,
+                                            fresh_seconds=args.max_staleness)
         priced = pricing.run_pricing(moments, run_ts=args.run_ts, engines=engines)
 
         def _accounting(it):
