@@ -8,9 +8,12 @@ margin (brand-neutral) — offered `price` is intentionally NOT used.
 from __future__ import annotations
 
 import functools
+from datetime import datetime
 from typing import Optional
 
 from .constants import CAP_MARGIN
+from .constants import (MARKET_1X2, MARKET_OU_TOTAL, MARKET_OU_HOME,
+                        MARKET_OU_AWAY, SEL_OVER, SEL_NG_HOME, SEL_NG_AWAY)
 from odds_scraper.pricer import engine_v2, engine_v3, engine_v4
 
 
@@ -157,3 +160,89 @@ def price_moment(moment: dict, *, run_ts: str,
         row.update(_side_cells(f"{name}_1up", res, "market_1up", "p_home_1", "p_away_1"))
         row.update(_side_cells(f"{name}_2up", res, "market_2up", "p_home_2", "p_away_2"))
     return row
+
+
+_TS_FMT = "%Y-%m-%d %H:%M:%S"
+_OU_FAMILY = {MARKET_OU_TOTAL: "total_ou", MARKET_OU_HOME: "home_ou",
+              MARKET_OU_AWAY: "away_ou"}
+
+
+def _is_next_goal(market_name: str) -> bool:
+    return market_name.endswith(" Goal") and market_name[:-5].isdigit()
+
+
+def moments_from_rows(rows):
+    """Group aligned long rows (Task 8 output) into Moment dicts, ordered as
+    the rows arrive. `rows` must be grouped by (event_id, in_play, moment_ts)
+    contiguously (the extraction SQL ORDER BY guarantees this)."""
+    def key(r):
+        return (r["event_id"], r["in_play"], r["moment_ts"])
+
+    for (_eid, _ip, _mts), group in _groupby_contiguous(rows, key):
+        group = list(group)
+        head = group[0]
+        # 1X2 from the anchor selection columns (same on every row of the group)
+        p = {}
+        for r in group:
+            p[r["x12_selection"]] = r["x12_proba"]
+        if not ({"Home", "Draw", "Away"} <= set(p)):
+            continue
+        hs, as_ = int(head["home_score"]), int(head["away_score"])
+        active_line = float(next_goal_index(hs, as_))
+        ou = {"total_ou": {}, "home_ou": {}, "away_ou": {}}
+        ng = {}
+        sel_ts_used = []
+        for r in group:
+            mkt, sel = r["market_name"], r["selection_name"]
+            if mkt in _OU_FAMILY and sel == SEL_OVER:
+                ou[_OU_FAMILY[mkt]][float(r["line"])] = r["true_proba"]
+                sel_ts_used.append(r["sel_ts"])
+            elif _is_next_goal(mkt) and float(r["line"]) == active_line:
+                ng[sel] = r["true_proba"]
+                sel_ts_used.append(r["sel_ts"])
+        ftts_home = ng.get(SEL_NG_HOME)
+        ftts_away = ng.get(SEL_NG_AWAY)
+        if ftts_home is None or ftts_away is None:
+            ftts_home = ftts_away = None
+        moment_ts = head["moment_ts"]
+        stale = _staleness_seconds(moment_ts, sel_ts_used)
+        yield {
+            "event_id": head["event_id"], "sr_id": head["sr_id"],
+            "brand": head["brand"], "event_name": head["event_name"],
+            "sr_start_time": head["sr_start_time"],
+            "in_play": head["in_play"], "moment_ts": moment_ts,
+            "home_score": hs, "away_score": as_,
+            "p_home_raw": p["Home"], "p_draw_raw": p["Draw"], "p_away_raw": p["Away"],
+            "total_ou": sorted(ou["total_ou"].items()),
+            "home_ou": sorted(ou["home_ou"].items()),
+            "away_ou": sorted(ou["away_ou"].items()),
+            "ftts_home": ftts_home, "ftts_away": ftts_away,
+            "max_input_staleness_seconds": stale,
+        }
+
+
+def _groupby_contiguous(rows, key):
+    cur_key, bucket = object(), []
+    for r in rows:
+        k = key(r)
+        if k != cur_key and bucket:
+            yield cur_key, bucket
+            bucket = []
+        cur_key = k
+        bucket.append(r)
+    if bucket:
+        yield cur_key, bucket
+
+
+def _staleness_seconds(moment_ts: str, sel_ts_list) -> int:
+    if not sel_ts_list:
+        return 0
+    t0 = _parse_ts(moment_ts)
+    worst = max((t0 - _parse_ts(s)).total_seconds() for s in sel_ts_list if s)
+    return int(round(max(worst, 0)))
+
+
+def _parse_ts(s):
+    if isinstance(s, datetime):
+        return s
+    return datetime.strptime(str(s)[:19], _TS_FMT)

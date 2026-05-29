@@ -1,6 +1,7 @@
 import math
 import pytest
 from odds_scraper.reconstruct import pricing
+from odds_scraper.reconstruct import constants as c
 from odds_scraper.pricer import engine_v2, engine_v3, engine_v4
 
 
@@ -120,3 +121,61 @@ def test_price_moment_drops_1up_without_ftts():
     assert row is not None
     assert row["has_1up"] is False
     assert row["v2_1up_home_odds"] is None
+
+
+def _long(market, sel, proba, line=0.0, x12_sel="Home", x12_proba=0.5,
+          ts="2026-05-01 17:30:00", sel_ts="2026-05-01 17:29:00",
+          in_play=False, hs=0, as_=0):
+    return {
+        "event_id": "E1", "sr_id": "sr1", "brand": "ng",
+        "event_name": "A vs B", "sr_start_time": "2026-05-01 18:00:00",
+        "in_play": in_play, "moment_ts": ts, "home_score": hs, "away_score": as_,
+        "x12_selection": x12_sel, "x12_proba": x12_proba,
+        "market_name": market, "line": line, "selection_name": sel,
+        "true_proba": proba, "sel_ts": sel_ts,
+    }
+
+
+def test_moments_from_rows_builds_one_moment_per_timestamp():
+    rows = [
+        _long(c.MARKET_1X2, "Home", 0.5, x12_sel="Home", x12_proba=0.5),
+        _long(c.MARKET_1X2, "Draw", 0.3, x12_sel="Draw", x12_proba=0.3),
+        _long(c.MARKET_1X2, "Away", 0.4, x12_sel="Away", x12_proba=0.4),
+        _long(c.MARKET_OU_TOTAL, "Over", 0.55, line=2.5),
+        _long("1 Goal", "Home", 0.46, line=1.0),
+        _long("1 Goal", "Away", 0.40, line=1.0),
+        _long("1 Goal", "None", 0.14, line=1.0),
+    ]
+    moments = list(pricing.moments_from_rows(rows))
+    assert len(moments) == 1
+    m = moments[0]
+    assert m["p_home_raw"] == 0.5 and m["p_draw_raw"] == 0.3 and m["p_away_raw"] == 0.4
+    assert m["total_ou"] == [(2.5, 0.55)]
+    assert m["ftts_home"] == 0.46 and m["ftts_away"] == 0.40   # active line #1
+
+
+def test_moments_active_next_goal_line_follows_score():
+    # 1-1 -> active next goal is line #3; line #1 must be ignored for ftts
+    rows = [
+        _long(c.MARKET_1X2, "Home", 0.5, in_play=True, hs=1, as_=1),
+        _long(c.MARKET_1X2, "Draw", 0.3, x12_sel="Draw", in_play=True, hs=1, as_=1),
+        _long(c.MARKET_1X2, "Away", 0.4, x12_sel="Away", in_play=True, hs=1, as_=1),
+        _long(c.MARKET_OU_TOTAL, "Over", 0.6, line=3.5, in_play=True, hs=1, as_=1),
+        _long("1 Goal", "Home", 0.9, line=1.0, in_play=True, hs=1, as_=1),
+        _long("3 Goal", "Home", 0.30, line=3.0, in_play=True, hs=1, as_=1),
+        _long("3 Goal", "Away", 0.25, line=3.0, in_play=True, hs=1, as_=1),
+        _long("3 Goal", "None", 0.45, line=3.0, in_play=True, hs=1, as_=1),
+    ]
+    m = list(pricing.moments_from_rows(rows))[0]
+    assert m["ftts_home"] == 0.30 and m["ftts_away"] == 0.25   # line #3, not #1
+
+
+def test_moments_no_ftts_when_active_line_absent():
+    rows = [
+        _long(c.MARKET_1X2, "Home", 0.5, in_play=True, hs=2, as_=0),
+        _long(c.MARKET_1X2, "Draw", 0.3, x12_sel="Draw", in_play=True, hs=2, as_=0),
+        _long(c.MARKET_1X2, "Away", 0.4, x12_sel="Away", in_play=True, hs=2, as_=0),
+        _long(c.MARKET_OU_TOTAL, "Over", 0.6, line=3.5, in_play=True, hs=2, as_=0),
+    ]
+    m = list(pricing.moments_from_rows(rows))[0]
+    assert m["ftts_home"] is None and m["ftts_away"] is None
