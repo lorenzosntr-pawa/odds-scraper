@@ -37,7 +37,7 @@ OUTPUT_COLUMNS = [
     "run_ts", "brand", "event_id", "sr_id", "event_name", "sr_start_time",
     "in_play", "moment_ts", "home_score", "away_score",
     "p_home", "p_draw", "p_away", "lambda_home", "lambda_away",
-    "ftts_home", "ftts_away", "has_1up",
+    "ftts_home", "ftts_away",
     "max_input_staleness_seconds", "renorm_drift",
 ]
 for _e in ("v3", "v4"):
