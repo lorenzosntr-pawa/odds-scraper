@@ -64,6 +64,16 @@ CSV_COLUMNS = (
     "v3_p_home_2", "v3_p_away_2",
     "v3_our_2up_home_fair", "v3_our_2up_home_capped", "v3_our_2up_home_capped_ev",
     "v3_our_2up_away_fair", "v3_our_2up_away_capped", "v3_our_2up_away_capped_ev",
+    # ===== V4 engine block — same layout as V3's, prefixed v4_. Blank
+    # unless V4 (or a selection including it) ran. V4 is the latest Java
+    # port: DP-direct level 1UP, invalid-ref deactivation, odds-based
+    # favourite/near-even for the margin. =====
+    "v4_p_home_1", "v4_p_away_1",
+    "v4_our_1up_home_fair", "v4_our_1up_home_capped", "v4_our_1up_home_capped_ev",
+    "v4_our_1up_away_fair", "v4_our_1up_away_capped", "v4_our_1up_away_capped_ev",
+    "v4_p_home_2", "v4_p_away_2",
+    "v4_our_2up_home_fair", "v4_our_2up_home_capped", "v4_our_2up_home_capped_ev",
+    "v4_our_2up_away_fair", "v4_our_2up_away_capped", "v4_our_2up_away_capped_ev",
     # BP / SB carry per-selection true prob + odds + EV. EV uses OUR
     # probability against the book's odds (`our_prob * book_odds - 1`)
     # — that's the actionable edge. The `*_p_*` column is the book's
@@ -115,6 +125,12 @@ CSV_COLUMNS = (
     "pB_v3_p_home_2", "pB_v3_p_away_2",
     "pB_v3_our_2up_home_fair", "pB_v3_our_2up_home_capped", "pB_v3_our_2up_home_capped_ev",
     "pB_v3_our_2up_away_fair", "pB_v3_our_2up_away_capped", "pB_v3_our_2up_away_capped_ev",
+    "pB_v4_p_home_1", "pB_v4_p_away_1",
+    "pB_v4_our_1up_home_fair", "pB_v4_our_1up_home_capped", "pB_v4_our_1up_home_capped_ev",
+    "pB_v4_our_1up_away_fair", "pB_v4_our_1up_away_capped", "pB_v4_our_1up_away_capped_ev",
+    "pB_v4_p_home_2", "pB_v4_p_away_2",
+    "pB_v4_our_2up_home_fair", "pB_v4_our_2up_home_capped", "pB_v4_our_2up_home_capped_ev",
+    "pB_v4_our_2up_away_fair", "pB_v4_our_2up_away_capped", "pB_v4_our_2up_away_capped_ev",
     "pB_bp_1up_home_ev", "pB_bp_1up_away_ev",
     "pB_bp_2up_home_ev", "pB_bp_2up_away_ev",
     "pB_sb_1up_home_ev", "pB_sb_1up_away_ev",

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Iterator, Optional, Sequence
 
 from . import (
-    engine, engine_v2, engine_v3, inputs as input_extract, configs as config_mod,
+    engine, engine_v2, engine_v3, engine_v4, inputs as input_extract, configs as config_mod,
     csv_export, score_state,
 )
 from .runner import (
@@ -30,7 +30,7 @@ from .runner import (
 log = logging.getLogger(__name__)
 
 
-VALID_ENGINES = ("v1", "v2", "v3")
+VALID_ENGINES = ("v1", "v2", "v3", "v4")
 
 
 @contextmanager
@@ -70,6 +70,23 @@ def with_v3_coefficients(overrides: dict) -> Iterator[None]:
     finally:
         for k, v in saved.items():
             setattr(engine_v3, k, v)
+
+
+@contextmanager
+def with_v4_coefficients(overrides: dict) -> Iterator[None]:
+    """Mirror of `with_v3_coefficients` but targeting engine_v4. The hasattr
+    filter skips keys engine_v4 doesn't define (the removed 1UP regression
+    models, V1/V2 trailing margins) — V4 reads the same ONEUP/TWOUP margin /
+    boost / reduction / near-even constants V3 does."""
+    applicable = {k: v for k, v in overrides.items() if hasattr(engine_v4, k)}
+    saved = {k: getattr(engine_v4, k) for k in applicable}
+    try:
+        for k, v in applicable.items():
+            setattr(engine_v4, k, v)
+        yield
+    finally:
+        for k, v in saved.items():
+            setattr(engine_v4, k, v)
 
 
 _EMPTY_OUR = ("",) * 16
@@ -173,13 +190,14 @@ def run_simulation_dual(
     profile_a_name = config.name
     profile_b_name = config_b.name if config_b is not None else ""
 
-    def _run_engines(inputs: dict) -> tuple[Optional[dict], Optional[dict], Optional[dict]]:
+    def _run_engines(inputs: dict) -> tuple[Optional[dict], Optional[dict], Optional[dict], Optional[dict]]:
         """Call whichever engines are selected — caller's
         `with_*_coefficients` context decides which profile's
         coefficients are in force."""
         r1 = None
         r2 = None
         r3 = None
+        r4 = None
         if "v1" in eng:
             try:
                 r1 = engine.price_early_payout_markets(**inputs)
@@ -198,14 +216,21 @@ def run_simulation_dual(
             except Exception as exc:  # noqa: BLE001
                 log.warning("v3 engine crashed on event=%s ts=%s — skipping (%s)",
                             inputs.get("_event_id"), inputs.get("_ts_utc"), exc)
-        return r1, r2, r3
+        if "v4" in eng:
+            try:
+                r4 = engine_v4.price_early_payout_markets(**inputs)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("v4 engine crashed on event=%s ts=%s — skipping (%s)",
+                            inputs.get("_event_id"), inputs.get("_ts_utc"), exc)
+        return r1, r2, r3, r4
 
     # Both context managers active for Profile A's full duration — extras
     # are no-ops on the engine that isn't being called this run. For
     # Profile B (if set) the context flips mid-tick.
     with with_v1_coefficients(engine_overrides_v1), \
          with_v2_coefficients(engine_overrides), \
-         with_v3_coefficients(engine_overrides):
+         with_v3_coefficients(engine_overrides), \
+         with_v4_coefficients(engine_overrides):
         for i, t in enumerate(ticks):
             event_id = t["event_id"]
             ts_utc = t["ts_utc"]
@@ -235,7 +260,7 @@ def run_simulation_dual(
             # blocks installed engine_overrides at loop entry).
             engine_inputs["_event_id"] = event_id
             engine_inputs["_ts_utc"] = ts_utc
-            r_v1, r_v2, r_v3 = _run_engines(
+            r_v1, r_v2, r_v3, r_v4 = _run_engines(
                 {k: v for k, v in engine_inputs.items() if not k.startswith("_")}
             )
 
@@ -244,11 +269,13 @@ def run_simulation_dual(
             r_v1_b = None
             r_v2_b = None
             r_v3_b = None
+            r_v4_b = None
             if engine_overrides_b is not None:
                 with with_v1_coefficients(engine_overrides_b_v1), \
                      with_v2_coefficients(engine_overrides_b), \
-                     with_v3_coefficients(engine_overrides_b):
-                    r_v1_b, r_v2_b, r_v3_b = _run_engines(
+                     with_v3_coefficients(engine_overrides_b), \
+                     with_v4_coefficients(engine_overrides_b):
+                    r_v1_b, r_v2_b, r_v3_b, r_v4_b = _run_engines(
                         {k: v for k, v in engine_inputs.items() if not k.startswith("_")}
                     )
 
@@ -258,12 +285,14 @@ def run_simulation_dual(
                 ("v1" in eng and r_v1 is not None)
                 or ("v2" in eng and r_v2 is not None)
                 or ("v3" in eng and r_v3 is not None)
+                or ("v4" in eng and r_v4 is not None)
             )
             a_failed = not a_succeeded
             b_succeeded = (
                 ("v1" in eng and r_v1_b is not None)
                 or ("v2" in eng and r_v2_b is not None)
                 or ("v3" in eng and r_v3_b is not None)
+                or ("v4" in eng and r_v4_b is not None)
             )
             b_failed = engine_overrides_b is not None and not b_succeeded
             if a_failed and (engine_overrides_b is None or b_failed):
@@ -284,7 +313,8 @@ def run_simulation_dual(
 
             # EV against bookmaker odds uses V1's prob when V1 ran, then
             # V2, then V3. V1 stays the engine-of-record for live EVs.
-            ev_src = r_v1 if r_v1 is not None else (r_v2 if r_v2 is not None else r_v3)
+            ev_src = r_v1 if r_v1 is not None else (
+                r_v2 if r_v2 is not None else (r_v3 if r_v3 is not None else r_v4))
             p_h1 = ev_src["p_home_1"]
             p_a1 = ev_src["p_away_1"]
             p_h2 = ev_src["p_home_2"]
@@ -311,8 +341,16 @@ def run_simulation_dual(
                 r_v3["p_home_2"] if r_v3 else None,
                 r_v3["p_away_2"] if r_v3 else None,
             )
+            v4_block = _our_block(
+                r_v4,
+                r_v4["p_home_1"] if r_v4 else None,
+                r_v4["p_away_1"] if r_v4 else None,
+                r_v4["p_home_2"] if r_v4 else None,
+                r_v4["p_away_2"] if r_v4 else None,
+            )
 
-            lambdas_src = r_v1 if r_v1 is not None else (r_v2 if r_v2 is not None else r_v3)
+            lambdas_src = r_v1 if r_v1 is not None else (
+                r_v2 if r_v2 is not None else (r_v3 if r_v3 is not None else r_v4))
 
             # Profile B's blocks. Same shape as Profile A's; the OUR
             # blocks come from r_v1_b / r_v2_b, the BP/SB EV cells use
@@ -338,7 +376,15 @@ def run_simulation_dual(
                 r_v3_b["p_home_2"] if r_v3_b else None,
                 r_v3_b["p_away_2"] if r_v3_b else None,
             )
-            pB_ev_src = r_v1_b if r_v1_b is not None else (r_v2_b if r_v2_b is not None else r_v3_b)
+            pB_v4_block = _our_block(
+                r_v4_b,
+                r_v4_b["p_home_1"] if r_v4_b else None,
+                r_v4_b["p_away_1"] if r_v4_b else None,
+                r_v4_b["p_home_2"] if r_v4_b else None,
+                r_v4_b["p_away_2"] if r_v4_b else None,
+            )
+            pB_ev_src = r_v1_b if r_v1_b is not None else (
+                r_v2_b if r_v2_b is not None else (r_v3_b if r_v3_b is not None else r_v4_b))
             pB_p_h1 = pB_ev_src["p_home_1"] if pB_ev_src else None
             pB_p_a1 = pB_ev_src["p_away_1"] if pB_ev_src else None
             pB_p_h2 = pB_ev_src["p_home_2"] if pB_ev_src else None
@@ -363,6 +409,7 @@ def run_simulation_dual(
                 *v1_block,
                 *v2_block,
                 *v3_block,
+                *v4_block,
                 bp["1up_home"][1], bp["1up_home"][0], _ev(p_h1, bp["1up_home"][0]),
                 bp["1up_away"][1], bp["1up_away"][0], _ev(p_a1, bp["1up_away"][0]),
                 bp["2up_home"][1], bp["2up_home"][0], _ev(p_h2, bp["2up_home"][0]),
@@ -381,6 +428,7 @@ def run_simulation_dual(
                 *pB_v1_block,
                 *pB_v2_block,
                 *pB_v3_block,
+                *pB_v4_block,
                 _ev(pB_p_h1, bp["1up_home"][0]), _ev(pB_p_a1, bp["1up_away"][0]),
                 _ev(pB_p_h2, bp["2up_home"][0]), _ev(pB_p_a2, bp["2up_away"][0]),
                 _ev(pB_p_h1, sb["1up_home"][0]), _ev(pB_p_a1, sb["1up_away"][0]),

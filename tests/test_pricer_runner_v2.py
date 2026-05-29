@@ -355,3 +355,42 @@ def test_run_onchange_keeps_all_started(db, tmp_path):
         scope=_BASE_SCOPE, csv_path=p, engines=("v2",),
     )
     assert len(_read_csv(p)) == 2  # both kept — live never collapsed
+
+
+def test_dual_runner_v4_fills_v4_block(db, tmp_path):
+    """`engines=('v4',)` populates the v4_* OUR block and leaves v1/v2/v3 blank."""
+    _seed_event_with_priced_snapshot(db, "E")
+    default = configs.load_default(db)
+    p = tmp_path / "sim" / "v4_only.csv"
+    runner_v2.run_simulation_dual(
+        db, config=default, regime="any", density="all",
+        scope=_BASE_SCOPE,
+        csv_path=p, engines=("v4",),
+    )
+    rows = _read_csv(p)
+    assert len(rows) == 1
+    assert rows[0]["engines"] == "v4"
+    assert rows[0]["v4_p_home_1"] != ""
+    assert rows[0]["v4_our_1up_home_capped"] != ""
+    assert rows[0]["our_p_home_1"] == ""
+    assert rows[0]["v2_p_home_1"] == ""
+    assert rows[0]["v3_p_home_1"] == ""
+
+
+def test_dual_runner_all_four_engines(db, tmp_path):
+    """`engines=('v1','v2','v3','v4')` fills all four OUR blocks."""
+    _seed_event_with_priced_snapshot(db, "E")
+    default = configs.load_default(db)
+    p = tmp_path / "sim" / "all4.csv"
+    runner_v2.run_simulation_dual(
+        db, config=default, regime="any", density="all",
+        scope=_BASE_SCOPE,
+        csv_path=p, engines=("v1", "v2", "v3", "v4"),
+    )
+    rows = _read_csv(p)
+    assert len(rows) == 1
+    assert rows[0]["engines"] == "v1,v2,v3,v4"
+    assert rows[0]["our_p_home_1"] != ""
+    assert rows[0]["v2_p_home_1"] != ""
+    assert rows[0]["v3_p_home_1"] != ""
+    assert rows[0]["v4_p_home_1"] != ""

@@ -768,7 +768,7 @@ def test_post_run_with_all_three_engines(db_path, client):
 
 
 def test_post_run_with_no_engine_defaults_to_latest_v3(db_path, client):
-    """Omitting the engine field falls back to the latest engine (v3) —
+    """Omitting the engine field falls back to the latest engine (v4) —
     a run always exercises at least one engine."""
     r = client.post(
         "/simulator/runs",
@@ -781,7 +781,7 @@ def test_post_run_with_no_engine_defaults_to_latest_v3(db_path, client):
     assert r.status_code == 303
     reg = _registry(client)
     rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
-    assert rec.engines == "v3"
+    assert rec.engines == "v4"
 
 
 def test_post_run_with_unknown_engine_returns_400(db_path, client):
@@ -799,10 +799,10 @@ def test_post_run_with_unknown_engine_returns_400(db_path, client):
 def test_simulator_form_has_engine_checkboxes(client):
     r = client.get("/simulator")
     body = r.text
-    for v in ("v1", "v2", "v3"):
+    for v in ("v1", "v2", "v3", "v4"):
         assert f'type="checkbox" name="engine" value="{v}"' in body
-    # V3 (latest) is pre-selected.
-    assert 'name="engine" value="v3" checked' in body
+    # V4 (latest) is pre-selected.
+    assert 'name="engine" value="v4" checked' in body
 
 
 def test_simulator_history_renders_engines_column(db_path, client):
