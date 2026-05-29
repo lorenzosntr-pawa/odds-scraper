@@ -27,9 +27,16 @@ def connect(config: dict | None = None):
 
     compress=False: clickhouse-connect defaults to lz4-compressed payloads,
     which the Teleport HTTP DB proxy rejects ("unsupported compression method
-    lz4"). Over a localhost tunnel compression buys nothing, so disable it."""
+    lz4"). Over a localhost tunnel compression buys nothing, so disable it.
+
+    autogenerate_session_id=False: we stream the source read and insert results
+    concurrently on this client; a shared session would lock (SESSION_IS_LOCKED,
+    code 373) when the insert's internal DESCRIBE runs while the read stream is
+    still open. We use no session-scoped state, so run sessionless."""
     import clickhouse_connect
-    return clickhouse_connect.get_client(compress=False, **(config or config_from_env()))
+    return clickhouse_connect.get_client(
+        compress=False, autogenerate_session_id=False,
+        **(config or config_from_env()))
 
 
 def stream_rows(client, sql: str):
