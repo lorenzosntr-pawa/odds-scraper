@@ -75,6 +75,20 @@ def drop_table_sql(table: str) -> str:
     return f"DROP TABLE IF EXISTS {table}"
 
 
+def live_score_probe_sql(source_table: str, *, brand: str | None = None) -> str:
+    """Returns a row iff the source has at least one live snapshot with a
+    non-zero home/away score — i.e. live scoring is actually available.
+    Cheap: ClickHouse short-circuits on the LIMIT 1."""
+    _check_ident(source_table)
+    bf = ""
+    if brand is not None:
+        if not _BRAND_RE.match(brand):
+            raise ValueError(f"unsafe brand filter: {brand!r}")
+        bf = f" AND brand = '{brand}'"
+    return (f"SELECT 1 FROM {source_table} "
+            f"WHERE in_play AND (home_score != 0 OR away_score != 0){bf} LIMIT 1")
+
+
 def output_ddl(output_table: str) -> str:
     """MergeTree DDL covering OUTPUT_COLUMNS. Column types match the Python
     values we insert (which in turn mirror the source column types): event_id

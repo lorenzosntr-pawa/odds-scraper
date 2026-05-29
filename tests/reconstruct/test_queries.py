@@ -30,6 +30,12 @@ def test_extraction_sql_in_play_filter():
     assert "in_play = " not in queries.extraction_sql("bi_Samuel.tbl_x", in_play=None)
 
 
+def test_live_score_probe_sql():
+    sql = queries.live_score_probe_sql("bi_Samuel.tbl_x", brand="betpawa-ghana")
+    assert "in_play" in sql and "home_score != 0" in sql and "away_score != 0" in sql
+    assert "brand = 'betpawa-ghana'" in sql and "LIMIT 1" in sql
+
+
 def test_extraction_sql_rejects_unsafe_table_name():
     with pytest.raises(ValueError):
         queries.extraction_sql("bad; DROP TABLE x")

@@ -85,11 +85,11 @@ uv run python scripts/reconstruct_clickhouse.py `
 
 Flags:
 - `--prematch` / `--live` / `--complete` — which in-play states to price.
-  **Default is `--complete` (both).** ⚠️ This source has **no live home/away score**
-  (`home_score`/`away_score` are always 0), so `--live`/`--complete` rows are priced as
-  if 0-0 and a side already ahead is **not** deactivated — they are *not* score-accurate.
-  **`--prematch` is the only fully-correct mode** (prematch is genuinely 0-0). The script
-  prints a warning whenever live rows are included.
+  **Default is `--complete` (both).** When live rows are included, the script **probes
+  the source for a live score** and prints whether real scores are present. If they are,
+  live is priced with the real running score (already-ahead sides deactivated); if the
+  source has no live score (as it historically did — all 0-0), it warns and prices live
+  as 0-0. Prematch is always correct regardless.
 - `--brand` — restrict to one brand. The source duplicates each event across ~13 brands,
   and `true_proba` is brand-independent, so **one brand is already a complete set of
   reconstructed odds**. Recommended (it's ~1/13th of 250M rows).
@@ -99,11 +99,13 @@ Flags:
 - `--run-ts` — a tag stamped on every row so you can tell runs apart. Use the current
   date/time; it does not need to be exact.
 
-> **Live scoring caveat.** This betslip log records *that* goals were scored (the
-> next-goal market's `handicap`/4 = the next goal number, so total goals = that minus 1)
-> but never *who* scored — `home_score`/`away_score` and `current_score_*` are empty for
-> every row and brand. So the running home/away split needed to deactivate live 1UP/2UP
-> isn't available. Until a match-results/score feed can be joined in, prefer `--prematch`.
+> **Live scoring.** Live 1UP/2UP needs the running home/away score (to deactivate a side
+> that's already gone ahead). Historically this table had `home_score`/`away_score` = 0
+> on every row, so live couldn't be scored. The CLI now **probes at runtime** and tells
+> you whether the source carries live scores; when present, `--live`/`--complete` price
+> with the real score. (Note the `max_lead` history is still inferred from the snapshots
+> we observe, so a lead between two unobserved snapshots can be missed — a sampling
+> limitation, separate from whether the score column is populated.)
 
 It prints a progress line every 1M source rows and a final summary, and writes the
 markdown report.

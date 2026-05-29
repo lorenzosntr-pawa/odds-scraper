@@ -48,12 +48,20 @@ def main() -> None:
     args = ap.parse_args()
 
     in_play = {"prematch": 0, "live": 1, "complete": None}[args.mode]
-    if args.mode != "prematch":
-        print("WARNING: live rows are priced with score 0-0 — this source has no "
-              "live home/away score, so already-ahead sides are NOT deactivated. "
-              "Use --prematch for fully-correct output.", flush=True)
 
     client = chio.connect()
+    if args.mode != "prematch":
+        # Probe whether the source actually carries a live score; only warn if
+        # it doesn't (the table was historically all 0-0 for live).
+        has_live_score = bool(client.query(
+            queries.live_score_probe_sql(args.source, brand=args.brand)).result_rows)
+        if has_live_score:
+            print("live scores present in source — live rows priced with real scores.",
+                  flush=True)
+        else:
+            print("WARNING: no live home/away score found in source; live rows are "
+                  "priced as 0-0, so already-ahead sides are NOT deactivated. "
+                  "Use --prematch for fully-correct output.", flush=True)
     if args.recreate:
         client.command(queries.drop_table_sql(args.output))
     client.command(queries.output_ddl(args.output))
