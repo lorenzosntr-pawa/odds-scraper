@@ -38,12 +38,24 @@ def _build_row(**overrides) -> tuple:
         "v3_p_home_2": "", "v3_p_away_2": "",
         "v3_our_2up_home_fair": "", "v3_our_2up_home_capped": "", "v3_our_2up_home_capped_ev": "",
         "v3_our_2up_away_fair": "", "v3_our_2up_away_capped": "", "v3_our_2up_away_capped_ev": "",
+        "v4_p_home_1": "", "v4_p_away_1": "",
+        "v4_our_1up_home_fair": "", "v4_our_1up_home_capped": "", "v4_our_1up_home_capped_ev": "",
+        "v4_our_1up_away_fair": "", "v4_our_1up_away_capped": "", "v4_our_1up_away_capped_ev": "",
+        "v4_p_home_2": "", "v4_p_away_2": "",
+        "v4_our_2up_home_fair": "", "v4_our_2up_home_capped": "", "v4_our_2up_home_capped_ev": "",
+        "v4_our_2up_away_fair": "", "v4_our_2up_away_capped": "", "v4_our_2up_away_capped_ev": "",
         "pB_v3_p_home_1": "", "pB_v3_p_away_1": "",
         "pB_v3_our_1up_home_fair": "", "pB_v3_our_1up_home_capped": "", "pB_v3_our_1up_home_capped_ev": "",
         "pB_v3_our_1up_away_fair": "", "pB_v3_our_1up_away_capped": "", "pB_v3_our_1up_away_capped_ev": "",
         "pB_v3_p_home_2": "", "pB_v3_p_away_2": "",
         "pB_v3_our_2up_home_fair": "", "pB_v3_our_2up_home_capped": "", "pB_v3_our_2up_home_capped_ev": "",
         "pB_v3_our_2up_away_fair": "", "pB_v3_our_2up_away_capped": "", "pB_v3_our_2up_away_capped_ev": "",
+        "pB_v4_p_home_1": "", "pB_v4_p_away_1": "",
+        "pB_v4_our_1up_home_fair": "", "pB_v4_our_1up_home_capped": "", "pB_v4_our_1up_home_capped_ev": "",
+        "pB_v4_our_1up_away_fair": "", "pB_v4_our_1up_away_capped": "", "pB_v4_our_1up_away_capped_ev": "",
+        "pB_v4_p_home_2": "", "pB_v4_p_away_2": "",
+        "pB_v4_our_2up_home_fair": "", "pB_v4_our_2up_home_capped": "", "pB_v4_our_2up_home_capped_ev": "",
+        "pB_v4_our_2up_away_fair": "", "pB_v4_our_2up_away_capped": "", "pB_v4_our_2up_away_capped_ev": "",
         "snapshot_id": 1, "event_id": "E1",
         "home": "Home FC", "away": "Away FC",
         "kickoff_utc": "2026-05-22T18:30:00Z",
@@ -175,3 +187,22 @@ def test_csv_has_1x2_and_nextgoal_reference_block():
         assert c in cols, f"missing {c}"
         assert cols.index("lambda_away") < cols.index(c) < cols.index("our_p_home_1"), \
             f"{c} not between lambda_* and OUR block"
+
+
+def test_csv_columns_include_v4_block_after_v3():
+    """The v4 OUR block sits strictly after the v3 block and before the
+    bookmaker columns; pB_v4 sits after pB_v3."""
+    cols = csv_export.CSV_COLUMNS
+    v3_end = cols.index("v3_our_2up_away_capped_ev")
+    bp_start = cols.index("bp_p_1up_home")
+    for c in (
+        "v4_p_home_1", "v4_p_away_1",
+        "v4_our_1up_home_fair", "v4_our_1up_home_capped", "v4_our_1up_home_capped_ev",
+        "v4_our_1up_away_fair", "v4_our_1up_away_capped", "v4_our_1up_away_capped_ev",
+        "v4_p_home_2", "v4_p_away_2",
+        "v4_our_2up_home_fair", "v4_our_2up_home_capped", "v4_our_2up_home_capped_ev",
+        "v4_our_2up_away_fair", "v4_our_2up_away_capped", "v4_our_2up_away_capped_ev",
+    ):
+        assert c in cols, f"missing {c}"
+        assert v3_end < cols.index(c) < bp_start, f"{c} out of position"
+    assert cols.index("pB_v4_p_home_1") > cols.index("pB_v3_our_2up_away_capped_ev")
