@@ -1,6 +1,7 @@
 import math
 import pytest
 from odds_scraper.reconstruct import pricing
+from odds_scraper.pricer import engine_v2, engine_v3, engine_v4
 
 
 def test_renormalize_1x2_scales_to_one():
@@ -63,9 +64,6 @@ def test_assemble_kwargs_uses_renormalized_probs_and_no_devig():
 def test_assemble_kwargs_drops_ftts_when_missing():
     kw = pricing.assemble_engine_kwargs(_moment(ftts_home=None, ftts_away=None))
     assert kw["ftts_home_prob"] is None and kw["ftts_away_prob"] is None
-
-
-from odds_scraper.pricer import engine_v2, engine_v3, engine_v4
 
 
 def test_install_dp_cache_patches_all_engines_and_restores():

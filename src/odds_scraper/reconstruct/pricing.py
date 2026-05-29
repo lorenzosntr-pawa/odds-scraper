@@ -63,7 +63,10 @@ _dp_cached = None
 def install_dp_cache(round_dp: int = 4):
     """Monkeypatch ever_leads_probability in all three engines to share one
     lru_cache keyed on rounded (lambda_h, lambda_a, initial_diff). The DP is
-    identical across engines. Returns restore()."""
+    identical across engines. Returns restore().
+
+    Not re-entrant: call restore() before installing again, or the second
+    install captures the first wrapper as its base."""
     global _dp_cached
     originals = {
         m: m.ever_leads_probability for m in (engine_v2, engine_v3, engine_v4)
@@ -89,6 +92,8 @@ def install_dp_cache(round_dp: int = 4):
 
 
 def dp_cache_info():
+    if _dp_cached is None:
+        raise RuntimeError("dp_cache_info() called before install_dp_cache()")
     return _dp_cached.cache_info()
 
 
