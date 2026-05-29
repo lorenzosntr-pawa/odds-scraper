@@ -10,9 +10,9 @@ def _pct(vals, p):
 
 
 def build_report(*, source_table, output_table, n_out, n_1up, n_prematch,
-                 n_live, sample_rows, flagged_drift, n_scanned=None,
-                 cache_info=None) -> str:
-    stale = [r["max_input_staleness_seconds"] for r in sample_rows]
+                 n_live, staleness_samples, staleness_max, flagged_drift,
+                 n_scanned=None, cache_info=None) -> str:
+    stale = staleness_samples
     lines = [
         "# ClickHouse 1UP/2UP reconstruction report", "",
         f"- source: `{source_table}`",
@@ -33,7 +33,7 @@ def build_report(*, source_table, output_table, n_out, n_1up, n_prematch,
         "",
         "## Staleness (emitted moments)",
         f"- seconds — p50 {_pct(stale,50)}, p90 {_pct(stale,90)}, "
-        f"max {max(stale) if stale else 0}",
+        f"max {staleness_max}  (percentiles from a 1-in-N sample)",
         "",
         "## Limitations",
         "- `max_lead` columns (`max_home_lead`/`max_away_lead`) are approximated "

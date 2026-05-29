@@ -67,8 +67,9 @@ def main() -> None:
     client.command(queries.output_ddl(args.output))
 
     restore = pricing.install_dp_cache()
-    n_scanned = n_out = n_1up = n_prematch = n_live = flagged = 0
-    sample_rows = []
+    n_scanned = n_out = n_1up = n_prematch = n_live = flagged = stale_max = 0
+    stale_samples = []          # 1-in-N sample of staleness for report percentiles
+    STALE_SAMPLE_EVERY = 25
     try:
         def _counting_scan(it):
             nonlocal n_scanned
@@ -86,7 +87,7 @@ def main() -> None:
         priced = pricing.run_pricing(moments, run_ts=args.run_ts)
 
         def _accounting(it):
-            nonlocal n_out, n_1up, n_prematch, n_live, flagged
+            nonlocal n_out, n_1up, n_prematch, n_live, flagged, stale_max
             for row in it:
                 n_out += 1
                 # "1UP priced" = actual V4 1UP output (V4 prematch 1UP is
@@ -96,10 +97,11 @@ def main() -> None:
                 n_live += 1 if row["in_play"] else 0
                 if abs(row["renorm_drift"]) > c.RENORM_DRIFT_TOL:
                     flagged += 1
-                sample_rows.append({
-                    "in_play": row["in_play"], "has_1up": row["has_1up"],
-                    "max_input_staleness_seconds": row["max_input_staleness_seconds"],
-                    "renorm_drift": row["renorm_drift"]})
+                s = row["max_input_staleness_seconds"]
+                if s > stale_max:
+                    stale_max = s
+                if n_out % STALE_SAMPLE_EVERY == 0:   # bounded-memory sample
+                    stale_samples.append(s)
                 yield row
 
         print(f"streaming source{' (brand=' + args.brand + ')' if args.brand else ''}"
@@ -114,9 +116,9 @@ def main() -> None:
     Path(args.report).write_text(
         report.build_report(source_table=args.source, output_table=args.output,
                             n_out=n_out, n_1up=n_1up, n_prematch=n_prematch,
-                            n_live=n_live, sample_rows=sample_rows,
-                            flagged_drift=flagged, n_scanned=n_scanned,
-                            cache_info=cache_info),
+                            n_live=n_live, staleness_samples=stale_samples,
+                            staleness_max=stale_max, flagged_drift=flagged,
+                            n_scanned=n_scanned, cache_info=cache_info),
         encoding="utf-8")
     print(f"inserted {inserted} rows -> {args.output} ({n_1up} with 1UP, "
           f"{n_prematch} prematch / {n_live} live)")
