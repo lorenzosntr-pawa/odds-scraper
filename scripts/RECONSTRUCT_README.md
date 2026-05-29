@@ -87,7 +87,9 @@ Flags:
 - `--engines` — comma list of engines to compute: `v3`, `v4`, or `v3,v4` (default
   `v3,v4`). Engines not listed get NULL columns. **V4 alone needs no next-goal data**
   (its prematch 1UP is DP-direct), so `--engines v4` prices every row without depending
-  on next-goal availability — and is faster.
+  on next-goal availability — and the next-goal market is then **skipped entirely from
+  the scan** (smaller/faster). Next-goal is pulled only when `v3` is selected (V3's 1UP
+  needs FTTS). λ always comes from the O/U lines, never from next-goal.
 - `--prematch` / `--live` / `--complete` — which in-play states to price.
   **Default is `--complete` (both).** When live rows are included, the script **probes
   the source for a live score** and prints whether real scores are present. If they are,

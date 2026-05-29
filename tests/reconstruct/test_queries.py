@@ -23,6 +23,15 @@ def test_extraction_sql_brand_and_limit():
     assert "LIMIT 5000" in sql
 
 
+def test_extraction_sql_next_goal_toggle():
+    with_ng = queries.extraction_sql("bi_Samuel.tbl_x", include_next_goal=True)
+    without_ng = queries.extraction_sql("bi_Samuel.tbl_x", include_next_goal=False)
+    assert "{handicap} Goal" in with_ng
+    assert "{handicap} Goal" not in without_ng
+    # 1X2 and O/U always present
+    assert c.MARKET_1X2 in without_ng and c.MARKET_OU_TOTAL in without_ng
+
+
 def test_extraction_sql_sample_mod():
     sql = queries.extraction_sql("bi_Samuel.tbl_x", sample_mod=200)
     assert "cityHash64(event_id) % 200 = 0" in sql

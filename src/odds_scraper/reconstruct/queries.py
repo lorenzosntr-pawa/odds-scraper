@@ -13,16 +13,19 @@ import re
 from .constants import (MARKET_1X2, MARKET_OU_TOTAL, MARKET_OU_HOME,
                         MARKET_OU_AWAY, MARKET_NEXT_GOAL, OUTPUT_COLUMNS)
 
-# All selections we need, in one scan: 1X2, the three O/U families, and the
-# next-goal market. The next-goal market_name is the literal "{handicap} Goal"
-# (the goal number is in the handicap column); we keep every goal line so live
-# can pick the active one in Python by score. MARKET_NEXT_GOAL already holds
-# the literal braces, so interpolating it here needs no f-string escaping.
-_MARKET_FILTER = (
-    f"market_name = '{MARKET_1X2}' "
-    f"OR market_name IN ('{MARKET_OU_TOTAL}', '{MARKET_OU_HOME}', '{MARKET_OU_AWAY}') "
-    f"OR market_name = '{MARKET_NEXT_GOAL}'"
-)
+# Markets we scan: 1X2, the three O/U families, and (optionally) the next-goal
+# market. The next-goal market_name is the literal "{handicap} Goal" (the goal
+# number is in the handicap column); we keep every goal line so live can pick
+# the active one by score. Next-goal only feeds V3/V2 FTTS 1UP — V4's 1UP is
+# DP-direct — so when V3 isn't computed we drop it entirely (smaller scan).
+def _market_filter(include_next_goal: bool) -> str:
+    parts = [
+        f"market_name = '{MARKET_1X2}'",
+        f"market_name IN ('{MARKET_OU_TOTAL}', '{MARKET_OU_HOME}', '{MARKET_OU_AWAY}')",
+    ]
+    if include_next_goal:
+        parts.append(f"market_name = '{MARKET_NEXT_GOAL}'")
+    return " OR ".join(parts)
 
 # Operator-supplied identifiers (db.table). Guard so a malformed name fails
 # loudly here rather than producing confusing SQL.
@@ -38,7 +41,8 @@ def _check_ident(name: str) -> str:
 
 def extraction_sql(source_table: str, *, brand: str | None = None,
                    in_play: int | None = None, sample_mod: int | None = None,
-                   limit: int | None = None, aggregate_brands: bool = False) -> str:
+                   limit: int | None = None, aggregate_brands: bool = False,
+                   include_next_goal: bool = True) -> str:
     """Return one row per (selection, timestamp) for every relevant market,
     ordered by (brand, event_id, in_play, odds_timestamp) so the Python
     carry-forward reducer sees each (brand, event)'s prematch then live
@@ -54,7 +58,8 @@ def extraction_sql(source_table: str, *, brand: str | None = None,
     Columns: event_id, sr_id, brand, event_name, sr_start_time, in_play, ts,
     home_score, away_score, market_name, line, selection_name, true_proba."""
     _check_ident(source_table)
-    where = [f"({_MARKET_FILTER})", "true_proba IS NOT NULL", "true_proba != 0"]
+    where = [f"({_market_filter(include_next_goal)})",
+             "true_proba IS NOT NULL", "true_proba != 0"]
     if brand is not None:
         if not _BRAND_RE.match(brand):
             raise ValueError(f"unsafe brand filter: {brand!r}")

@@ -65,8 +65,11 @@ def main() -> None:
         ap.error(f"--engines must be a comma list from {sorted(valid)}; got {args.engines!r}")
     if args.aggregate_brands and args.brand:
         ap.error("--aggregate-brands pools all brands; do not also pass --brand")
+    # Next-goal only feeds V3/V2 FTTS 1UP; skip the market entirely for V4-only.
+    include_next_goal = "v3" in engines
     print(f"engines: {', '.join(engines)}"
-          f"{' | aggregating brands' if args.aggregate_brands else ''}", flush=True)
+          f"{' | aggregating brands' if args.aggregate_brands else ''}"
+          f"{'' if include_next_goal else ' | next-goal skipped (V4-only)'}", flush=True)
 
     client = chio.connect()
     if args.mode != "prematch":
@@ -102,7 +105,8 @@ def main() -> None:
         sql = queries.extraction_sql(args.source, brand=args.brand,
                                      in_play=in_play, sample_mod=args.sample_mod,
                                      limit=args.limit,
-                                     aggregate_brands=args.aggregate_brands)
+                                     aggregate_brands=args.aggregate_brands,
+                                     include_next_goal=include_next_goal)
         rows_stream = _counting_scan(chio.stream_rows(client, sql))
         moments = pricing.moments_from_rows(rows_stream,
                                             aggregate_brands=args.aggregate_brands)
