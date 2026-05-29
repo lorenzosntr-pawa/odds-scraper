@@ -54,6 +54,12 @@ def main() -> None:
                          "full run. Whole events stay within a shard.")
     ap.add_argument("--start-shard", type=int, default=0,
                     help="resume a sharded run from this shard index (0-based)")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue a crashed run: keep rows already written, find the "
+                         "highest event in the output, clear that boundary event, and "
+                         "process only events from there on (no recreate, appends).")
+    ap.add_argument("--min-event-id", type=int, default=None,
+                    help="only process events with event_id >= this (manual resume)")
     # Which in-play states to price. NOTE: this table has no live home/away
     # score (it is always 0-0), so live rows are NOT score-accurate — a side
     # already ahead won't be deactivated. --prematch is the only fully-correct
@@ -98,10 +104,24 @@ def main() -> None:
             print("WARNING: no live home/away score found in source; live rows are "
                   "priced as 0-0, so already-ahead sides are NOT deactivated. "
                   "Use --prematch for fully-correct output.", flush=True)
+    if args.resume and args.recreate:
+        ap.error("--resume continues an existing table; do not pass --recreate")
     # --recreate only makes sense before the first shard; resuming must not drop.
     if args.recreate and args.start_shard == 0:
         setup_client.command(queries.drop_table_sql(args.output))
     setup_client.command(queries.output_ddl(args.output))
+
+    min_event_id = args.min_event_id
+    if args.resume:
+        m = setup_client.query(queries.max_event_id_sql(args.output)).result_rows[0][0]
+        if not m:
+            ap.error("--resume: output table is empty — run a fresh job (no --resume)")
+        print(f"resume: highest event in output is {m}; clearing it and continuing "
+              f"from event_id >= {m} ...", flush=True)
+        # Wait for the delete mutation to finish before we re-insert (mutations_sync=2).
+        setup_client.command(queries.delete_from_event_sql(args.output, int(m)),
+                             settings={"mutations_sync": 2})
+        min_event_id = int(m)
 
     restore = pricing.install_dp_cache()
     n_scanned = n_out = n_1up = n_prematch = n_live = flagged = stale_max = inserted = 0
@@ -147,7 +167,8 @@ def main() -> None:
                 aggregate_brands=args.aggregate_brands,
                 include_next_goal=include_next_goal,
                 shard_index=k if sharded else None,
-                shard_count=args.shards if sharded else None)
+                shard_count=args.shards if sharded else None,
+                min_event_id=min_event_id)
             label = f"shard {k + 1}/{args.shards}" if sharded else "source"
             print(f"streaming {label} ...", flush=True)
             rows_stream = _counting_scan(chio.stream_rows(client, sql))

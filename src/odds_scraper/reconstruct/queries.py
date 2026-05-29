@@ -44,7 +44,8 @@ def extraction_sql(source_table: str, *, brand: str | None = None,
                    limit: int | None = None, aggregate_brands: bool = False,
                    include_next_goal: bool = True,
                    shard_index: int | None = None,
-                   shard_count: int | None = None) -> str:
+                   shard_count: int | None = None,
+                   min_event_id: int | None = None) -> str:
     """Return one row per (selection, timestamp) for every relevant market,
     ordered by (brand, event_id, in_play, odds_timestamp) so the Python
     carry-forward reducer sees each (brand, event)'s prematch then live
@@ -76,6 +77,8 @@ def extraction_sql(source_table: str, *, brand: str | None = None,
         if not (0 <= int(shard_index or 0) < int(shard_count)) or int(shard_count) < 1:
             raise ValueError("require 0 <= shard_index < shard_count")
         where.append(f"cityHash64(event_id) % {int(shard_count)} = {int(shard_index)}")
+    if min_event_id is not None:
+        where.append(f"event_id >= {int(min_event_id)}")
     # Aggregate mode pools all brands (true_proba is brand-independent), so we
     # order by event first (not brand) — every brand's captures for an event
     # interleave by time, densifying the timeline. Otherwise brand leads so the
@@ -98,6 +101,18 @@ ORDER BY {order_by}
 def drop_table_sql(table: str) -> str:
     _check_ident(table)
     return f"DROP TABLE IF EXISTS {table}"
+
+
+def max_event_id_sql(table: str) -> str:
+    _check_ident(table)
+    return f"SELECT max(event_id) FROM {table}"
+
+
+def delete_from_event_sql(table: str, min_event_id: int) -> str:
+    """Delete rows for events at/above min_event_id — used on resume to clear
+    the possibly-partial boundary event before continuing."""
+    _check_ident(table)
+    return f"ALTER TABLE {table} DELETE WHERE event_id >= {int(min_event_id)}"
 
 
 def live_score_probe_sql(source_table: str, *, brand: str | None = None) -> str:

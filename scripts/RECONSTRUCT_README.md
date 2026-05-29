@@ -124,8 +124,15 @@ Flags:
   mid-insert, its partial rows remain; for an exact resume, delete that shard first
   (`ALTER TABLE <out> DELETE WHERE cityHash64(event_id) % N >= K AND run_ts = '<ts>'`)
   or just re-run from scratch with `--recreate` (cheap, since shards are bounded).
+- `--resume` — continue a crashed run **without rewriting what's already there**: keeps
+  all rows already written, finds the highest `event_id` in the output, clears that one
+  boundary event (it may be half-written), and processes only events from there on
+  (appends; no recreate). Reuse the **same `--run-ts`** as the crashed run. Combine with
+  `--shards` so the remainder is resilient too.
+- `--min-event-id X` — manual version of resume: only process `event_id >= X`.
 - `--recreate` — drop + recreate the output table first. Use it the first time, or after
-  any schema change. (With `--shards`, the drop happens once, before shard 0.)
+  any schema change. (With `--shards`, the drop happens once, before shard 0.) Cannot be
+  combined with `--resume`.
 - `--run-ts` — a tag stamped on every row so you can tell runs apart. Use the current
   date/time; it does not need to be exact.
 

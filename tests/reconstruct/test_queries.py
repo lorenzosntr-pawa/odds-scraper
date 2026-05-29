@@ -23,6 +23,17 @@ def test_extraction_sql_brand_and_limit():
     assert "LIMIT 5000" in sql
 
 
+def test_extraction_sql_min_event_id():
+    sql = queries.extraction_sql("bi_Samuel.tbl_x", min_event_id=34153976)
+    assert "event_id >= 34153976" in sql
+
+
+def test_resume_helpers():
+    assert queries.max_event_id_sql("risk_Lorenzo.o") == "SELECT max(event_id) FROM risk_Lorenzo.o"
+    assert queries.delete_from_event_sql("risk_Lorenzo.o", 42) == \
+        "ALTER TABLE risk_Lorenzo.o DELETE WHERE event_id >= 42"
+
+
 def test_extraction_sql_shard():
     sql = queries.extraction_sql("bi_Samuel.tbl_x", shard_index=3, shard_count=30)
     assert "cityHash64(event_id) % 30 = 3" in sql
