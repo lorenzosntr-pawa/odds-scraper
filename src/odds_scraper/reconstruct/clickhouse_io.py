@@ -3,6 +3,7 @@ Teleport proxy). Config from env; no business logic."""
 from __future__ import annotations
 
 import os
+import time
 from typing import Iterable
 
 
@@ -35,17 +36,41 @@ def stream_rows(client, sql: str):
             yield dict(zip(columns, row))
 
 
+def _insert_batch(client, table, batch, columns, retries, sleep):
+    """Insert one batch with bounded retry + backoff. On final failure raise
+    with the batch's event_id range so the operator knows where the run died
+    and can resume from there."""
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            client.insert(table, batch, column_names=columns)
+            return
+        except Exception as exc:                       # noqa: BLE001 - re-raised below
+            last_exc = exc
+            if attempt < retries:
+                sleep(min(2 ** attempt, 8))
+    where = ""
+    if "event_id" in columns and batch:
+        idx = columns.index("event_id")
+        where = f" (event_id {batch[0][idx]}..{batch[-1][idx]})"
+    raise RuntimeError(
+        f"insert into {table} failed after {retries + 1} attempts{where}: {last_exc}"
+    ) from last_exc
+
+
 def insert_rows(client, table: str, rows: Iterable[dict], *, columns: list,
-                batch_size: int = 10_000) -> int:
-    """Insert dict rows in column order, in batches. Returns total inserted."""
+                batch_size: int = 10_000, retries: int = 3, sleep=time.sleep) -> int:
+    """Insert dict rows in column order, in batches with bounded retry.
+    Returns total inserted. Raises RuntimeError (with the failing batch's
+    event_id range) if a batch still fails after `retries` retries."""
     batch, total = [], 0
     for r in rows:
         batch.append([r.get(c) for c in columns])
         if len(batch) >= batch_size:
-            client.insert(table, batch, column_names=columns)
+            _insert_batch(client, table, batch, columns, retries, sleep)
             total += len(batch)
             batch = []
     if batch:
-        client.insert(table, batch, column_names=columns)
+        _insert_batch(client, table, batch, columns, retries, sleep)
         total += len(batch)
     return total

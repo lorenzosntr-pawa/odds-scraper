@@ -31,10 +31,17 @@ def main() -> None:
     client.command(queries.output_ddl(args.output))
 
     restore = pricing.install_dp_cache()
-    n_out = n_1up = n_prematch = n_live = flagged = 0
+    n_scanned = n_out = n_1up = n_prematch = n_live = flagged = 0
     sample_rows = []
     try:
-        rows_stream = chio.stream_rows(client, queries.extraction_sql(args.source))
+        def _counting_scan(it):
+            nonlocal n_scanned
+            for r in it:
+                n_scanned += 1
+                yield r
+
+        rows_stream = _counting_scan(
+            chio.stream_rows(client, queries.extraction_sql(args.source)))
         moments = pricing.moments_from_rows(rows_stream)
         priced = pricing.run_pricing(moments, run_ts=args.run_ts)
 
@@ -56,6 +63,7 @@ def main() -> None:
         inserted = chio.insert_rows(client, args.output, _accounting(priced),
                                     columns=c.OUTPUT_COLUMNS,
                                     batch_size=args.batch_size)
+        cache_info = pricing.dp_cache_info()
     finally:
         restore()
 
@@ -63,7 +71,8 @@ def main() -> None:
         report.build_report(source_table=args.source, output_table=args.output,
                             n_out=n_out, n_1up=n_1up, n_prematch=n_prematch,
                             n_live=n_live, sample_rows=sample_rows,
-                            flagged_drift=flagged),
+                            flagged_drift=flagged, n_scanned=n_scanned,
+                            cache_info=cache_info),
         encoding="utf-8")
     print(f"inserted {inserted} rows -> {args.output} ({n_1up} with 1UP, "
           f"{n_prematch} prematch / {n_live} live)")

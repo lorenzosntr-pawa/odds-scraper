@@ -171,7 +171,8 @@ One row per `(event_id, in_play, moment_ts)`:
   `in_play`, `moment_ts`, `home_score`, `away_score`, `run_ts`.
 - **Reconstructed inputs:** `p_home`, `p_draw`, `p_away` (renormalized),
   `lambda_home`, `lambda_away`, `ftts_home`, `ftts_away`, `has_1up`.
-- **Confidence:** `max_input_staleness_seconds`, `est_input_drift_pct`.
+- **Confidence:** `max_input_staleness_seconds`, `renorm_drift` (raw 1X2 Σ − 1).
+  (Per-input drift-rate confidence, `est_input_drift_pct`, is deferred — see §12.)
 - **Per engine × market × side** (`{v2,v3,v4}` × `{1up,2up}` × `{home,away}`):
   `_odds`, `_prob`, `_ev`.
 
@@ -191,12 +192,13 @@ Insert in batches (e.g. 10k rows) with retry. Re-runs are distinguished by `run_
 
 ## 9. Reliability report (markdown)
 
-- Source table + filters; rows scanned vs pricing moments emitted.
+- Source rows scanned vs pricing moments emitted.
 - Split: prematch vs live counts; rows with 1UP priced vs 2UP-only.
-- Per-market drift/hour (implied-prob) and staleness distribution (p50/p90/max).
-- Renormalization-drift distribution and count of flagged rows.
+- Staleness distribution (p50/p90/max).
+- Renormalization-drift flagged-row count (`> RENORM_DRIFT_TOL`).
 - DP cache info.
 - Explicit note on the `max_lead` approximation limitation.
+- (Per-market drift/hour and a full renorm-drift distribution are deferred — see §12.)
 
 ## 10. Testing (TDD)
 
@@ -234,3 +236,11 @@ Integration:
 - **Exact `risk_Lorenzo` output table name** and whether a DDL migration is checked in.
 - **Confirming the next-goal `selection_name` vocabulary** (Home / Away / None labels)
   against the real table.
+- **Per-input drift confidence (deferred):** the original CSV deriver measured
+  per-market implied-prob drift/hour (a second pass) and emitted `est_input_drift_pct`
+  per row. This is dropped from v1 to avoid a second full ClickHouse scan; the run still
+  reports `max_input_staleness_seconds` and `renorm_drift` per row. Add a drift pass +
+  column if the downstream sim needs the finer confidence proxy.
+- **Resume:** `insert_rows` retries each batch with backoff and aborts (logging the
+  failing batch's `event_id` range) on exhaustion. True checkpoint-resume from the last
+  inserted `event_id` is deferred; re-running re-scans from the start.

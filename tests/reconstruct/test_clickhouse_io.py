@@ -32,3 +32,29 @@ def test_insert_rows_batches_and_orders_columns():
     assert [len(d) for _, d, _ in captured] == [2, 1]
     assert captured[0][1][0] == [2, 1]   # first row -> [b, a]
     assert captured[0][2] == ["b", "a"]
+
+
+def test_insert_rows_retries_then_succeeds():
+    calls = {"n": 0}
+
+    class FlakyClient:
+        def insert(self, table, data, column_names):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ConnectionError("transient")
+
+    rows = [{"event_id": "E1", "a": 1}]
+    n = chio.insert_rows(FlakyClient(), "t", rows, columns=["event_id", "a"],
+                         retries=2, sleep=lambda _s: None)
+    assert n == 1 and calls["n"] == 2   # failed once, retried, succeeded
+
+
+def test_insert_rows_raises_with_event_id_after_exhausting_retries():
+    class DeadClient:
+        def insert(self, table, data, column_names):
+            raise ConnectionError("down")
+
+    rows = [{"event_id": "E9", "a": 1}]
+    with pytest.raises(RuntimeError, match="E9"):
+        chio.insert_rows(DeadClient(), "t", rows, columns=["event_id", "a"],
+                         retries=1, sleep=lambda _s: None)

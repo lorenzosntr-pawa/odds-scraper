@@ -33,7 +33,7 @@ OUTPUT_COLUMNS = [
     "in_play", "moment_ts", "home_score", "away_score",
     "p_home", "p_draw", "p_away", "lambda_home", "lambda_away",
     "ftts_home", "ftts_away", "has_1up",
-    "max_input_staleness_seconds", "est_input_drift_pct", "renorm_drift",
+    "max_input_staleness_seconds", "renorm_drift",
 ]
 for _e in ("v2", "v3", "v4"):
     for _m in ("1up", "2up"):

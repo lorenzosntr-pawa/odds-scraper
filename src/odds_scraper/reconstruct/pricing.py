@@ -154,7 +154,6 @@ def price_moment(moment: dict, *, run_ts: str,
         "ftts_home": kw["ftts_home_prob"], "ftts_away": kw["ftts_away_prob"],
         "has_1up": has_1up,
         "max_input_staleness_seconds": int(moment["max_input_staleness_seconds"]),
-        "est_input_drift_pct": None,   # filled by the CLI drift pass
         "renorm_drift": round(drift, 6),
     }
     for name, res in results.items():
