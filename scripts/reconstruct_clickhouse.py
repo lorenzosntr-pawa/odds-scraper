@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -53,7 +54,11 @@ def main() -> None:
                          "resetting one giant long-running query. e.g. --shards 30 for a "
                          "full run. Whole events stay within a shard.")
     ap.add_argument("--start-shard", type=int, default=0,
-                    help="resume a sharded run from this shard index (0-based)")
+                    help="resume a sharded run from this shard index (0-based). The start "
+                         "shard's existing rows are cleaned first (it may be half-written).")
+    ap.add_argument("--shard-retries", type=int, default=3,
+                    help="on a connection error, reconnect + clean + retry a shard this "
+                         "many times before giving up (default 3)")
     ap.add_argument("--resume", action="store_true",
                     help="continue a crashed run: keep rows already written, find the "
                          "highest event in the output, clear that boundary event, and "
@@ -82,6 +87,12 @@ def main() -> None:
         ap.error(f"--engines must be a comma list from {sorted(valid)}; got {args.engines!r}")
     if args.aggregate_brands and args.brand:
         ap.error("--aggregate-brands pools all brands; do not also pass --brand")
+    if args.resume and args.recreate:
+        ap.error("--resume continues an existing table; do not pass --recreate")
+    if args.resume and args.shards > 1:
+        ap.error("--resume (by max event_id) is only valid for an unsharded run. "
+                 "To resume a sharded run use --start-shard K (and --min-event-id if the "
+                 "original run had a floor); see the README.")
     # Next-goal only feeds V3/V2 FTTS 1UP; skip the market entirely for V4-only.
     include_next_goal = "v3" in engines
     print(f"engines: {', '.join(engines)}"
@@ -104,8 +115,6 @@ def main() -> None:
             print("WARNING: no live home/away score found in source; live rows are "
                   "priced as 0-0, so already-ahead sides are NOT deactivated. "
                   "Use --prematch for fully-correct output.", flush=True)
-    if args.resume and args.recreate:
-        ap.error("--resume continues an existing table; do not pass --recreate")
     # --recreate only makes sense before the first shard; resuming must not drop.
     if args.recreate and args.start_shard == 0:
         setup_client.command(queries.drop_table_sql(args.output))
@@ -158,22 +167,32 @@ def main() -> None:
             yield row
 
     sharded = args.shards > 1
-    try:
-        for k in range(args.start_shard, args.shards):
-            # Fresh connection per shard so no single query/connection lives long
-            # enough for the proxy to reset it.
+
+    def _run_one_shard(k, clean_first):
+        """Stream+price+insert one shard, with reconnect-clean-retry on a
+        connection error. `clean_first` deletes any existing rows for this shard
+        before processing (used for a resumed/retried, possibly-partial shard)."""
+        nonlocal inserted
+        label = f"shard {k + 1}/{args.shards}" if sharded else "source"
+        last_exc = None
+        for attempt in range(args.shard_retries + 1):
             client = chio.connect()
-            sql = queries.extraction_sql(
-                args.source, brand=args.brand, in_play=in_play,
-                sample_mod=args.sample_mod, limit=args.limit,
-                aggregate_brands=args.aggregate_brands,
-                include_next_goal=include_next_goal,
-                shard_index=k if sharded else None,
-                shard_count=args.shards if sharded else None,
-                min_event_id=min_event_id)
-            label = f"shard {k + 1}/{args.shards}" if sharded else "source"
-            print(f"streaming {label} ...", flush=True)
             try:
+                if (clean_first or attempt > 0) and sharded:
+                    print(f"  cleaning existing rows for {label} first ...", flush=True)
+                    client.command(
+                        queries.delete_shard_sql(args.output, args.shards, k, min_event_id),
+                        settings={"mutations_sync": 2})
+                sql = queries.extraction_sql(
+                    args.source, brand=args.brand, in_play=in_play,
+                    sample_mod=args.sample_mod, limit=args.limit,
+                    aggregate_brands=args.aggregate_brands,
+                    include_next_goal=include_next_goal,
+                    shard_index=k if sharded else None,
+                    shard_count=args.shards if sharded else None,
+                    min_event_id=min_event_id)
+                suffix = f" (attempt {attempt + 1})" if attempt else ""
+                print(f"streaming {label}{suffix} ...", flush=True)
                 rows_stream = _counting_scan(chio.stream_rows(client, sql))
                 moments = pricing.moments_from_rows(
                     rows_stream, aggregate_brands=args.aggregate_brands,
@@ -182,10 +201,26 @@ def main() -> None:
                 inserted += chio.insert_rows(client, args.output, _accounting(priced),
                                              columns=c.OUTPUT_COLUMNS,
                                              batch_size=args.batch_size)
+                return
+            except Exception as exc:                       # noqa: BLE001 - retried below
+                last_exc = exc
+                if attempt < args.shard_retries:
+                    print(f"  {label} failed (attempt {attempt + 1}): {exc}\n"
+                          f"  reconnecting, cleaning, and retrying ...", flush=True)
+                    time.sleep(min(2 ** attempt, 30))
+                else:
+                    raise RuntimeError(f"{label} failed after {args.shard_retries + 1} "
+                                       f"attempts: {last_exc}") from last_exc
             finally:
-                client.close()   # free this shard's connection/sockets promptly
+                client.close()
+
+    try:
+        for k in range(args.start_shard, args.shards):
+            _run_one_shard(k, clean_first=(sharded and k == args.start_shard
+                                           and args.start_shard > 0))
             if sharded:
-                print(f"  {label} done — {inserted:,} rows so far", flush=True)
+                print(f"  shard {k + 1}/{args.shards} done — {inserted:,} rows so far",
+                      flush=True)
         cache_info = pricing.dp_cache_info()
     finally:
         restore()

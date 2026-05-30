@@ -34,6 +34,14 @@ def test_resume_helpers():
         "ALTER TABLE risk_Lorenzo.o DELETE WHERE event_id >= 42"
 
 
+def test_delete_shard_sql():
+    assert queries.delete_shard_sql("risk_Lorenzo.o", 50, 37) == \
+        "ALTER TABLE risk_Lorenzo.o DELETE WHERE cityHash64(event_id) % 50 = 37"
+    assert queries.delete_shard_sql("risk_Lorenzo.o", 50, 37, min_event_id=34153976) == \
+        ("ALTER TABLE risk_Lorenzo.o DELETE WHERE cityHash64(event_id) % 50 = 37 "
+         "AND event_id >= 34153976")
+
+
 def test_extraction_sql_shard():
     sql = queries.extraction_sql("bi_Samuel.tbl_x", shard_index=3, shard_count=30)
     assert "cityHash64(event_id) % 30 = 3" in sql

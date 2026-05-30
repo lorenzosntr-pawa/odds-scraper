@@ -115,6 +115,17 @@ def delete_from_event_sql(table: str, min_event_id: int) -> str:
     return f"ALTER TABLE {table} DELETE WHERE event_id >= {int(min_event_id)}"
 
 
+def delete_shard_sql(table: str, shard_count: int, shard_index: int,
+                     min_event_id: int | None = None) -> str:
+    """Delete one shard's rows (optionally only at/above a floor) — used to
+    clean a partially-written shard before re-processing it."""
+    _check_ident(table)
+    cond = f"cityHash64(event_id) % {int(shard_count)} = {int(shard_index)}"
+    if min_event_id is not None:
+        cond += f" AND event_id >= {int(min_event_id)}"
+    return f"ALTER TABLE {table} DELETE WHERE {cond}"
+
+
 def live_score_probe_sql(source_table: str, *, brand: str | None = None) -> str:
     """Returns a row iff the source has at least one live snapshot with a
     non-zero home/away score — i.e. live scoring is actually available.
