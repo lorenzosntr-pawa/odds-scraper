@@ -95,9 +95,11 @@ def main() -> None:
     if args.resume and args.recreate:
         ap.error("--resume continues an existing table; do not pass --recreate")
     if args.resume and args.shards > 1:
-        ap.error("--resume (by max event_id) is only valid for an unsharded run. "
-                 "To resume a sharded run use --start-shard K (and --min-event-id if the "
-                 "original run had a floor); see scripts/RECONSTRUCT_README.md.")
+        print("NOTE: --resume + --shards is safe ONLY when the data you're resuming was "
+              "written by an UNSHARDED run (its max(event_id) is a clean high-water mark). "
+              "If the crashed run was already sharded, DO NOT --resume — it would skip "
+              "events; resume it with --start-shard K instead. "
+              "See scripts/RECONSTRUCT_README.md.", flush=True)
     # Next-goal only feeds V3's FTTS 1UP; skip the market entirely for V4-only.
     include_next_goal = "v3" in engines
     print(f"engines: {', '.join(engines)}"
