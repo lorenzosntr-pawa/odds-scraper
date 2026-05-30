@@ -16,18 +16,15 @@ MARKET_OU_AWAY = "Total Score Over/Under - FT - Away Team"
 # handicap/4.0 gives the goal index (handicap 4 -> goal #1, the prematch next goal).
 MARKET_NEXT_GOAL = "{handicap} Goal"
 
-OU_MARKETS = (MARKET_OU_TOTAL, MARKET_OU_HOME, MARKET_OU_AWAY)
-
 # --- selection labels (as spelled in the table) ---
-# 1X2 (and next-goal team sides) use "1"/"X"/"2"; O/U uses "Over"/"Under";
+# 1X2 (and next-goal team sides) use "1"/"X"/"2"; O/U over leg is "Over";
 # next-goal no-goal is "None".
 SEL_HOME, SEL_DRAW, SEL_AWAY = "1", "X", "2"
-SEL_OVER, SEL_UNDER = "Over", "Under"
+SEL_OVER = "Over"
 SEL_NG_HOME, SEL_NG_AWAY, SEL_NG_NONE = "1", "2", "None"
 
 # --- tunables ---
 CAP_MARGIN = 0.02          # flat brand-neutral margin baked into cap reference odds
-FRESH_SECONDS = 3600       # <1h staleness window for an emitted moment
 RENORM_DRIFT_TOL = 0.05    # |sum(1X2 true_proba) - 1| beyond this is flagged
 
 # Confidence-weight bands (full trust at GOOD, zero at BAD, linear between).

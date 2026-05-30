@@ -111,7 +111,7 @@ def test_price_moment_emits_all_engine_cells():
             for s in ("home", "away"):
                 assert f"{e}_{m}_{s}_odds" in row
                 assert f"{e}_{m}_{s}_prob" in row
-    assert row["has_1up"] is True
+    assert row["v3_1up_home_odds"] is not None   # ftts present -> 1UP priced
     assert row["in_play"] is False
     assert math.isclose(row["p_home"] + row["p_draw"] + row["p_away"], 1.0, abs_tol=1e-9)
 
@@ -146,8 +146,7 @@ def test_price_moment_drops_1up_without_ftts():
     finally:
         restore()
     assert row is not None
-    assert row["has_1up"] is False
-    assert row["v3_1up_home_odds"] is None
+    assert row["v3_1up_home_odds"] is None       # no ftts -> V3 1UP not priced
 
 
 def _row(market, sel, proba, line=0.0, ts="2026-05-01 17:30:00",

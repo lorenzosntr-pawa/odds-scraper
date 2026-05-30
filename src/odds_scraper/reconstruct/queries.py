@@ -16,7 +16,7 @@ from .constants import (MARKET_1X2, MARKET_OU_TOTAL, MARKET_OU_HOME,
 # Markets we scan: 1X2, the three O/U families, and (optionally) the next-goal
 # market. The next-goal market_name is the literal "{handicap} Goal" (the goal
 # number is in the handicap column); we keep every goal line so live can pick
-# the active one by score. Next-goal only feeds V3/V2 FTTS 1UP — V4's 1UP is
+# the active one by score. Next-goal only feeds V3's FTTS 1UP — V4's 1UP is
 # DP-direct — so when V3 isn't computed we drop it entirely (smaller scan).
 def _market_filter(include_next_goal: bool) -> str:
     parts = [
@@ -144,14 +144,13 @@ def output_ddl(output_table: str) -> str:
     """MergeTree DDL covering OUTPUT_COLUMNS. Column types match the Python
     values we insert (which in turn mirror the source column types): event_id
     is the source UInt64, sr_start_time a DateTime, scores Int32, in_play a
-    flag, has_1up a Bool, everything numeric Nullable(Float64)."""
+    flag, everything numeric Nullable(Float64)."""
     _check_ident(output_table)
     string_cols = {"run_ts", "brand", "sr_id", "event_name", "moment_ts"}
     uint64_cols = {"event_id"}
     datetime_cols = {"sr_start_time"}
     int_cols = {"home_score", "away_score", "max_input_staleness_seconds"}
     uint8_cols = {"in_play"}
-    bool_cols = {"has_1up"}
     defs = []
     for col in OUTPUT_COLUMNS:
         if col in string_cols:
@@ -164,8 +163,6 @@ def output_ddl(output_table: str) -> str:
             t = "Int32"
         elif col in uint8_cols:
             t = "UInt8"
-        elif col in bool_cols:
-            t = "Bool"
         else:
             t = "Nullable(Float64)"
         defs.append(f"    `{col}` {t}")

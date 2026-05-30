@@ -1,7 +1,8 @@
-"""Batch-reconstruct V2/V3/V4 1UP/2UP odds from the ClickHouse betslip log.
+"""Batch-reconstruct V3/V4 1UP/2UP odds from the ClickHouse betslip log.
 
 Requires a reachable ClickHouse (local Teleport proxy) via CH_* env vars:
   CH_HOST, CH_PORT, CH_USER, CH_PASSWORD, CH_DATABASE
+See scripts/RECONSTRUCT_README.md for the full setup and run guide.
 """
 from __future__ import annotations
 
@@ -92,8 +93,8 @@ def main() -> None:
     if args.resume and args.shards > 1:
         ap.error("--resume (by max event_id) is only valid for an unsharded run. "
                  "To resume a sharded run use --start-shard K (and --min-event-id if the "
-                 "original run had a floor); see the README.")
-    # Next-goal only feeds V3/V2 FTTS 1UP; skip the market entirely for V4-only.
+                 "original run had a floor); see scripts/RECONSTRUCT_README.md.")
+    # Next-goal only feeds V3's FTTS 1UP; skip the market entirely for V4-only.
     include_next_goal = "v3" in engines
     print(f"engines: {', '.join(engines)}"
           f"{' | aggregating brands' if args.aggregate_brands else ''}"
@@ -134,6 +135,10 @@ def main() -> None:
     setup_client.close()        # shards open their own connections
 
     restore = pricing.install_dp_cache()
+    # These are report counters of rows *processed*. A retried shard is delete+
+    # reinserted (the table stays correct), but it is re-streamed, so on a retry
+    # these can exceed the table's final row count. The table is the source of
+    # truth; the report counts are indicative.
     n_scanned = n_out = n_1up = n_prematch = n_live = flagged = stale_max = inserted = 0
     stale_samples = []          # 1-in-N sample of staleness for report percentiles
     STALE_SAMPLE_EVERY = 25

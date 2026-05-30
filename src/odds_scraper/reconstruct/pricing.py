@@ -85,7 +85,7 @@ _dp_cached = None
 
 
 def install_dp_cache(round_dp: int = 4):
-    """Monkeypatch ever_leads_probability in all three engines to share one
+    """Monkeypatch ever_leads_probability in both engines to share one
     lru_cache keyed on rounded (lambda_h, lambda_a, initial_diff). The DP is
     identical across engines. Returns restore().
 
@@ -156,7 +156,6 @@ def price_moment(moment: dict, *, run_ts: str, max_home_lead: int,
     kw = assemble_engine_kwargs(moment)
     kw["max_home_lead"] = max_home_lead
     kw["max_away_lead"] = max_away_lead
-    has_1up = kw["ftts_home_prob"] is not None and kw["ftts_away_prob"] is not None
 
     results = {name: _ENGINES[name].price_early_payout_markets(**kw) for name in engines}
     # The first selected engine gates lambda (the DP is identical across engines).
@@ -173,7 +172,6 @@ def price_moment(moment: dict, *, run_ts: str, max_home_lead: int,
         "p_home": ph, "p_draw": pd, "p_away": pa,
         "lambda_home": gate["lambda_home"], "lambda_away": gate["lambda_away"],
         "ftts_home": kw["ftts_home_prob"], "ftts_away": kw["ftts_away_prob"],
-        "has_1up": has_1up,
         "max_input_staleness_seconds": int(moment["max_input_staleness_seconds"]),
         "renorm_drift": round(drift, 6),
         "confidence": confidence_weight(moment["max_input_staleness_seconds"], drift),
