@@ -57,6 +57,10 @@ def main() -> None:
     ap.add_argument("--start-shard", type=int, default=0,
                     help="resume a sharded run from this shard index (0-based). The start "
                          "shard's existing rows are cleaned first (it may be half-written).")
+    ap.add_argument("--end-shard", type=int, default=None,
+                    help="process shards [start-shard, end-shard) only (default: to the "
+                         "end). Use disjoint ranges to run two terminals in parallel — "
+                         "e.g. --start-shard 0 --end-shard 48 in one, 48..96 in the other.")
     ap.add_argument("--shard-retries", type=int, default=3,
                     help="on a connection error, reconnect + clean + retry a shard this "
                          "many times before giving up (default 3)")
@@ -100,8 +104,9 @@ def main() -> None:
           f"{' | aggregating brands' if args.aggregate_brands else ''}"
           f"{'' if include_next_goal else ' | next-goal skipped (V4-only)'}", flush=True)
 
-    if args.shards < 1 or not (0 <= args.start_shard < args.shards):
-        ap.error("require --shards >= 1 and 0 <= --start-shard < --shards")
+    end_shard = args.shards if args.end_shard is None else args.end_shard
+    if args.shards < 1 or not (0 <= args.start_shard < end_shard <= args.shards):
+        ap.error("require --shards >= 1 and 0 <= --start-shard < --end-shard <= --shards")
 
     setup_client = chio.connect()
     if args.mode != "prematch":
@@ -220,7 +225,7 @@ def main() -> None:
                 client.close()
 
     try:
-        for k in range(args.start_shard, args.shards):
+        for k in range(args.start_shard, end_shard):
             _run_one_shard(k, clean_first=(sharded and k == args.start_shard
                                            and args.start_shard > 0))
             if sharded:

@@ -137,6 +137,9 @@ Flags:
   was itself a resume), pass the same `--min-event-id` so shards keep that floor and
   don't reprocess earlier events.
 - `--min-event-id X` — only process `event_id >= X` (the floor used above).
+- `--end-shard E` — process shards `[start-shard, E)` only. Lets you **split the run
+  across two terminals** for ~2× speed and to finish inside the Teleport login window
+  (see "Run it in parallel" below).
 - `--recreate` — drop + recreate the output table first. Use it the first time, or after
   any schema change. (With `--shards`, the drop happens once, before shard 0.) Cannot be
   combined with `--resume`.
@@ -153,6 +156,41 @@ Flags:
 
 It prints a progress line every 1M source rows and a final summary, and writes the
 markdown report.
+
+### Run it in parallel (two terminals)
+
+To roughly halve wall-clock — and finish each half inside the ~8h Teleport login window —
+split the **shard range** across two terminals. Each terminal owns a disjoint set of
+shards (hash-partitioned by `event_id`), so they never touch the same rows and both
+**append** to the one output table.
+
+1. **Clear the table once** (so neither terminal needs `--recreate`, which would drop the
+   other's rows). In DBeaver: `DROP TABLE IF EXISTS <db>.<your_table>;` (skip if it doesn't
+   exist yet).
+2. **Terminal A** (shards 0–47), with its own tunnel / `CH_PORT`:
+   ```bash
+   uv run python scripts/reconstruct_clickhouse.py --source <src> --output <db>.<table> \
+     --report data/report_A.md --run-ts "<ts>" \
+     --aggregate-brands --complete --engines v4 --shards 96 --start-shard 0 --end-shard 48
+   ```
+3. **Terminal B** (shards 48–95), its own tunnel / `CH_PORT`, **different `--report` file**:
+   ```bash
+   uv run python scripts/reconstruct_clickhouse.py --source <src> --output <db>.<table> \
+     --report data/report_B.md --run-ts "<ts>" \
+     --aggregate-brands --complete --engines v4 --shards 96 --start-shard 48 --end-shard 96
+   ```
+
+Notes:
+- **No `--recreate` in either** (you dropped once in step 1). Both issue `CREATE TABLE IF
+  NOT EXISTS`, which is idempotent.
+- Same `--shards 96` in both — only the `[start, end)` range differs. The two ranges must
+  not overlap and together cover `0..96`.
+- Ideally give each terminal its **own Teleport tunnel** (separate `CH_PORT`) so one
+  expiring doesn't stop the other; sharing one port also works (the client is sessionless).
+- Each terminal's report covers only its own shards — use the DBeaver queries against the
+  finished table for full-table stats.
+- If a terminal dies, resume just that half from where it stopped, e.g. Terminal A:
+  `--shards 96 --start-shard <failed K> --end-shard 48`.
 
 ---
 
