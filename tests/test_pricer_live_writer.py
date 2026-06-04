@@ -53,6 +53,7 @@ def test_schema_v5_creates_pricer_live_results(tmp_path: Path):
 def test_compute_and_write_inserts_row(tmp_path: Path):
     conn = sqlite3.connect(str(tmp_path / "x.db"), isolation_level=None)
     init_schema(conn)
+    conn.row_factory = sqlite3.Row
     # BP has full inputs (probs); SB/B9J/BW just have 1X2 odds — engine
     # uses BP basis, persists one row keyed by (event_id, ts_utc).
     rows = [
@@ -65,18 +66,16 @@ def test_compute_and_write_inserts_row(tmp_path: Path):
         conn, "E1", "2026-05-22T18:30:00Z", rows, (0, 0),
     )
     assert ok is True
-    persisted = conn.execute(
-        "SELECT basis_used, our_p_home_1, our_1up_home_capped, "
-        "v2_p_home_1, v2_1up_home_capped "
+    row = conn.execute(
+        "SELECT basis_used, v3_p_home_1, v3_1up_home_capped, v4_p_home_1 "
         "FROM pricer_live_results WHERE event_id=? AND ts_utc=?",
         ("E1", "2026-05-22T18:30:00Z"),
     ).fetchone()
-    assert persisted is not None
-    assert persisted[0] == "bp"
-    assert persisted[1] is None   # our_p_home_1 — V1 no longer runs
-    assert persisted[2] is None   # our_1up_home_capped — V1 no longer runs
-    assert persisted[3] is not None  # v2_p_home_1 computed
-    assert persisted[4] is not None  # v2_1up_home_capped computed
+    assert row is not None
+    assert row["basis_used"] == "bp"
+    assert row["v3_p_home_1"] is not None      # V3 primary computed
+    assert row["v3_1up_home_capped"] is not None  # V3 primary computed
+    assert row["v4_p_home_1"] is not None      # V4 best-effort computed
 
 
 def test_compute_and_write_returns_false_on_insufficient_inputs(tmp_path: Path):
@@ -177,9 +176,9 @@ def test_backfill_all_populates_missing_ticks(tmp_path: Path):
     conn.close()
 
 
-def test_live_writer_persists_v2_columns(tmp_path: Path):
-    """live_writer runs V2 only — our_* (V1) columns are NULL,
-    v2_* columns populated."""
+def test_live_writer_v2_columns_now_null(tmp_path: Path):
+    """live_writer runs V3 primary — our_* (V1) and v2_* columns are NULL,
+    v3_* columns populated."""
     conn = sqlite3.connect(str(tmp_path / "v2.db"), isolation_level=None)
     init_schema(conn)
     conn.row_factory = sqlite3.Row
@@ -192,22 +191,19 @@ def test_live_writer_persists_v2_columns(tmp_path: Path):
     )
     assert ok
     row = conn.execute(
-        "SELECT our_p_home_1, v2_p_home_1, "
-        "       our_1up_home_capped, v2_1up_home_capped "
+        "SELECT v2_p_home_1, v3_p_home_1 "
         "FROM pricer_live_results WHERE event_id='E1'"
     ).fetchone()
     assert row is not None
-    # V1 cells NULL — no longer computed in live pipeline
-    assert row["our_p_home_1"] is None
-    assert row["our_1up_home_capped"] is None
-    # V2 cells populated
-    assert row["v2_p_home_1"] is not None
-    assert row["v2_1up_home_capped"] is not None
+    # V2 cells NULL — V2 no longer runs in live pipeline
+    assert row["v2_p_home_1"] is None
+    # V3 cells populated
+    assert row["v3_p_home_1"] is not None
     conn.close()
 
 
 def test_live_writer_persists_v3_matching_direct_call(tmp_path: Path):
-    """live_writer writes v3_* alongside v2_*, and the persisted v3 values
+    """live_writer writes v3_* as primary, and the persisted v3 values
     equal a direct engine_v3 call on the same extracted inputs."""
     from odds_scraper.pricer import engine_v3, inputs as input_extract
     conn = sqlite3.connect(str(tmp_path / "v3.db"), isolation_level=None)
@@ -237,37 +233,33 @@ def test_live_writer_persists_v3_matching_direct_call(tmp_path: Path):
     conn.close()
 
 
-def test_v3_crash_still_persists_row_with_v2(tmp_path: Path, monkeypatch):
-    """A V3 engine exception must not drop the tick or affect V2: the row
-    persists with V2 populated and v3_* NULL."""
+def test_v3_crash_skips_tick(tmp_path: Path, monkeypatch):
+    """A V3 engine exception (V3 is now the must-succeed primary) drops the
+    tick entirely: compute_and_write returns False and no row is written."""
     conn = sqlite3.connect(str(tmp_path / "v3crash.db"), isolation_level=None)
     init_schema(conn)
     conn.row_factory = sqlite3.Row
 
-    def boom(**kw):
-        raise RuntimeError("v3 down")
-
-    monkeypatch.setattr(live_writer.engine_v3, "price_early_payout_markets", boom)
+    monkeypatch.setattr(live_writer.engine_v3, "price_early_payout_markets",
+                        lambda **kw: (_ for _ in ()).throw(RuntimeError("v3 down")))
     rows = [
         _tick_snapshot(Bookmaker.BETPAWA, with_prob=True),
         _tick_snapshot(Bookmaker.SPORTYBET, with_prob=False),
     ]
-    ok = live_writer.compute_and_write_from_snapshots(
+    result = live_writer.compute_and_write_from_snapshots(
         conn, "E2", "2026-05-22T18:30:00Z", rows, (0, 0),
     )
-    assert ok  # row still written
-    row = conn.execute(
-        "SELECT v2_2up_home_capped, v3_2up_home_capped "
-        "FROM pricer_live_results WHERE event_id='E2'"
-    ).fetchone()
-    assert row["v2_2up_home_capped"] is not None  # V2 present
-    assert row["v3_2up_home_capped"] is None      # V3 nulled on crash
+    assert result is False
+    n = conn.execute(
+        "SELECT COUNT(*) FROM pricer_live_results WHERE event_id='E2'"
+    ).fetchone()[0]
+    assert n == 0
     conn.close()
 
 
 def test_backfill_v3_fills_existing_rows_and_is_idempotent(tmp_path: Path):
     """backfill_v3 fills v3_* on rows that lack it (re-extracting inputs from
-    `prices`), leaves v2_* untouched, and is idempotent on re-run."""
+    `prices`), and is idempotent on re-run."""
     import asyncio
     db = tmp_path / "odds.db"
     rows = [_tick_snapshot(b, with_prob=(b == Bookmaker.BETPAWA), event_id="EV1")
@@ -280,7 +272,7 @@ def test_backfill_v3_fills_existing_rows_and_is_idempotent(tmp_path: Path):
 
     conn = sqlite3.connect(str(db), isolation_level=None)
     conn.row_factory = sqlite3.Row
-    # Create the pricer_live_results row (writes v2 + v3) for this tick.
+    # Create the pricer_live_results row (writes v3 + v4) for this tick.
     written, _ = live_writer.backfill_all(conn)
     assert written == 1
     # Simulate a pre-v3 row: NULL out every v3_* column.
@@ -291,17 +283,13 @@ def test_backfill_v3_fills_existing_rows_and_is_idempotent(tmp_path: Path):
         "v3_p_home_2=NULL, v3_p_away_2=NULL, v3_2up_home_fair=NULL, "
         "v3_2up_home_capped=NULL, v3_2up_away_fair=NULL, v3_2up_away_capped=NULL"
     )
-    v2_before = conn.execute(
-        "SELECT v2_2up_home_capped FROM pricer_live_results"
-    ).fetchone()[0]
 
     updated, skipped = live_writer.backfill_v3(conn)
     assert updated == 1
     row = conn.execute(
-        "SELECT v3_2up_home_capped, v2_2up_home_capped FROM pricer_live_results"
+        "SELECT v3_2up_home_capped FROM pricer_live_results"
     ).fetchone()
     assert row["v3_2up_home_capped"] is not None     # v3 filled
-    assert row["v2_2up_home_capped"] == v2_before     # v2 untouched
 
     again, _ = live_writer.backfill_v3(conn)
     assert again == 0                                  # idempotent
@@ -329,7 +317,8 @@ def _live_trailing_snapshot(bookmaker: Bookmaker) -> Snapshot:
 
 
 def test_live_writer_v2_trailing_produces_output(tmp_path: Path):
-    """At a live trailing score (1-0), V2 trailing 1UP is populated."""
+    """At a live trailing score (1-0), V3 trailing 1UP and V4 trailing 1UP
+    are both populated; v2_1up_away_capped is now NULL."""
     conn = sqlite3.connect(str(tmp_path / "v2_live.db"), isolation_level=None)
     init_schema(conn)
     conn.row_factory = sqlite3.Row
@@ -342,10 +331,59 @@ def test_live_writer_v2_trailing_produces_output(tmp_path: Path):
     )
     assert ok
     row = conn.execute(
-        "SELECT our_1up_away_capped, v2_1up_away_capped "
+        "SELECT v3_1up_away_capped, v4_1up_away_capped, v2_1up_away_capped "
         "FROM pricer_live_results WHERE event_id='E1'"
     ).fetchone()
     assert row is not None
-    assert row["our_1up_away_capped"] is None  # V1 no longer runs
-    assert row["v2_1up_away_capped"] is not None  # V2 trailing away populated
+    assert row["v3_1up_away_capped"] is not None  # V3 trailing away populated
+    assert row["v4_1up_away_capped"] is not None  # V4 trailing away populated
+    assert row["v2_1up_away_capped"] is None       # V2 no longer runs
+    conn.close()
+
+
+def test_live_writer_persists_v3_v4_not_v2(tmp_path):
+    import sqlite3
+    from odds_scraper.db_schema import init_schema
+    from odds_scraper.models import Bookmaker
+    from odds_scraper.pricer import live_writer
+    conn = sqlite3.connect(str(tmp_path / "v4.db"), isolation_level=None)
+    init_schema(conn); conn.row_factory = sqlite3.Row
+    rows = [
+        _tick_snapshot(Bookmaker.BETPAWA, with_prob=True),
+        _tick_snapshot(Bookmaker.SPORTYBET, with_prob=False),
+    ]
+    assert live_writer.compute_and_write_from_snapshots(
+        conn, "E1", "2026-05-22T18:30:00Z", rows, (0, 0))
+    row = conn.execute(
+        "SELECT v2_p_home_1, v3_p_home_1, v4_p_home_1, "
+        "       v3_1up_home_capped, v4_1up_home_capped "
+        "FROM pricer_live_results WHERE event_id='E1'").fetchone()
+    assert row["v2_p_home_1"] is None
+    assert row["v3_p_home_1"] is not None
+    assert row["v4_p_home_1"] is not None
+    assert row["v3_1up_home_capped"] is not None
+    assert row["v4_1up_home_capped"] is not None
+    conn.close()
+
+
+def test_live_writer_v4_crash_keeps_row_with_v3(tmp_path, monkeypatch):
+    import sqlite3
+    from odds_scraper.db_schema import init_schema
+    from odds_scraper.models import Bookmaker
+    from odds_scraper.pricer import live_writer
+    conn = sqlite3.connect(str(tmp_path / "v4crash.db"), isolation_level=None)
+    init_schema(conn); conn.row_factory = sqlite3.Row
+    monkeypatch.setattr(live_writer.engine_v4, "price_early_payout_markets",
+                        lambda **kw: (_ for _ in ()).throw(RuntimeError("v4 down")))
+    rows = [
+        _tick_snapshot(Bookmaker.BETPAWA, with_prob=True),
+        _tick_snapshot(Bookmaker.SPORTYBET, with_prob=False),
+    ]
+    assert live_writer.compute_and_write_from_snapshots(
+        conn, "E2", "2026-05-22T18:30:00Z", rows, (0, 0))
+    row = conn.execute(
+        "SELECT v3_2up_home_capped, v4_2up_home_capped "
+        "FROM pricer_live_results WHERE event_id='E2'").fetchone()
+    assert row["v3_2up_home_capped"] is not None
+    assert row["v4_2up_home_capped"] is None
     conn.close()

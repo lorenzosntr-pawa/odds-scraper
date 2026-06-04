@@ -14,7 +14,7 @@ import sqlite3
 from typing import Iterable
 
 from ..models import Snapshot
-from . import engine_v2, engine_v3, inputs as input_extract, score_state
+from . import engine_v3, engine_v4, inputs as input_extract, score_state
 
 log = logging.getLogger(__name__)
 
@@ -70,80 +70,66 @@ def compute_and_write(
     # Private metadata keys (e.g. _cap_source_home) live on the inputs dict
     # for the CSV layer's benefit but aren't engine kwargs — strip before call.
     engine_kwargs = {k: v for k, v in engine_inputs.items() if not k.startswith("_")}
-    try:
-        res_v2 = engine_v2.price_early_payout_markets(**engine_kwargs)
-    except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "v2 engine crashed on event=%s ts=%s — skipping (%s)",
-            event_id, ts_utc, exc,
-        )
-        return False
-
-    # V3 runs on the same inputs. A V3 failure must never drop the tick or
-    # affect V2 — store NULL v3 and carry on.
+    # V3 is the must-succeed primary: it supplies the shared basis/lambda and
+    # the v3_* block. A V3 crash drops the tick (returns False) — same policy
+    # V2 had before it was retired.
     try:
         res_v3 = engine_v3.price_early_payout_markets(**engine_kwargs)
     except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "v3 engine crashed on event=%s ts=%s — storing NULL v3 (%s)",
-            event_id, ts_utc, exc,
-        )
-        res_v3 = None
+        log.warning("v3 engine crashed on event=%s ts=%s — skipping (%s)",
+                    event_id, ts_utc, exc)
+        return False
 
-    def _v3(market, key):
-        return res_v3[market][key] if res_v3 is not None else None
+    # V4 is best-effort: a crash stores NULL v4 and never drops the tick.
+    try:
+        res_v4 = engine_v4.price_early_payout_markets(**engine_kwargs)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("v4 engine crashed on event=%s ts=%s — storing NULL v4 (%s)",
+                    event_id, ts_utc, exc)
+        res_v4 = None
 
-    def _v3p(key):
-        return res_v3[key] if res_v3 is not None else None
+    def _v4(market, key):
+        return res_v4[market][key] if res_v4 is not None else None
+
+    def _v4p(key):
+        return res_v4[key] if res_v4 is not None else None
 
     conn.execute(
         """
         INSERT OR REPLACE INTO pricer_live_results (
             event_id, ts_utc, basis_used,
             lambda_home, lambda_away,
-            our_p_home_1, our_p_away_1,
-            our_1up_home_fair, our_1up_home_capped,
-            our_1up_away_fair, our_1up_away_capped,
-            our_p_home_2, our_p_away_2,
-            our_2up_home_fair, our_2up_home_capped,
-            our_2up_away_fair, our_2up_away_capped,
-            v2_p_home_1, v2_p_away_1,
-            v2_1up_home_fair, v2_1up_home_capped,
-            v2_1up_away_fair, v2_1up_away_capped,
-            v2_p_home_2, v2_p_away_2,
-            v2_2up_home_fair, v2_2up_home_capped,
-            v2_2up_away_fair, v2_2up_away_capped,
             v3_p_home_1, v3_p_away_1,
             v3_1up_home_fair, v3_1up_home_capped,
             v3_1up_away_fair, v3_1up_away_capped,
             v3_p_home_2, v3_p_away_2,
             v3_2up_home_fair, v3_2up_home_capped,
-            v3_2up_away_fair, v3_2up_away_capped
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            v3_2up_away_fair, v3_2up_away_capped,
+            v4_p_home_1, v4_p_away_1,
+            v4_1up_home_fair, v4_1up_home_capped,
+            v4_1up_away_fair, v4_1up_away_capped,
+            v4_p_home_2, v4_p_away_2,
+            v4_2up_home_fair, v4_2up_home_capped,
+            v4_2up_away_fair, v4_2up_away_capped
+        ) VALUES (?, ?, ?, ?, ?,
                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event_id, ts_utc, basis,
-            res_v2["lambda_home"], res_v2["lambda_away"],
-            None, None,  # our_p_home_1, our_p_away_1
-            None, None,  # our_1up_home_fair, our_1up_home_capped
-            None, None,  # our_1up_away_fair, our_1up_away_capped
-            None, None,  # our_p_home_2, our_p_away_2
-            None, None,  # our_2up_home_fair, our_2up_home_capped
-            None, None,  # our_2up_away_fair, our_2up_away_capped
-            res_v2["p_home_1"], res_v2["p_away_1"],
-            res_v2["market_1up"]["home_fair"],   res_v2["market_1up"]["home_margin"],
-            res_v2["market_1up"]["away_fair"],   res_v2["market_1up"]["away_margin"],
-            res_v2["p_home_2"], res_v2["p_away_2"],
-            res_v2["market_2up"]["home_fair"],   res_v2["market_2up"]["home_margin"],
-            res_v2["market_2up"]["away_fair"],   res_v2["market_2up"]["away_margin"],
-            _v3p("p_home_1"), _v3p("p_away_1"),
-            _v3("market_1up", "home_fair"),   _v3("market_1up", "home_margin"),
-            _v3("market_1up", "away_fair"),   _v3("market_1up", "away_margin"),
-            _v3p("p_home_2"), _v3p("p_away_2"),
-            _v3("market_2up", "home_fair"),   _v3("market_2up", "home_margin"),
-            _v3("market_2up", "away_fair"),   _v3("market_2up", "away_margin"),
+            res_v3["lambda_home"], res_v3["lambda_away"],
+            res_v3["p_home_1"], res_v3["p_away_1"],
+            res_v3["market_1up"]["home_fair"],   res_v3["market_1up"]["home_margin"],
+            res_v3["market_1up"]["away_fair"],   res_v3["market_1up"]["away_margin"],
+            res_v3["p_home_2"], res_v3["p_away_2"],
+            res_v3["market_2up"]["home_fair"],   res_v3["market_2up"]["home_margin"],
+            res_v3["market_2up"]["away_fair"],   res_v3["market_2up"]["away_margin"],
+            _v4p("p_home_1"), _v4p("p_away_1"),
+            _v4("market_1up", "home_fair"),   _v4("market_1up", "home_margin"),
+            _v4("market_1up", "away_fair"),   _v4("market_1up", "away_margin"),
+            _v4p("p_home_2"), _v4p("p_away_2"),
+            _v4("market_2up", "home_fair"),   _v4("market_2up", "home_margin"),
+            _v4("market_2up", "away_fair"),   _v4("market_2up", "away_margin"),
         ),
     )
     return True
