@@ -316,7 +316,7 @@ def _live_trailing_snapshot(bookmaker: Bookmaker) -> Snapshot:
     )
 
 
-def test_live_writer_v2_trailing_produces_output(tmp_path: Path):
+def test_live_writer_trailing_produces_v3_v4_output(tmp_path: Path):
     """At a live trailing score (1-0), V3 trailing 1UP and V4 trailing 1UP
     are both populated; v2_1up_away_capped is now NULL."""
     conn = sqlite3.connect(str(tmp_path / "v2_live.db"), isolation_level=None)
@@ -342,10 +342,6 @@ def test_live_writer_v2_trailing_produces_output(tmp_path: Path):
 
 
 def test_live_writer_persists_v3_v4_not_v2(tmp_path):
-    import sqlite3
-    from odds_scraper.db_schema import init_schema
-    from odds_scraper.models import Bookmaker
-    from odds_scraper.pricer import live_writer
     conn = sqlite3.connect(str(tmp_path / "v4.db"), isolation_level=None)
     init_schema(conn); conn.row_factory = sqlite3.Row
     rows = [
@@ -367,10 +363,6 @@ def test_live_writer_persists_v3_v4_not_v2(tmp_path):
 
 
 def test_live_writer_v4_crash_keeps_row_with_v3(tmp_path, monkeypatch):
-    import sqlite3
-    from odds_scraper.db_schema import init_schema
-    from odds_scraper.models import Bookmaker
-    from odds_scraper.pricer import live_writer
     conn = sqlite3.connect(str(tmp_path / "v4crash.db"), isolation_level=None)
     init_schema(conn); conn.row_factory = sqlite3.Row
     monkeypatch.setattr(live_writer.engine_v4, "price_early_payout_markets",

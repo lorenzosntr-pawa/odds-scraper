@@ -219,7 +219,7 @@ def backfill_v3(conn: sqlite3.Connection) -> tuple[int, int]:
     row can't happen (both sides can't deactivate at once), so "all v3_* NULL"
     reliably means "not computed". Re-extracts engine inputs from `prices`
     exactly as backfill_all does, runs engine_v3, and UPDATEs ONLY the v3_*
-    columns. V2 values are left untouched. Idempotent.
+    columns. Other columns are left untouched. Idempotent.
 
     Returns (updated, skipped); skipped = rows whose inputs can't price.
     """
