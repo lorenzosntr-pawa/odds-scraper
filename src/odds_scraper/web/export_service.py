@@ -43,8 +43,9 @@ def select_ticks(
     if scope.get("date"):
         where.append("DATE(e.kickoff_utc) = ?"); params.append(scope["date"])
     if scope.get("search"):
-        where.append("(LOWER(e.home) LIKE ? OR LOWER(e.away) LIKE ?)")
-        like = f"%{scope['search'].lower()}%"; params += [like, like]
+        where.append("(LOWER(e.home) LIKE ? ESCAPE '\\' OR LOWER(e.away) LIKE ? ESCAPE '\\')")
+        escaped = scope["search"].lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped}%"; params += [like, like]
     where_sql = " AND ".join(where)
 
     base = """

@@ -49,7 +49,7 @@ def test_select_ticks_regime_filters_status():
     assert len(allr) == 2
 
 
-def test_select_ticks_latest_tiebreak_uses_max_snapshot_id():
+def test_select_ticks_latest_picks_last_ts_per_event():
     c = _conn(); _seed_event(c)
     _seed_tick(c, "E1", "2026-05-22T18:00:00Z", "STARTED")
     _seed_tick(c, "E1", "2026-05-22T18:30:00Z", "STARTED")
@@ -64,3 +64,15 @@ def test_select_ticks_scope_country_and_invalid_regime():
     assert len(ex.select_ticks(c, "any", "all", {"country": "ng"})) == 1
     with pytest.raises(ValueError):
         ex.select_ticks(c, "bogus", "all", {})
+
+
+def test_select_ticks_search_escapes_like_metachars():
+    c = _conn()
+    _seed_event(c, eid="E1", home="A_B", away="X")
+    _seed_event(c, eid="E2", home="AZB", away="Y")
+    _seed_tick(c, "E1", "2026-05-22T18:00:00Z", "STARTED")
+    _seed_tick(c, "E2", "2026-05-22T18:00:00Z", "STARTED")
+    # underscore must be literal, not a single-char wildcard
+    out = ex.select_ticks(c, "any", "all", {"search": "a_b"})
+    ids = {t["event_id"] for t in out}
+    assert ids == {"E1"}   # only the literal "A_B" matches, not "AZB"
