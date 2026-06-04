@@ -50,16 +50,26 @@ Phase 2 depends on Phase 1 (stored V4). Build Phase 1 first.
 
 ## Phase 1 — V3 + V4 in the live pipeline
 
-### Decision: functional drop of V2, additive-only schema
+### Decision: V3 + V4 only across the whole tool; non-destructive data
 
-"Drop V2" means **stop computing and displaying V2**, not physically dropping
-columns. We add `v4_*` columns and leave `v2_*`/`our_*` columns in place (NULL on
-new rows). Rationale: SQLite column drops are destructive and historical rows hold
-real V2 data; an additive migration is the proven pattern here (v9 added V2, v10
-added V3 identically). No data loss; the UI and export simply stop reading V2.
+The system going forward is **V3 + V4 only**. V1 and V2 are removed from the **entire
+UI** (home cards, detail history, simulator engine picker, and profile config panels)
+— not just the live comparison views. The tool offers only V3 and V4 everywhere.
 
-> **Confirm:** OK to keep `v2_*` columns physically (stop writing them) rather than
-> a destructive drop?
+**Data is handled non-destructively — no `DROP COLUMN`:**
+
+- **Scraped data is never touched.** The scraped bookmaker odds live in `prices` /
+  `snapshots`; this work does not modify them in any way. (They are exactly what the
+  Phase 2 export reads out.)
+- In `pricer_live_results`, the `our_*` (V1) and `v2_*` (V2) columns are **computed**
+  engine output, not scraped. We **stop writing `v2_*`** (and `our_*` stays NULL as
+  today) and **stop reading them**, but we **leave the columns in place** — an
+  additive migration is the proven pattern here (v9 added V2, v10 added V3
+  identically), and keeping the columns avoids a destructive migration while
+  preserving historical values. The UI and export simply never reference V1/V2.
+- Stored profile coefficients keep their V2-only tunable fields (optional,
+  backfilled on load) for back-compat; those fields are just **hidden** from the
+  profile form. No profile-schema change.
 
 ### 1.1 Schema — migration v11 (`db_schema.py`)
 
@@ -126,21 +136,27 @@ Restructure the returned shape from "V2-primary + V3-beside" to explicit
   `history_books = ("betpawa", "sportybet", "sim_v3", "sim_v4", "bet9ja", "betway")`.
 - `show_sim_col` gate unchanged (1UP/2UP markets only).
 
-### 1.6 Templates
+### 1.6 Templates / UI — V3 + V4 only across the whole tool
 
-- `event_detail.html` — rename SIM columns/headers to **V3** and **V4**; add a
-  `--c-v4` colour var (drop the V2 column from this view).
-- `_event_card.html` — card SIM cell shows V3 + V4 (or the latest, V4) instead of V2.
-- **Unchanged:** `simulator.html` keeps V1–V4 engine checkboxes (the what-if tool
-  still exercises all engines); `_profile_fields.html` keeps the V2 panel (profiles
-  still tune V2 inside the simulator).
+- `event_detail.html` — SIM columns/headers become **V3** and **V4**; add a
+  `--c-v4` colour var; remove the V2 (and V1) columns from this view.
+- `_event_card.html` — card SIM cell shows **V3 + V4** (no V1/V2).
+- `simulator.html` — engine picker offers **V3 + V4 only** (remove the V1 and V2
+  checkboxes); default V4. The `runner_v2` backend may keep V1/V2 support
+  internally (harmless); only the UI is restricted. `pricer_routes` already
+  validates against `VALID_ENGINES`, so trimming the checkboxes needs no backend
+  change.
+- `_profile_fields.html` — show only the **V3/V4-relevant** tunable panels; hide the
+  V1/V2 panels and V2-only fields (trailing margins). Stored profiles keep those
+  fields (optional/backfilled) — they're just not rendered.
 
 ### 1.7 Phase 1 success criteria
 
-- New ticks write non-NULL `v3_*` and `v4_*`, NULL `v2_*`.
+- New ticks write non-NULL `v3_*` and `v4_*`, NULL `v2_*`/`our_*`.
 - `backfill_v4` fills V4 on all historical rows that can price.
-- Detail page + card show V3 and V4; no V2 in those views.
-- Simulator still runs V1–V4 unchanged.
+- No V1/V2 anywhere in the UI: cards, detail, simulator engine picker, and profile
+  config panels all show **V3 + V4 only**.
+- Scraped `prices`/`snapshots` untouched; no `DROP COLUMN` runs.
 - `pytest` green.
 
 ---
