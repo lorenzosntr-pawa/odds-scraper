@@ -146,9 +146,16 @@ Restructure the returned shape from "V2-primary + V3-beside" to explicit
   internally (harmless); only the UI is restricted. `pricer_routes` already
   validates against `VALID_ENGINES`, so trimming the checkboxes needs no backend
   change.
-- `_profile_fields.html` — show only the **V3/V4-relevant** tunable panels; hide the
-  V1/V2 panels and V2-only fields (trailing margins). Stored profiles keep those
-  fields (optional/backfilled) — they're just not rendered.
+- `_profile_fields.html` — collapse to a **single shared "V3 / V4" tunable panel**.
+  `engine_v3` and `engine_v4` read the *identical* knob set (margin level/tilt,
+  odds-boost %, reduction %, TWOUP boost coefficients, near-even threshold), so one
+  set of fields drives both engines; V3 and V4 differ only in internal logic. Hide
+  the V1/V2 panels and the V1/V2-only fields (trailing margins, 1UP regression
+  models). Stored profiles keep all fields (optional/backfilled) — just not
+  rendered. **No new coefficient names, no `V4_ONLY` set** — `with_v4_coefficients`
+  already applies these via its `hasattr(engine_v4, k)` filter. (The internal
+  `V3_ONLY_TUNABLE_NAMES` constant is left as-is to avoid churn; it now
+  conceptually means "V3/V4 shared".)
 
 ### 1.7 Phase 1 success criteria
 
