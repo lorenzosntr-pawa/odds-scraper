@@ -212,3 +212,29 @@ def test_sim_rows_only_requested_engines_and_up_markets():
     rows2 = list(ex.iter_long_rows(c, ticks, markets=[("1x2_1up_ft", 0.0)],
                                    books=None, sim_engines=("v3",)))
     assert {r["engine"] for r in rows2 if r["is_simulated"] == 1} == {"v3"}
+
+
+def _seed_sim_2up(c, eid, ts):
+    c.execute(
+        "INSERT INTO pricer_live_results (event_id, ts_utc, basis_used, "
+        "v3_2up_home_capped, v3_2up_away_capped, v3_p_home_2, v3_p_away_2, "
+        "v4_2up_home_capped, v4_2up_away_capped, v4_p_home_2, v4_p_away_2) "
+        "VALUES (?,?, 'bp', 5.5,6.6,0.11,0.09, 5.0,6.0,0.12,0.10)", (eid, ts))
+
+
+def test_sim_rows_2up_column_mapping():
+    c = _conn(); _seed_event(c)
+    ts = "2026-05-22T18:00:00Z"
+    _seed_tick(c, "E1", ts, "STARTED", prices=[("1x2_2up_ft", 0.0, "home", 9.0, None)])
+    _seed_sim_2up(c, "E1", ts)
+    ticks = ex.select_ticks(c, "any", "all", {})
+    rows = list(ex.iter_long_rows(c, ticks, markets=[("1x2_2up_ft", 0.0)],
+                                  books=None, sim_engines=("v3", "v4")))
+    sim = [r for r in rows if r["is_simulated"] == 1]
+    # all sim rows are the 2up market, OUR book
+    assert sim and all(r["market_id"] == "1x2_2up_ft" and r["bookmaker"] == "OUR" for r in sim)
+    v3_home = next(r for r in sim if r["engine"] == "v3" and r["side"] == "home")
+    v4_away = next(r for r in sim if r["engine"] == "v4" and r["side"] == "away")
+    # 2up values must come from the *_2up_*_capped / *_p_*_2 columns, NOT 1up
+    assert v3_home["odds"] == 5.5 and v3_home["probability"] == 0.11
+    assert v4_away["odds"] == 6.0 and v4_away["probability"] == 0.10
