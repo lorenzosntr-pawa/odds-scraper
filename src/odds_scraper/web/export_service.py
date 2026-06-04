@@ -185,8 +185,50 @@ def _meta(t: dict) -> dict:
     }
 
 
+# (market_id, engine) -> (home_odds_col, away_odds_col, home_prob_col, away_prob_col)
+_SIM_COLS = {
+    ("1x2_1up_ft", "v3"): ("v3_1up_home_capped", "v3_1up_away_capped", "v3_p_home_1", "v3_p_away_1"),
+    ("1x2_2up_ft", "v3"): ("v3_2up_home_capped", "v3_2up_away_capped", "v3_p_home_2", "v3_p_away_2"),
+    ("1x2_1up_ft", "v4"): ("v4_1up_home_capped", "v4_1up_away_capped", "v4_p_home_1", "v4_p_away_1"),
+    ("1x2_2up_ft", "v4"): ("v4_2up_home_capped", "v4_2up_away_capped", "v4_p_home_2", "v4_p_away_2"),
+}
+_SIM_MARKETS = ("1x2_1up_ft", "1x2_2up_ft")
+
+
 def _sim_rows(conn, t, meta, markets, sim_engines) -> Iterator[dict]:
-    return iter(())  # implemented in Task 13
+    """Stored V3/V4 OUR prices for the in-scope UP markets as LONG rows.
+    LEFT-join semantics: if no pricer_live_results row exists for this tick,
+    yields nothing (real rows are unaffected)."""
+    if markets is not None:
+        sel = {m for m, _ in markets}
+        up_markets = [m for m in _SIM_MARKETS if m in sel]
+    else:
+        up_markets = list(_SIM_MARKETS)
+    if not up_markets:
+        return
+    cur = conn.cursor(); cur.row_factory = sqlite3.Row
+    row = cur.execute(
+        "SELECT * FROM pricer_live_results WHERE event_id=? AND ts_utc=?",
+        (t["event_id"], t["ts_utc"]),
+    ).fetchone()
+    if row is None:
+        return
+    for market_id in up_markets:
+        for engine in sim_engines:
+            cols = _SIM_COLS.get((market_id, engine))
+            if not cols:
+                continue
+            oh, oa, ph, pa = cols
+            for side, ocol, pcol in (("home", oh, ph), ("away", oa, pa)):
+                odds = row[ocol]
+                if odds is None:
+                    continue
+                yield {
+                    **meta, "bookmaker": "OUR", "market_id": market_id,
+                    "line": 0.0, "side": side,
+                    "odds": odds, "probability": row[pcol],
+                    "is_simulated": 1, "engine": engine,
+                }
 
 
 def iter_long_rows(

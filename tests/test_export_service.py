@@ -151,3 +151,64 @@ def test_iter_long_rows_real_prices():
     assert r["status"] == "STARTED" and r["match_minute"] == 10
     # every row has exactly the LONG_COLUMNS keys
     assert set(ex.LONG_COLUMNS) == set(r.keys())
+
+
+def _seed_sim(c, eid, ts):
+    c.execute(
+        "INSERT INTO pricer_live_results (event_id, ts_utc, basis_used, "
+        "v3_1up_home_capped, v3_1up_away_capped, v3_p_home_1, v3_p_away_1, "
+        "v4_1up_home_capped, v4_1up_away_capped, v4_p_home_1, v4_p_away_1) "
+        "VALUES (?,?, 'bp', 2.1,3.2,0.5,0.3, 2.0,3.0,0.52,0.31)", (eid, ts))
+
+
+def test_sim_rows_v3_v4_for_up_markets_only():
+    c = _conn(); _seed_event(c)
+    ts = "2026-05-22T18:00:00Z"
+    _seed_tick(c, "E1", ts, "STARTED", prices=[
+        ("1x2_ft", 0.0, "home", 1.80, None)])          # non-UP real market
+    _seed_sim(c, "E1", ts)
+    ticks = ex.select_ticks(c, "any", "all", {})
+    rows = list(ex.iter_long_rows(
+        c, ticks, markets=[("1x2_ft", 0.0), ("1x2_1up_ft", 0.0)],
+        books=None, sim_engines=("v3", "v4")))
+    # real 1x2 row retained (LEFT-join semantics — not deleted by the sim join)
+    assert any(r["market_id"] == "1x2_ft" and r["is_simulated"] == 0 for r in rows)
+    sim = [r for r in rows if r["is_simulated"] == 1]
+    engines = {r["engine"] for r in sim}
+    assert engines == {"v3", "v4"}
+    # sim rows are 1UP home/away, bookmaker OUR, carry capped odds + prob
+    v4_home = next(r for r in sim if r["engine"] == "v4" and r["side"] == "home")
+    assert v4_home["market_id"] == "1x2_1up_ft" and v4_home["bookmaker"] == "OUR"
+    assert v4_home["odds"] == 2.0 and v4_home["probability"] == 0.52
+    assert v4_home["line"] == 0.0
+    # set(LONG_COLUMNS) shape holds for sim rows too
+    assert set(ex.LONG_COLUMNS) == set(v4_home.keys())
+
+
+def test_sim_rows_left_join_no_row_yields_nothing():
+    c = _conn(); _seed_event(c)
+    ts = "2026-05-22T18:00:00Z"
+    _seed_tick(c, "E1", ts, "STARTED", prices=[("1x2_1up_ft", 0.0, "home", 1.9, None)])
+    # NO _seed_sim -> no pricer_live_results row
+    ticks = ex.select_ticks(c, "any", "all", {})
+    rows = list(ex.iter_long_rows(c, ticks, markets=[("1x2_1up_ft", 0.0)],
+                                  books=None, sim_engines=("v3", "v4")))
+    # only the real row; no sim rows, no crash
+    assert all(r["is_simulated"] == 0 for r in rows)
+    assert len(rows) == 1
+
+
+def test_sim_rows_only_requested_engines_and_up_markets():
+    c = _conn(); _seed_event(c)
+    ts = "2026-05-22T18:00:00Z"
+    _seed_tick(c, "E1", ts, "STARTED", prices=[("1x2_ft", 0.0, "home", 1.8, None)])
+    _seed_sim(c, "E1", ts)
+    ticks = ex.select_ticks(c, "any", "all", {})
+    # markets exclude any UP market -> no sim rows even though sim_engines set
+    rows = list(ex.iter_long_rows(c, ticks, markets=[("1x2_ft", 0.0)],
+                                  books=None, sim_engines=("v4",)))
+    assert all(r["is_simulated"] == 0 for r in rows)
+    # request only v3, include the 1up market -> only v3 sim rows
+    rows2 = list(ex.iter_long_rows(c, ticks, markets=[("1x2_1up_ft", 0.0)],
+                                   books=None, sim_engines=("v3",)))
+    assert {r["engine"] for r in rows2 if r["is_simulated"] == 1} == {"v3"}
