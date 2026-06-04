@@ -105,13 +105,15 @@
             </span>
 
             {# SIM column: V3 then V4 stacked, for UP rows when BP quoted. #}
-            <span data-bookmaker="sim_v3">
-              {% if is_up_row and bp_has_quote and our_v3_value is not none %}
+            <span data-bookmaker="sim">
+              {% if is_up_row and bp_has_quote and (our_v3_value is not none or our_v4_value is not none) %}
+                {% if our_v3_value is not none %}
                 <span class="sim-sub" data-bookmaker="sim_v3">
                   <span class="sim-tag">V3</span>
                   <span class="odds sim">{{ "%.2f"|format(our_v3_value) }}</span>
                   {% if our_v3_prob is not none %}<span class="prob">.{{ "%02d"|format([(our_v3_prob * 100)|round|int, 99]|min) }}</span>{% endif %}
                 </span>
+                {% endif %}
                 {% if our_v4_value is not none %}
                 <span class="sim-sub" data-bookmaker="sim_v4">
                   <span class="sim-tag">V4</span>

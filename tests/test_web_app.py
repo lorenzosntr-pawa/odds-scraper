@@ -859,11 +859,31 @@ def test_sim_cell_marks_our_when_bp_has_up_quote(db_with_ftts_and_ou: Path):
 
 
 def test_home_card_shows_v4_under_v3_in_sim(db_with_ftts_and_ou: Path):
-    """The card SIM cell stacks V3 and V4 — a V4 sub-cell renders when V4
-    prices the latest snapshot (BP-quoted UP market)."""
+    """The card SIM cell stacks V3 and V4 — both sub-cells render when both
+    engines price the latest snapshot (BP-quoted UP market)."""
     client = TestClient(create_app(db_path=db_with_ftts_and_ou))
     r = client.get("/events?status=upcoming")
     assert 'data-bookmaker="sim_v3"' in r.text
+    assert 'data-bookmaker="sim_v4"' in r.text
+    # Outer SIM column wrapper uses "sim" (not "sim_v3").
+    assert 'data-bookmaker="sim"' in r.text
+
+
+def test_home_card_shows_v4_sub_cell_when_v3_unavailable(db_with_ftts_and_ou: Path):
+    """When V3 fails but V4 succeeds the SIM cell still renders the V4 sub-cell.
+    This verifies that the V4 guard is independent of the V3 guard."""
+    from unittest.mock import patch
+
+    def _v3_raises(**kwargs):
+        raise RuntimeError("V3 engine unavailable")
+
+    app = create_app(db_path=db_with_ftts_and_ou)
+    with patch("odds_scraper.web.app.engine_v3.price_early_payout_markets", side_effect=_v3_raises):
+        client = TestClient(app)
+        r = client.get("/events?status=upcoming")
+    # V3 sub-cell must NOT appear (engine failed → our_v3_value is None).
+    assert 'data-bookmaker="sim_v3"' not in r.text
+    # V4 sub-cell MUST still appear (its guard is independent).
     assert 'data-bookmaker="sim_v4"' in r.text
 
 

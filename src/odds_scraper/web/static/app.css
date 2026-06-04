@@ -167,13 +167,12 @@
   letter-spacing: 0.05em;
 }
 .col-header > .lbl[data-bookmaker="sim"],
-.row > span[data-bookmaker="sim"],
-.row > span[data-bookmaker="sim_v3"] {
-  width: 90px;       /* slightly wider than other cells to fit "1.85 SIM" */
+.row > span[data-bookmaker="sim"] {
+  width: 90px;       /* slightly wider than other cells to fit V3/V4 stacked */
   text-align: center;
   white-space: nowrap;
 }
-/* V3/V4 stacked inside the single SIM cell. */
+/* V3/V4 sub-cells stacked inside the single SIM outer cell. */
 .sim-sub {
   display: block;
   white-space: nowrap;
