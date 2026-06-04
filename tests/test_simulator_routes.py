@@ -158,9 +158,11 @@ def test_profiles_page_renders(client: TestClient):
     assert r.status_code == 200
     assert "default" in r.text  # default profile listed
     assert "Create new profile" in r.text
-    # Margin field pairs use _slope / _intercept naming
-    assert 'name="ONEUP_FAVORITE_MARGIN_slope"' in r.text
+    # V3/V4 fields are present — logit margin level + boost coefficient.
+    assert 'name="ONEUP_MARGIN_LEVEL"' in r.text
     assert 'name="TWOUP_FAVORITE_BOOST_COEFFICIENT"' in r.text
+    # V1/V2-only fields are not rendered.
+    assert 'name="ONEUP_FAVORITE_MARGIN_slope"' not in r.text
 
 
 def test_simulator_runs_page_has_profiles_tab(client: TestClient):
@@ -412,35 +414,44 @@ def test_edit_profile_page_pre_checks_enabled_flags(
     db_path: Path, client: TestClient,
 ):
     """Saved-True flags must render with the `checked` attribute so the
-    edit form reflects current state, not the HTML default."""
-    data = _full_profile_form_data("mixed")
-    data["ONEUP_MARGIN_BLEND_ENABLED"] = "on"
-    # Leave TWOUP flags off → form will arrive without them → stored False.
-    client.post("/simulator/profiles", data=data, follow_redirects=False)
+    edit form reflects current state, not the HTML default.
+    The V3/V4 panel exposes TWOUP_BOOST_BLEND_ENABLED; create one profile
+    with it on and one without, then verify the edit page pre-checks it."""
+    # Profile A: TWOUP_BOOST_BLEND_ENABLED = on
+    data_on = _full_profile_form_data("blend-on")
+    data_on["TWOUP_BOOST_BLEND_ENABLED"] = "on"
+    client.post("/simulator/profiles", data=data_on, follow_redirects=False)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
-    pid = conn.execute(
-        "SELECT id FROM pricer_configs WHERE name='mixed'"
+    pid_on = conn.execute(
+        "SELECT id FROM pricer_configs WHERE name='blend-on'"
     ).fetchone()["id"]
     conn.close()
-    r = client.get(f"/simulator/profiles/{pid}/edit")
-    body = r.text
-    # Looking for the exact attribute the template emits — checked
-    # without quotes for the on flag, no `checked` for the off flags.
-    assert 'name="ONEUP_MARGIN_BLEND_ENABLED"\n' in body or \
-           'name="ONEUP_MARGIN_BLEND_ENABLED"\r\n' in body or \
-           'name="ONEUP_MARGIN_BLEND_ENABLED" ' in body
-    # Easier check: the checked attribute appears on the 1UP flag input
-    # (find the substring window around the name).
-    onep_pos = body.find('name="ONEUP_MARGIN_BLEND_ENABLED"')
-    twop_pos = body.find('name="TWOUP_MARGIN_BLEND_ENABLED"')
-    assert onep_pos != -1 and twop_pos != -1
-    # The `checked` keyword must appear inside the same <input ...> tag
-    # for ONEUP (on) but not for TWOUP (off).
-    onep_tag = body[body.rfind("<input", 0, onep_pos): body.find(">", onep_pos)]
-    twop_tag = body[body.rfind("<input", 0, twop_pos): body.find(">", twop_pos)]
-    assert "checked" in onep_tag
-    assert "checked" not in twop_tag
+
+    # Profile B: TWOUP_BOOST_BLEND_ENABLED = off (omitted)
+    data_off = _full_profile_form_data("blend-off")
+    # No TWOUP_BOOST_BLEND_ENABLED key → stored False.
+    client.post("/simulator/profiles", data=data_off, follow_redirects=False)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    pid_off = conn.execute(
+        "SELECT id FROM pricer_configs WHERE name='blend-off'"
+    ).fetchone()["id"]
+    conn.close()
+
+    # Edit page for blend-on: the checkbox input must carry `checked`.
+    body_on = client.get(f"/simulator/profiles/{pid_on}/edit").text
+    pos = body_on.find('name="TWOUP_BOOST_BLEND_ENABLED"')
+    assert pos != -1, "TWOUP_BOOST_BLEND_ENABLED input not found in edit page"
+    tag = body_on[body_on.rfind("<input", 0, pos): body_on.find(">", pos)]
+    assert "checked" in tag
+
+    # Edit page for blend-off: the same input must NOT carry `checked`.
+    body_off = client.get(f"/simulator/profiles/{pid_off}/edit").text
+    pos2 = body_off.find('name="TWOUP_BOOST_BLEND_ENABLED"')
+    assert pos2 != -1
+    tag2 = body_off[body_off.rfind("<input", 0, pos2): body_off.find(">", pos2)]
+    assert "checked" not in tag2
 
 
 def test_edit_profile_persists_flag_changes(db_path: Path, client: TestClient):
@@ -703,13 +714,12 @@ def _default_id(db_path):
     return pid
 
 
-def test_post_run_with_engine_v1_dispatches_v1_runner(db_path, client):
-    """`engine=v1` runs the existing single-engine runner — RunRecord
-    must record engines='v1' for downstream history filtering."""
+def test_post_run_with_engine_v3_dispatches_v3_runner(db_path, client):
+    """`engine=v3` — RunRecord must record engines='v3'."""
     r = client.post(
         "/simulator/runs",
         data={"config_id": _default_id(db_path),
-              "regime": "any", "density": "all", "engine": "v1",
+              "regime": "any", "density": "all", "engine": "v3",
               "country": "", "league": "", "event_id": "",
               "date": "", "search": ""},
         follow_redirects=False,
@@ -717,14 +727,14 @@ def test_post_run_with_engine_v1_dispatches_v1_runner(db_path, client):
     assert r.status_code == 303
     reg = _registry(client)
     rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
-    assert rec.engines == "v1"
+    assert rec.engines == "v3"
 
 
-def test_post_run_with_engine_v2_dispatches_dual_runner(db_path, client):
+def test_post_run_with_engine_v4_dispatches_v4_runner(db_path, client):
     r = client.post(
         "/simulator/runs",
         data={"config_id": _default_id(db_path),
-              "regime": "any", "density": "all", "engine": "v2",
+              "regime": "any", "density": "all", "engine": "v4",
               "country": "", "league": "", "event_id": "",
               "date": "", "search": ""},
         follow_redirects=False,
@@ -732,16 +742,16 @@ def test_post_run_with_engine_v2_dispatches_dual_runner(db_path, client):
     assert r.status_code == 303
     reg = _registry(client)
     rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
-    assert rec.engines == "v2"
+    assert rec.engines == "v4"
 
 
 def test_post_run_with_multiple_engines_dispatches_dual_runner(db_path, client):
     """Multiple `engine` checkboxes → the run uses exactly those engines,
-    recorded in canonical (v1,v2,v3) order regardless of submit order."""
+    recorded in canonical order regardless of submit order."""
     r = client.post(
         "/simulator/runs",
         data={"config_id": _default_id(db_path),
-              "regime": "any", "density": "all", "engine": ["v3", "v1"],
+              "regime": "any", "density": "all", "engine": ["v4", "v3"],
               "country": "", "league": "", "event_id": "",
               "date": "", "search": ""},
         follow_redirects=False,
@@ -749,14 +759,14 @@ def test_post_run_with_multiple_engines_dispatches_dual_runner(db_path, client):
     assert r.status_code == 303
     reg = _registry(client)
     rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
-    assert rec.engines == "v1,v3"  # canonical order, not submit order
+    assert rec.engines == "v3,v4"  # canonical order, not submit order
 
 
-def test_post_run_with_all_three_engines(db_path, client):
+def test_post_run_with_v3_and_v4_engines(db_path, client):
     r = client.post(
         "/simulator/runs",
         data={"config_id": _default_id(db_path),
-              "regime": "any", "density": "all", "engine": ["v1", "v2", "v3"],
+              "regime": "any", "density": "all", "engine": ["v3", "v4"],
               "country": "", "league": "", "event_id": "",
               "date": "", "search": ""},
         follow_redirects=False,
@@ -764,7 +774,7 @@ def test_post_run_with_all_three_engines(db_path, client):
     assert r.status_code == 303
     reg = _registry(client)
     rec = _wait_for_run_done(reg, reg.list_recent(1)[0].id)
-    assert rec.engines == "v1,v2,v3"
+    assert rec.engines == "v3,v4"
 
 
 def test_post_run_with_no_engine_defaults_to_latest_v3(db_path, client):
@@ -799,10 +809,22 @@ def test_post_run_with_unknown_engine_returns_400(db_path, client):
 def test_simulator_form_has_engine_checkboxes(client):
     r = client.get("/simulator")
     body = r.text
-    for v in ("v1", "v2", "v3", "v4"):
+    # Only V3 and V4 are offered in the UI.
+    for v in ("v3", "v4"):
         assert f'type="checkbox" name="engine" value="{v}"' in body
+    for v in ("v1", "v2"):
+        assert f'type="checkbox" name="engine" value="{v}"' not in body
     # V4 (latest) is pre-selected.
     assert 'name="engine" value="v4" checked' in body
+
+
+def test_simulator_page_offers_only_v3_v4_engines(client):
+    html = client.get("/simulator").text
+    # engine checkboxes: only v3 and v4 offered
+    assert 'name="engine" value="v3"' in html
+    assert 'name="engine" value="v4"' in html
+    assert 'name="engine" value="v1"' not in html
+    assert 'name="engine" value="v2"' not in html
 
 
 def test_simulator_history_renders_engines_column(db_path, client):

@@ -1,9 +1,7 @@
-{# Pricer-profile coefficient form, one self-contained panel PER ENGINE
-   (V1 / V2 / V3). Each panel lists every coefficient that engine reads —
-   no shared/common buckets. A coefficient used by more than one engine
-   appears in each panel it belongs to; all copies share the same form
-   `name` and a `data-k`, and the sync script at the bottom keeps them
-   identical so the single submitted value is never ambiguous.
+{# Pricer-profile coefficient form — V3 / V4 engine coefficients.
+   V1 and V2 engines are no longer exposed in the UI; only V3/V4 fields
+   are shown. V2-only fields (ONEUP_TRAILING_*_MARGIN) are omitted from
+   the form and backfilled from defaults by _parse_profile_form.
 
    Caller sets `coeffs` (profile.coefficients on edit, default_coefficients
    on create). #}
@@ -41,81 +39,14 @@
 
 <div class="cfg">
   <div class="cfg-legend">
-    <span class="cfg-leg" data-eng="v1">V1</span>
-    <span class="cfg-leg" data-eng="v2">V2</span>
     <span class="cfg-leg" data-eng="v3">V3</span>
-    <span class="cfg-legend-note">one box per engine — each is complete. Fields an engine shares
-      with another appear in both and stay in sync.</span>
+    <span class="cfg-legend-note">coefficients shared by V3 and V4 — applies to whichever engine(s) you select.</span>
   </div>
 
-  {# ============================== V1 ============================== #}
-  <details class="cfg-panel" data-eng="v1">
-    <summary>
-      <span class="cfg-badge">V1</span>
-      <span class="cfg-title">Original engine</span>
-      <span class="cfg-desc">additive margin + heuristic trailing reductions</span>
-    </summary>
-    <div class="cfg-subhead">1UP</div>
-    <div class="cfg-grid">
-      {{ pair("ONEUP_FAVORITE_MARGIN", "Favorite margin", coeffs["ONEUP_FAVORITE_MARGIN"]) }}
-      {{ pair("ONEUP_UNDERDOG_MARGIN", "Underdog margin", coeffs["ONEUP_UNDERDOG_MARGIN"]) }}
-      {{ num("ONEUP_MIN_GUARANTEED_REDUCTION", "Min cap gap", coeffs["ONEUP_MIN_GUARANTEED_REDUCTION"]) }}
-      {{ num("ONEUP_TRAILING_MIN_REDUCTION", "Trailing reduction min", coeffs["ONEUP_TRAILING_MIN_REDUCTION"]) }}
-      {{ num("ONEUP_TRAILING_MAX_REDUCTION", "Trailing reduction max", coeffs["ONEUP_TRAILING_MAX_REDUCTION"]) }}
-    </div>
-    <div class="cfg-subhead">2UP</div>
-    <div class="cfg-grid">
-      {{ pair("TWOUP_FAVORITE_MARGIN", "Favorite margin", coeffs["TWOUP_FAVORITE_MARGIN"]) }}
-      {{ pair("TWOUP_UNDERDOG_MARGIN", "Underdog margin", coeffs["TWOUP_UNDERDOG_MARGIN"]) }}
-      {{ num("TWOUP_FAVORITE_BOOST_COEFFICIENT", "Favorite boost coeff", coeffs["TWOUP_FAVORITE_BOOST_COEFFICIENT"]) }}
-      {{ num("TWOUP_UNDERDOG_BOOST_COEFFICIENT", "Underdog boost coeff", coeffs["TWOUP_UNDERDOG_BOOST_COEFFICIENT"]) }}
-      {{ num("TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION", "Favorite cap gap", coeffs["TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION"]) }}
-      {{ num("TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION", "Underdog cap gap", coeffs["TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION"]) }}
-      {{ num("TWOUP_TRAILING_MIN_REDUCTION", "Trailing reduction min", coeffs["TWOUP_TRAILING_MIN_REDUCTION"]) }}
-      {{ num("TWOUP_TRAILING_MAX_REDUCTION", "Trailing reduction max", coeffs["TWOUP_TRAILING_MAX_REDUCTION"]) }}
-    </div>
-    <div class="cfg-toggles">
-      {{ toggle("ONEUP_MARGIN_BLEND_ENABLED", "1UP margin blend", coeffs.get("ONEUP_MARGIN_BLEND_ENABLED", True), "off → fav/dog flat") }}
-      {{ toggle("TWOUP_MARGIN_BLEND_ENABLED", "2UP margin blend", coeffs.get("TWOUP_MARGIN_BLEND_ENABLED", True), "off → fav/dog flat") }}
-      {{ toggle("TWOUP_BOOST_BLEND_ENABLED", "2UP boost blend", coeffs.get("TWOUP_BOOST_BLEND_ENABLED", True), "off → fav/dog flat") }}
-    </div>
-  </details>
-
-  {# ============================== V2 ============================== #}
-  <details class="cfg-panel" data-eng="v2">
-    <summary>
-      <span class="cfg-badge">V2</span>
-      <span class="cfg-title">Unified-DP engine</span>
-      <span class="cfg-desc">additive margin + dedicated trailing margin pair</span>
-    </summary>
-    <div class="cfg-subhead">1UP</div>
-    <div class="cfg-grid">
-      {{ pair("ONEUP_FAVORITE_MARGIN", "Favorite margin", coeffs["ONEUP_FAVORITE_MARGIN"]) }}
-      {{ pair("ONEUP_UNDERDOG_MARGIN", "Underdog margin", coeffs["ONEUP_UNDERDOG_MARGIN"]) }}
-      {{ pair("ONEUP_TRAILING_FAVORITE_MARGIN", "Trailing favorite margin", coeffs["ONEUP_TRAILING_FAVORITE_MARGIN"]) }}
-      {{ pair("ONEUP_TRAILING_UNDERDOG_MARGIN", "Trailing underdog margin", coeffs["ONEUP_TRAILING_UNDERDOG_MARGIN"]) }}
-      {{ num("ONEUP_MIN_GUARANTEED_REDUCTION", "Min cap gap", coeffs["ONEUP_MIN_GUARANTEED_REDUCTION"]) }}
-    </div>
-    <div class="cfg-subhead">2UP</div>
-    <div class="cfg-grid">
-      {{ pair("TWOUP_FAVORITE_MARGIN", "Favorite margin", coeffs["TWOUP_FAVORITE_MARGIN"]) }}
-      {{ pair("TWOUP_UNDERDOG_MARGIN", "Underdog margin", coeffs["TWOUP_UNDERDOG_MARGIN"]) }}
-      {{ num("TWOUP_FAVORITE_BOOST_COEFFICIENT", "Favorite boost coeff", coeffs["TWOUP_FAVORITE_BOOST_COEFFICIENT"]) }}
-      {{ num("TWOUP_UNDERDOG_BOOST_COEFFICIENT", "Underdog boost coeff", coeffs["TWOUP_UNDERDOG_BOOST_COEFFICIENT"]) }}
-      {{ num("TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION", "Favorite cap gap", coeffs["TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION"]) }}
-      {{ num("TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION", "Underdog cap gap", coeffs["TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION"]) }}
-    </div>
-    <div class="cfg-toggles">
-      {{ toggle("ONEUP_MARGIN_BLEND_ENABLED", "1UP margin blend", coeffs.get("ONEUP_MARGIN_BLEND_ENABLED", True), "off → fav/dog flat") }}
-      {{ toggle("TWOUP_MARGIN_BLEND_ENABLED", "2UP margin blend", coeffs.get("TWOUP_MARGIN_BLEND_ENABLED", True), "off → fav/dog flat") }}
-      {{ toggle("TWOUP_BOOST_BLEND_ENABLED", "2UP boost blend", coeffs.get("TWOUP_BOOST_BLEND_ENABLED", True), "off → fav/dog flat") }}
-    </div>
-  </details>
-
-  {# ============================== V3 ============================== #}
+  {# ============================== V3 / V4 ============================== #}
   <details class="cfg-panel" data-eng="v3" open>
     <summary>
-      <span class="cfg-badge">V3</span>
+      <span class="cfg-badge">V3 / V4</span>
       <span class="cfg-title">Logit-margin engine</span>
       <span class="cfg-desc">implied = sigmoid(level + tilt · logit p) + per-side odds boost</span>
     </summary>
@@ -171,21 +102,17 @@
 
 <style>
   /* ===== Pricer config — per-engine control panels (terminal aesthetic) ===== */
-  .cfg { --c-v1:#60a5fa; --c-v2:#22d3ee; --c-v3:#4ade80;
+  .cfg { --c-v3:#4ade80;
          display:flex; flex-direction:column; gap:10px; margin-top:6px; }
 
   .cfg-legend { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:6px 2px 2px; }
   .cfg-leg { font-size:10px; text-transform:uppercase; letter-spacing:0.06em;
              padding:2px 9px; border-radius:999px; color:#0a0a0a; font-weight:700; }
-  .cfg-leg[data-eng="v1"]{ background:var(--c-v1); }
-  .cfg-leg[data-eng="v2"]{ background:var(--c-v2); }
   .cfg-leg[data-eng="v3"]{ background:var(--c-v3); }
   .cfg-legend-note { font-size:10px; color:#6b7280; margin-left:8px; font-style:italic; flex:1; min-width:200px; }
 
   .cfg-panel { background:#0b0b0e; border:1px solid #18181d; border-left-width:3px;
                border-radius:6px; overflow:hidden; }
-  .cfg-panel[data-eng="v1"]{ border-left-color:var(--c-v1); }
-  .cfg-panel[data-eng="v2"]{ border-left-color:var(--c-v2); }
   .cfg-panel[data-eng="v3"]{ border-left-color:var(--c-v3); }
 
   .cfg-panel > summary { list-style:none; cursor:pointer; user-select:none;
@@ -198,8 +125,6 @@
   .cfg-panel:not([open]) > summary::after { transform:rotate(-90deg); }
   .cfg-badge { font-size:10px; font-weight:700; letter-spacing:0.08em;
       padding:2px 9px; border-radius:4px; background:#000; white-space:nowrap; }
-  .cfg-panel[data-eng="v1"] .cfg-badge{ color:var(--c-v1); border:1px solid var(--c-v1); }
-  .cfg-panel[data-eng="v2"] .cfg-badge{ color:var(--c-v2); border:1px solid var(--c-v2); }
   .cfg-panel[data-eng="v3"] .cfg-badge{ color:var(--c-v3); border:1px solid var(--c-v3); }
   .cfg-title { color:#f3f4f6; font-size:13px; font-weight:600; }
   .cfg-desc { color:#6b7280; font-size:10px; }
