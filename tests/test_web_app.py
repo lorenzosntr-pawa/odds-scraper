@@ -858,12 +858,13 @@ def test_sim_cell_marks_our_when_bp_has_up_quote(db_with_ftts_and_ou: Path):
     assert "1.50" in r.text  # BP-quoted 1UP home odds
 
 
-def test_home_card_shows_v3_under_v2_in_sim(db_with_ftts_and_ou: Path):
-    """The card SIM cell stacks V2 and V3 — a V3 sub-cell renders when V3
+def test_home_card_shows_v4_under_v3_in_sim(db_with_ftts_and_ou: Path):
+    """The card SIM cell stacks V3 and V4 — a V4 sub-cell renders when V4
     prices the latest snapshot (BP-quoted UP market)."""
     client = TestClient(create_app(db_path=db_with_ftts_and_ou))
     r = client.get("/events?status=upcoming")
     assert 'data-bookmaker="sim_v3"' in r.text
+    assert 'data-bookmaker="sim_v4"' in r.text
 
 
 def test_sim_replaces_bp_cell_when_bp_missing_up_quote(db_with_ftts_and_ou: Path):
@@ -912,50 +913,50 @@ def test_event_detail_history_shows_sim_column_for_1up(db_path: Path):
     """When pricer_live_results has rows for a 1UP market, the detail
     page history adds a SIM column with OUR's odds + prob. The default
     fixture already seeds 1UP prices at this ts; we just need to add
-    OUR."""
+    OUR (V3, the primary engine)."""
     conn = sqlite3.connect(str(db_path), isolation_level=None)
     conn.execute(
         "INSERT INTO pricer_live_results "
         "(event_id, ts_utc, basis_used, "
-        " our_1up_home_capped, our_1up_away_capped, "
-        " our_p_home_1, our_p_away_1) "
+        " v3_1up_home_capped, v3_1up_away_capped, "
+        " v3_p_home_1, v3_p_away_1) "
         "VALUES ('E1', '2026-05-21T10:00:00Z', 'bp', 1.48, 4.10, 0.66, 0.22)",
     )
     conn.close()
     client = TestClient(create_app(db_path=db_path))
     r = client.get("/events/E1?market=1x2_1up_ft")
     body = r.text
-    assert 'data-bookmaker="sim"' in body
-    # The detail OUR column is now labelled "V2" (V3 sits beside it as a
+    assert 'data-bookmaker="sim_v3"' in body
+    # The detail OUR column is now labelled "V3" (V4 sits beside it as a
     # second OUR column). Header text — Jinja renders with surrounding whitespace.
     import re
-    assert re.search(r"<th[^>]*data-bookmaker=\"sim\"[^>]*>\s*V2\s*</th>", body)
+    assert re.search(r"<th[^>]*data-bookmaker=\"sim_v3\"[^>]*>\s*V3\s*</th>", body)
     assert "1.48" in body
     # Probability .66 → rendered as ".66"
     assert ".66" in body
 
 
-def test_event_detail_history_shows_v2_and_v3_columns(db_path: Path):
-    """With both v2_* and v3_* set on a 1UP pricer_live_results row, the
-    detail history renders two OUR columns: V2 and V3 (sim + sim_v3)."""
+def test_event_detail_history_shows_v3_and_v4_columns(db_path: Path):
+    """With both v3_* and v4_* set on a 1UP pricer_live_results row, the
+    detail history renders two OUR columns: V3 and V4 (sim_v3 + sim_v4)."""
     conn = sqlite3.connect(str(db_path), isolation_level=None)
     conn.execute(
         "INSERT INTO pricer_live_results "
         "(event_id, ts_utc, basis_used, "
-        " v2_1up_home_capped, v2_1up_away_capped, v2_p_home_1, v2_p_away_1, "
-        " v3_1up_home_capped, v3_1up_away_capped, v3_p_home_1, v3_p_away_1) "
+        " v3_1up_home_capped, v3_1up_away_capped, v3_p_home_1, v3_p_away_1, "
+        " v4_1up_home_capped, v4_1up_away_capped, v4_p_home_1, v4_p_away_1) "
         "VALUES ('E1', '2026-05-21T10:00:00Z', 'bp', "
         "        1.48, 4.10, 0.66, 0.22, 1.52, 4.30, 0.63, 0.20)",
     )
     conn.close()
     client = TestClient(create_app(db_path=db_path))
     body = client.get("/events/E1?market=1x2_1up_ft").text
-    assert 'data-bookmaker="sim"' in body
     assert 'data-bookmaker="sim_v3"' in body
+    assert 'data-bookmaker="sim_v4"' in body
     import re
-    assert re.search(r"<th[^>]*data-bookmaker=\"sim\"[^>]*>\s*V2\s*</th>", body)
     assert re.search(r"<th[^>]*data-bookmaker=\"sim_v3\"[^>]*>\s*V3\s*</th>", body)
-    assert "1.48" in body and "1.52" in body  # V2 and V3 home odds
+    assert re.search(r"<th[^>]*data-bookmaker=\"sim_v4\"[^>]*>\s*V4\s*</th>", body)
+    assert "1.48" in body and "1.52" in body  # V3 and V4 home odds
 
 
 def test_event_detail_history_omits_sim_column_for_1x2_ft(db_path: Path):
@@ -1081,8 +1082,8 @@ def test_event_detail_history_shows_sim_only_rows_when_no_book_quoted(db_path: P
         conn.execute(
             "INSERT INTO pricer_live_results "
             "(event_id, ts_utc, basis_used, "
-            " our_1up_home_capped, our_1up_away_capped, "
-            " our_p_home_1, our_p_away_1) VALUES "
+            " v3_1up_home_capped, v3_1up_away_capped, "
+            " v3_p_home_1, v3_p_away_1) VALUES "
             "(?, ?, 'bp', 1.42, 4.05, 0.68, 0.21)",
             ("E1", ts),
         )
@@ -1092,7 +1093,7 @@ def test_event_detail_history_shows_sim_only_rows_when_no_book_quoted(db_path: P
     assert r.status_code == 200
     body = r.text
     # SIM column header AND at least one SIM cell with the computed odds.
-    assert 'data-bookmaker="sim"' in body
+    assert 'data-bookmaker="sim_v3"' in body
     assert "1.42" in body
     # The history row's ts shows up
     assert "2026-05-22T19:30:00Z" in body or "2026-05-22T19:31:30Z" in body
