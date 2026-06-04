@@ -76,3 +76,24 @@ def test_select_ticks_search_escapes_like_metachars():
     out = ex.select_ticks(c, "any", "all", {"search": "a_b"})
     ids = {t["event_id"] for t in out}
     assert ids == {"E1"}   # only the literal "A_B" matches, not "AZB"
+
+
+def test_collapse_onchange_uses_only_selected_markets():
+    c = _conn(); _seed_event(c)
+    # tick1 and tick2: 1x2 odds identical; an over_under line changes between them
+    _seed_tick(c, "E1", "2026-05-22T18:00:00Z", "STARTED", prices=[
+        ("1x2_ft", 0.0, "home", 1.80, None),
+        ("over_under_ft", 2.5, "over", 1.90, None)])
+    _seed_tick(c, "E1", "2026-05-22T18:01:00Z", "STARTED", prices=[
+        ("1x2_ft", 0.0, "home", 1.80, None),
+        ("over_under_ft", 2.5, "over", 2.10, None)])  # OU moved, 1x2 didn't
+    ticks = ex.select_ticks(c, "any", "onchange", {})
+    # Selecting ONLY 1x2: second tick is unchanged -> dropped.
+    kept_1x2 = ex.collapse_onchange(c, ticks, [("1x2_ft", 0.0)])
+    assert [t["ts_utc"] for t in kept_1x2] == ["2026-05-22T18:00:00Z"]
+    # Selecting the OU line: it changed -> both kept.
+    kept_ou = ex.collapse_onchange(c, ticks, [("over_under_ft", 2.5)])
+    assert len(kept_ou) == 2
+    # markets=None means ALL markets -> the OU change keeps both
+    kept_all = ex.collapse_onchange(c, ticks, None)
+    assert len(kept_all) == 2

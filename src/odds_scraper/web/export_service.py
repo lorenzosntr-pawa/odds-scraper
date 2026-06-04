@@ -85,3 +85,54 @@ def select_ticks(
         """
     cur = conn.cursor(); cur.row_factory = sqlite3.Row
     return [dict(r) for r in cur.execute(sql, params).fetchall()]
+
+
+def load_tick_prices(
+    conn: sqlite3.Connection, event_id: str, ts_utc: str,
+    markets: Iterable[tuple[str, float]] | None = None,
+    books: Iterable[str] | None = None,
+) -> list[dict]:
+    """All price rows for one (event, ts) tick, optionally filtered to the
+    selected (market_id, line) pairs and bookmakers. Ordered deterministically."""
+    cur = conn.cursor()
+    cur.row_factory = sqlite3.Row
+    rows = [dict(r) for r in cur.execute(
+        "SELECT bookmaker, market_id, line, side, odds, probability "
+        "FROM prices WHERE event_id = ? AND ts_utc = ?",
+        (event_id, ts_utc),
+    ).fetchall()]
+    if markets is not None:
+        sel = {(m, float(l)) for m, l in markets}
+        rows = [r for r in rows if (r["market_id"], float(r["line"])) in sel]
+    if books is not None:
+        bset = set(books)
+        rows = [r for r in rows if r["bookmaker"] in bset]
+    rows.sort(key=lambda r: (r["bookmaker"], r["market_id"], r["line"], r["side"]))
+    return rows
+
+
+def _fingerprint(rows: list[dict]) -> frozenset:
+    """Hashable identity of a tick's selected price set. Odds rounded to 4 dp
+    so float storage drift never reads as a 'change'."""
+    return frozenset(
+        (r["bookmaker"], r["market_id"], float(r["line"]), r["side"],
+         None if r["odds"] is None else round(float(r["odds"]), 4))
+        for r in rows
+    )
+
+
+def collapse_onchange(
+    conn: sqlite3.Connection, ticks: list[dict],
+    markets: Iterable[tuple[str, float]] | None,
+) -> list[dict]:
+    """Drop a tick whose selected-market price set equals the previous KEPT
+    tick for the same event. Fingerprint is over the SELECTED markets only."""
+    kept: list[dict] = []
+    last_fp: dict[str, frozenset] = {}
+    for t in ticks:
+        fp = _fingerprint(load_tick_prices(conn, t["event_id"], t["ts_utc"], markets))
+        if last_fp.get(t["event_id"]) == fp:
+            continue
+        last_fp[t["event_id"]] = fp
+        kept.append(t)
+    return kept
