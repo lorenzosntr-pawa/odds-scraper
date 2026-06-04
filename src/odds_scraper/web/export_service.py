@@ -278,3 +278,24 @@ def to_wide_rows(long_rows: Iterable[dict]) -> tuple[list[str], list[dict]]:
     columns = list(WIDE_META) + sorted(value_cols)
     rows = [by_key[k] for k in sorted(by_key)]
     return columns, rows
+
+
+def available_markets(conn, scope: dict) -> list[tuple[str, float]]:
+    """Distinct (market_id, line) pairs present for in-scope events. Includes
+    the 0.0 sentinel line for the 1x2 family (it's a real selectable market)."""
+    where = ["e.home != '' AND e.away != ''"]
+    params: list = []
+    if scope.get("country"):
+        where.append("e.country_id = ?"); params.append(scope["country"])
+    if scope.get("league"):
+        where.append("e.league_id = ?"); params.append(scope["league"])
+    if scope.get("event_id"):
+        where.append("p.event_id = ?"); params.append(scope["event_id"])
+    if scope.get("date"):
+        where.append("DATE(e.kickoff_utc) = ?"); params.append(scope["date"])
+    sql = (
+        "SELECT DISTINCT p.market_id, p.line FROM prices p "
+        "JOIN events e ON e.id = p.event_id WHERE " + " AND ".join(where) +
+        " ORDER BY p.market_id, p.line"
+    )
+    return [(r[0], float(r[1])) for r in conn.execute(sql, params).fetchall()]

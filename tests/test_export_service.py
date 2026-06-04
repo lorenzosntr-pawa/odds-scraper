@@ -284,3 +284,28 @@ def test_to_wide_rows_two_timestamps_two_rows():
     assert [w["ts_utc"] for w in wide] == ["T1", "T2"]
     assert wide[0]["betpawa__1x2_ft__0.0__home__odds"] == 1.8
     assert wide[1]["betpawa__1x2_ft__0.0__home__odds"] == 1.9
+
+
+def test_available_markets_for_scope():
+    c = _conn(); _seed_event(c)
+    _seed_tick(c, "E1", "2026-05-22T18:00:00Z", "STARTED", prices=[
+        ("1x2_ft", 0.0, "home", 1.8, None),
+        ("over_under_ft", 2.5, "over", 1.9, None),
+        ("over_under_ft", 3.5, "over", 2.7, None)])
+    pairs = ex.available_markets(c, {})
+    assert ("1x2_ft", 0.0) in pairs          # 0.0 sentinel included
+    assert ("over_under_ft", 2.5) in pairs and ("over_under_ft", 3.5) in pairs
+    assert pairs == sorted(pairs)            # sorted, deterministic
+
+
+def test_available_markets_scoped_by_country():
+    c = _conn()
+    _seed_event(c, eid="E1", country=("ng", "Nigeria"))
+    _seed_event(c, eid="E2", country=("gh", "Ghana"))
+    _seed_tick(c, "E1", "2026-05-22T18:00:00Z", "STARTED",
+               prices=[("1x2_ft", 0.0, "home", 1.8, None)])
+    _seed_tick(c, "E2", "2026-05-22T18:00:00Z", "STARTED",
+               prices=[("over_under_ft", 2.5, "over", 1.9, None)])
+    ng = ex.available_markets(c, {"country": "ng"})
+    assert ("1x2_ft", 0.0) in ng
+    assert ("over_under_ft", 2.5) not in ng   # that market only exists for GH event
