@@ -68,9 +68,24 @@ V3_ONLY_TUNABLE_NAMES = frozenset({
     "TWOUP_UNDERDOG_REDUCTION_PCT",
 })
 
+# V1/V2-era margin + reduction tunables. The live tool is V3/V4-only and the
+# profile form no longer renders these (V3/V4 engines don't read them — they
+# use *_MARGIN_LEVEL/_TILT and *_REDUCTION_PCT instead). Kept in TUNABLE_NAMES
+# for stored-profile back-compat but optional: omitted forms backfill from
+# DEFAULT_COEFFICIENTS.
+_V1V2_LEGACY_TUNABLE_NAMES = frozenset({
+    "ONEUP_FAVORITE_MARGIN", "ONEUP_UNDERDOG_MARGIN",
+    "ONEUP_MIN_GUARANTEED_REDUCTION",
+    "ONEUP_TRAILING_MIN_REDUCTION", "ONEUP_TRAILING_MAX_REDUCTION",
+    "TWOUP_FAVORITE_MARGIN", "TWOUP_UNDERDOG_MARGIN",
+    "TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION", "TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION",
+    "TWOUP_TRAILING_MIN_REDUCTION", "TWOUP_TRAILING_MAX_REDUCTION",
+})
+
 # Tunables optional in stored profiles (backfilled from defaults on load
-# + validate) because they postdate the original schema.
-_OPTIONAL_TUNABLE_NAMES = V2_ONLY_TUNABLE_NAMES | V3_ONLY_TUNABLE_NAMES
+# + validate) because they postdate the original schema or are dormant in
+# the V3/V4-only UI.
+_OPTIONAL_TUNABLE_NAMES = V2_ONLY_TUNABLE_NAMES | V3_ONLY_TUNABLE_NAMES | _V1V2_LEGACY_TUNABLE_NAMES
 
 # Boolean toggles. Kept separate from TUNABLE_NAMES because they are
 # optional in stored profiles (legacy rows predate them and still need

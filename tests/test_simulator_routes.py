@@ -171,27 +171,38 @@ def test_simulator_runs_page_has_profiles_tab(client: TestClient):
 
 
 def _full_profile_form_data(name: str) -> dict:
-    """Mirrors what the create-profile form sends. Tweak any single field
-    in the caller to test that the override survives the round-trip."""
+    """Mirrors what the V3/V4-only create-profile form sends.
+
+    The profile panel no longer renders V1/V2-era margin/reduction fields
+    (no *_slope/*_intercept pairs, no ONEUP/TWOUP_*_MIN/MAX_REDUCTION, etc.)
+    — those 11 legacy tunables are backfilled from DEFAULT_COEFFICIENTS by
+    _validate_and_fill. This helper intentionally omits them to reflect what
+    a real browser POST looks like after the panel was trimmed to V3/V4 only.
+
+    Tweak any single field in the caller to test that the override survives
+    the round-trip."""
     return {
         "name": name,
-        "ONEUP_FAVORITE_MARGIN_slope":     "0.9969",
-        "ONEUP_FAVORITE_MARGIN_intercept": "0.0313",
-        "ONEUP_UNDERDOG_MARGIN_slope":     "0.9799",
-        "ONEUP_UNDERDOG_MARGIN_intercept": "0.0400",
-        "ONEUP_MIN_GUARANTEED_REDUCTION":  "0.02",
-        "ONEUP_TRAILING_MIN_REDUCTION":    "0.05",
-        "ONEUP_TRAILING_MAX_REDUCTION":    "0.25",
-        "TWOUP_FAVORITE_MARGIN_slope":     "0.998",
-        "TWOUP_FAVORITE_MARGIN_intercept": "0.010",
-        "TWOUP_UNDERDOG_MARGIN_slope":     "0.994",
-        "TWOUP_UNDERDOG_MARGIN_intercept": "0.008",
+        # V3 / V4 logit-margin + boost knobs (1UP)
+        "ONEUP_MARGIN_LEVEL":              "0.1324",
+        "ONEUP_MARGIN_TILT":               "0.9922",
+        "ONEUP_FAVORITE_ODDS_BOOST_PCT":   "0.0",
+        "ONEUP_UNDERDOG_ODDS_BOOST_PCT":   "0.0",
+        "ONEUP_FAVORITE_REDUCTION_PCT":    "2.0",
+        "ONEUP_UNDERDOG_REDUCTION_PCT":    "2.0",
+        # V3 / V4 logit-margin + boost knobs (2UP)
+        "TWOUP_MARGIN_LEVEL":              "0.0352",
+        "TWOUP_MARGIN_TILT":               "1.0030",
+        "TWOUP_FAVORITE_ODDS_BOOST_PCT":   "0.0",
+        "TWOUP_UNDERDOG_ODDS_BOOST_PCT":   "0.0",
         "TWOUP_FAVORITE_BOOST_COEFFICIENT": "0.9",
         "TWOUP_UNDERDOG_BOOST_COEFFICIENT": "0.6",
-        "TWOUP_FAVORITE_MIN_GUARANTEED_REDUCTION": "0.02",
-        "TWOUP_UNDERDOG_MIN_GUARANTEED_REDUCTION": "0.005",
-        "TWOUP_TRAILING_MIN_REDUCTION": "0.05",
-        "TWOUP_TRAILING_MAX_REDUCTION": "0.25",
+        "TWOUP_FAVORITE_REDUCTION_PCT":    "2.0",
+        "TWOUP_UNDERDOG_REDUCTION_PCT":    "0.5",
+        # Global
+        "NEAR_EVEN_THRESHOLD":             "0.03",
+        # No flag fields by default (checkboxes absent = False); callers
+        # that need a flag on add e.g. data["TWOUP_BOOST_BLEND_ENABLED"] = "on".
     }
 
 
@@ -816,15 +827,6 @@ def test_simulator_form_has_engine_checkboxes(client):
         assert f'type="checkbox" name="engine" value="{v}"' not in body
     # V4 (latest) is pre-selected.
     assert 'name="engine" value="v4" checked' in body
-
-
-def test_simulator_page_offers_only_v3_v4_engines(client):
-    html = client.get("/simulator").text
-    # engine checkboxes: only v3 and v4 offered
-    assert 'name="engine" value="v3"' in html
-    assert 'name="engine" value="v4"' in html
-    assert 'name="engine" value="v1"' not in html
-    assert 'name="engine" value="v2"' not in html
 
 
 def test_simulator_history_renders_engines_column(db_path, client):

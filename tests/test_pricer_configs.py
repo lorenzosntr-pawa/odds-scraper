@@ -172,3 +172,39 @@ def test_default_coefficients_use_v2_dog_margin_intercept(conn):
     saved values — no implicit migration."""
     default = configs.load_default(conn)
     assert default.coefficients["TWOUP_UNDERDOG_MARGIN"] == [0.994, 0.014]
+
+
+def test_create_profile_without_v1v2_legacy_fields_backfills(conn):
+    """A V3/V4-only form submission that omits the 11 V1/V2-era tunables
+    (because the profile panel no longer renders them) must succeed and the
+    loaded profile must have those fields backfilled from DEFAULT_COEFFICIENTS.
+    This locks the bug where omitting them caused a 400 ('missing coefficient')."""
+    # Build a coefficients dict with ONLY the V3/V4 knobs — none of the 11
+    # legacy fields that the form no longer renders.
+    coeffs = {
+        k: configs.DEFAULT_COEFFICIENTS[k]
+        for k in configs.TUNABLE_NAMES
+        if k not in configs._V1V2_LEGACY_TUNABLE_NAMES
+    }
+    # Include all flag fields as a real browser submission would (checkboxes
+    # that are visible on the panel).
+    for f in configs.FLAG_NAMES:
+        coeffs[f] = True
+
+    pid = configs.create_profile(conn, "v34only", coeffs)
+    loaded = configs.load_by_id(conn, pid)
+    assert loaded is not None
+
+    # Every one of the 11 legacy fields must be backfilled from defaults.
+    for k in configs._V1V2_LEGACY_TUNABLE_NAMES:
+        assert loaded.coefficients[k] == configs.DEFAULT_COEFFICIENTS[k], (
+            f"{k} not backfilled correctly"
+        )
+
+    # Spot-check two representative fields explicitly.
+    assert loaded.coefficients["ONEUP_FAVORITE_MARGIN"] == configs.DEFAULT_COEFFICIENTS["ONEUP_FAVORITE_MARGIN"]
+    assert loaded.coefficients["TWOUP_TRAILING_MIN_REDUCTION"] == configs.DEFAULT_COEFFICIENTS["TWOUP_TRAILING_MIN_REDUCTION"]
+
+    # V3/V4 fields the form DID send must also be stored correctly.
+    assert loaded.coefficients["ONEUP_MARGIN_LEVEL"] == configs.DEFAULT_COEFFICIENTS["ONEUP_MARGIN_LEVEL"]
+    assert loaded.coefficients["TWOUP_FAVORITE_BOOST_COEFFICIENT"] == configs.DEFAULT_COEFFICIENTS["TWOUP_FAVORITE_BOOST_COEFFICIENT"]

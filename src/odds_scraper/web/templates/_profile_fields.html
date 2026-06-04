@@ -39,7 +39,7 @@
 
 <div class="cfg">
   <div class="cfg-legend">
-    <span class="cfg-leg" data-eng="v3">V3</span>
+    <span class="cfg-leg" data-eng="v3">V3 / V4</span>
     <span class="cfg-legend-note">coefficients shared by V3 and V4 — applies to whichever engine(s) you select.</span>
   </div>
 
@@ -79,26 +79,6 @@
     </div>
   </details>
 </div>
-
-<script>
-  // Keep coefficients that several engines share consistent across panels:
-  // all copies carry the same form `name` + data-k; editing one mirrors to
-  // the rest so the single submitted value is unambiguous.
-  (function () {
-    const fields = document.querySelectorAll('.cfg [data-k]');
-    fields.forEach(function (el) {
-      const evt = el.type === 'checkbox' ? 'change' : 'input';
-      el.addEventListener(evt, function () {
-        const k = el.getAttribute('data-k');
-        document.querySelectorAll('.cfg [data-k="' + k + '"]').forEach(function (o) {
-          if (o === el) return;
-          if (el.type === 'checkbox') o.checked = el.checked;
-          else o.value = el.value;
-        });
-      });
-    });
-  })();
-</script>
 
 <style>
   /* ===== Pricer config — per-engine control panels (terminal aesthetic) ===== */
