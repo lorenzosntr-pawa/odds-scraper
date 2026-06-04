@@ -121,3 +121,33 @@ def test_limit_first_last_independent_per_event():
     # first+last per event, union; each event keeps its own first & last
     assert [r["ts_utc"] for r in out if r["event_id"] == "E1"] == [ts_a[0], ts_a[-1]]
     assert [r["ts_utc"] for r in out if r["event_id"] == "E2"] == [ts_b[0], ts_b[-1]]
+
+
+def test_csv_safe_escapes_formula_chars():
+    assert ex.csv_safe("=cmd()") == "'=cmd()"
+    assert ex.csv_safe("+1") == "'+1"
+    assert ex.csv_safe("@x") == "'@x"
+    assert ex.csv_safe("-7") == "'-7"
+    assert ex.csv_safe("FC -Home") == "FC -Home"   # dash not leading -> untouched
+    assert ex.csv_safe(1.85) == 1.85               # non-str passthrough
+    assert ex.csv_safe(None) is None
+
+
+def test_iter_long_rows_real_prices():
+    c = _conn(); _seed_event(c)
+    _seed_tick(c, "E1", "2026-05-22T18:00:00Z", "STARTED", minute=10, prices=[
+        ("1x2_ft", 0.0, "home", 1.80, 0.55),
+        ("1x2_ft", 0.0, "away", 4.20, 0.20)])
+    ticks = ex.select_ticks(c, "any", "all", {})
+    rows = list(ex.iter_long_rows(c, ticks, markets=[("1x2_ft", 0.0)],
+                                  books=None, sim_engines=()))
+    assert len(rows) == 2
+    r = next(r for r in rows if r["side"] == "home")
+    assert r["event_id"] == "E1" and r["bookmaker"] == "betpawa"
+    assert r["market_id"] == "1x2_ft" and r["odds"] == 1.80
+    assert r["probability"] == 0.55
+    assert r["is_simulated"] == 0 and r["engine"] == ""
+    assert r["country_name"] == "Nigeria" and r["league_name"] == "NPL"
+    assert r["status"] == "STARTED" and r["match_minute"] == 10
+    # every row has exactly the LONG_COLUMNS keys
+    assert set(ex.LONG_COLUMNS) == set(r.keys())

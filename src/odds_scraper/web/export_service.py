@@ -156,3 +156,53 @@ def limit_first_last(ticks: list[dict], first_n: int, last_n: int) -> list[dict]
         for t in picked:
             keep_ids.add(id(t))
     return [t for t in ticks if id(t) in keep_ids]
+
+
+LONG_COLUMNS = (
+    "event_id", "country_name", "league_name", "home", "away", "kickoff_utc",
+    "snapshot_id", "ts_utc", "status", "match_minute", "score_home", "score_away",
+    "bookmaker", "market_id", "line", "side", "odds", "probability",
+    "is_simulated", "engine",
+)
+
+
+def csv_safe(value):
+    """Prefix a leading =,+,-,@ with an apostrophe so spreadsheets don't
+    execute the cell as a formula. Non-strings pass through unchanged."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@"):
+        return "'" + value
+    return value
+
+
+def _meta(t: dict) -> dict:
+    return {
+        "event_id": t["event_id"], "country_name": t.get("country_name"),
+        "league_name": t.get("league_name"), "home": t.get("home"),
+        "away": t.get("away"), "kickoff_utc": t.get("kickoff_utc"),
+        "snapshot_id": t.get("snapshot_id"), "ts_utc": t["ts_utc"],
+        "status": t.get("status"), "match_minute": t.get("match_minute"),
+        "score_home": t.get("score_home"), "score_away": t.get("score_away"),
+    }
+
+
+def _sim_rows(conn, t, meta, markets, sim_engines) -> Iterator[dict]:
+    return iter(())  # implemented in Task 13
+
+
+def iter_long_rows(
+    conn, ticks, *, markets, books, sim_engines=(),
+) -> Iterator[dict]:
+    """Yield one LONG dict per (tick, bookmaker, market, line, side). Real
+    scraped rows first; then stored sim rows (V3/V4) for 1UP/2UP if requested."""
+    for t in ticks:
+        meta = _meta(t)
+        for p in load_tick_prices(conn, t["event_id"], t["ts_utc"], markets, books):
+            yield {
+                **meta,
+                "bookmaker": p["bookmaker"], "market_id": p["market_id"],
+                "line": p["line"], "side": p["side"],
+                "odds": p["odds"], "probability": p["probability"],
+                "is_simulated": 0, "engine": "",
+            }
+        if sim_engines:
+            yield from _sim_rows(conn, t, meta, markets, sim_engines)
