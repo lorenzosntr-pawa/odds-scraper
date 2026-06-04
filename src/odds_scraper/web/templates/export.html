@@ -127,7 +127,17 @@
     </div>
 
     <div class="sim-section">
-      <div class="sim-section-h">4 · Markets <span class="filter-lbl">(which markets to include — refreshes with scope)</span></div>
+      <div class="sim-section-h">4 · Bookmakers <span class="filter-lbl">(which bookmakers to include in the export)</span></div>
+      <div class="filter-group" style="gap:14px">
+        <label><input type="checkbox" name="book" value="betpawa" checked> <b>BetPawa</b></label>
+        <label><input type="checkbox" name="book" value="sportybet" checked> <b>SportyBet</b></label>
+        <label><input type="checkbox" name="book" value="bet9ja" checked> <b>Bet9ja</b></label>
+        <label><input type="checkbox" name="book" value="betway" checked> <b>Betway</b></label>
+      </div>
+    </div>
+
+    <div class="sim-section">
+      <div class="sim-section-h">5 · Markets <span class="filter-lbl">(which markets to include — refreshes with scope)</span></div>
       <div id="market-list" class="filter-group" style="flex-wrap:wrap;row-gap:6px;column-gap:14px"
            hx-get="/export/markets"
            hx-include="#exp-country, #exp-league, [name=date], [name=event_id]"

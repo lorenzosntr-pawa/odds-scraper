@@ -116,6 +116,8 @@ def register_export_routes(
                 w.writerow({k: ex.csv_safe(v) for k, v in row.items()})
                 yield buf.getvalue(); buf.seek(0); buf.truncate(0); n += 1
 
+        # NOTE: WIDE is not truly streaming — to_wide_rows materialises all rows in memory
+        # so pivot column names are known before writing the header.  Bounded by _MAX_ROWS.
         def _emit_wide():
             cols, rows = ex.to_wide_rows(long_iter)
             buf = io.StringIO()

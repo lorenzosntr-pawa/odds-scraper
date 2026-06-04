@@ -57,6 +57,26 @@ def _seed(db_path: Path) -> None:
             "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'betpawa', ?, ?, ?, ?, ?)",
             (snap_id, mid, line, side, odds, prob),
         )
+    # A second bookmaker (sportybet) snapshot for the same tick so the book filter
+    # test is non-tautological — without the filter both books appear.
+    cur2 = conn.execute(
+        "INSERT INTO snapshots (ts_utc, event_id, bookmaker, status, fetch_status, "
+        "match_minute, score_home, score_away) "
+        "VALUES ('2026-05-21T10:00:00Z', 'E1', 'sportybet', 'UPCOMING', 'ok', "
+        "0, 0, 0)",
+    )
+    snap2_id = cur2.lastrowid
+    for mid, line, side, odds, prob in [
+        ("1x2_ft", 0.0, "home", 1.90, 0.53),
+        ("1x2_ft", 0.0, "draw", 3.30, 0.30),
+        ("1x2_ft", 0.0, "away", 4.00, 0.25),
+    ]:
+        conn.execute(
+            "INSERT INTO prices (snapshot_id, event_id, ts_utc, bookmaker, "
+            "market_id, line, side, odds, probability) "
+            "VALUES (?, 'E1', '2026-05-21T10:00:00Z', 'sportybet', ?, ?, ?, ?, ?)",
+            (snap2_id, mid, line, side, odds, prob),
+        )
     # A pricer_live_results row so the sim export path yields OUR rows.
     cols = {r[1] for r in conn.execute("PRAGMA table_info(pricer_live_results)")}
     sim_vals = {
@@ -119,3 +139,26 @@ def test_export_markets_options(export_client):
     r = export_client.get("/export/markets")
     assert r.status_code == 200
     assert 'name="market"' in r.text
+
+
+def test_export_csv_unfiltered_has_multiple_books(export_client):
+    """Baseline: without a book filter both betpawa and sportybet rows are present."""
+    r = export_client.get("/export.csv", params={"regime": "any", "density": "all", "format": "long"})
+    assert r.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(r.text)))
+    real_books = {row["bookmaker"] for row in rows if row.get("is_simulated") == "0"}
+    assert "betpawa" in real_books and "sportybet" in real_books, (
+        "seed must contain both bookmakers for the filter test to be non-tautological"
+    )
+
+
+def test_export_csv_book_filter(export_client):
+    """book=betpawa must exclude sportybet rows from the CSV."""
+    r = export_client.get(
+        "/export.csv",
+        params={"regime": "any", "density": "all", "format": "long", "book": ["betpawa"]},
+    )
+    assert r.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(r.text)))
+    real_books = {row["bookmaker"] for row in rows if row.get("is_simulated") == "0"}
+    assert real_books <= {"betpawa"}, f"unexpected bookmakers after filter: {real_books - {'betpawa'}}"
