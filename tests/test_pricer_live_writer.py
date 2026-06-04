@@ -379,3 +379,36 @@ def test_live_writer_v4_crash_keeps_row_with_v3(tmp_path, monkeypatch):
     assert row["v3_2up_home_capped"] is not None
     assert row["v4_2up_home_capped"] is None
     conn.close()
+
+
+def test_backfill_v4_fills_existing_rows_and_is_idempotent(tmp_path):
+    import asyncio
+    db = tmp_path / "odds.db"
+    rows = [_tick_snapshot(b, with_prob=(b == Bookmaker.BETPAWA), event_id="EV1")
+            for b in Bookmaker]
+
+    async def seed():
+        async with SqliteWriter(db) as w:
+            await w.append(rows)
+    asyncio.run(seed())
+
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    assert live_writer.backfill_all(conn)[0] == 1          # writes v3 + v4
+    conn.execute(
+        "UPDATE pricer_live_results SET "
+        "v4_p_home_1=NULL, v4_p_away_1=NULL, v4_1up_home_fair=NULL, "
+        "v4_1up_home_capped=NULL, v4_1up_away_fair=NULL, v4_1up_away_capped=NULL, "
+        "v4_p_home_2=NULL, v4_p_away_2=NULL, v4_2up_home_fair=NULL, "
+        "v4_2up_home_capped=NULL, v4_2up_away_fair=NULL, v4_2up_away_capped=NULL")
+    v3_before = conn.execute(
+        "SELECT v3_2up_home_capped FROM pricer_live_results").fetchone()[0]
+    updated, _ = live_writer.backfill_v4(conn)
+    assert updated == 1
+    row = conn.execute(
+        "SELECT v4_2up_home_capped, v3_2up_home_capped "
+        "FROM pricer_live_results").fetchone()
+    assert row["v4_2up_home_capped"] is not None
+    assert row["v3_2up_home_capped"] == v3_before          # v3 untouched
+    assert live_writer.backfill_v4(conn)[0] == 0           # idempotent
+    conn.close()
