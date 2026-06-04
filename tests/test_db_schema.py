@@ -130,6 +130,24 @@ def test_v2_upgrades_a_v1_database(conn):
     assert v[0] == SCHEMA_VERSION
 
 
+def test_schema_v11_adds_v4_columns(tmp_path):
+    import sqlite3
+    from odds_scraper.db_schema import init_schema, SCHEMA_VERSION
+    conn = sqlite3.connect(str(tmp_path / "x.db"), isolation_level=None)
+    init_schema(conn)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(pricer_live_results)")}
+    for c in (
+        "v4_p_home_1", "v4_p_away_1",
+        "v4_1up_home_fair", "v4_1up_home_capped",
+        "v4_1up_away_fair", "v4_1up_away_capped",
+        "v4_p_home_2", "v4_p_away_2",
+        "v4_2up_home_fair", "v4_2up_home_capped",
+        "v4_2up_away_fair", "v4_2up_away_capped",
+    ):
+        assert c in cols, f"missing {c}"
+    assert SCHEMA_VERSION >= 11
+
+
 def test_v2_migration_is_idempotent_after_partial_failure(conn):
     # Simulate the scenario where the v2 ALTER TABLE statements have already
     # been applied to some columns but the schema_version was never bumped
