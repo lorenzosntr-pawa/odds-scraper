@@ -97,3 +97,27 @@ def test_collapse_onchange_uses_only_selected_markets():
     # markets=None means ALL markets -> the OU change keeps both
     kept_all = ex.collapse_onchange(c, ticks, None)
     assert len(kept_all) == 2
+
+
+def _ticks(eid, tss):
+    return [{"event_id": eid, "ts_utc": ts} for ts in tss]
+
+
+def test_limit_first_last_per_event():
+    ts = [f"2026-05-22T18:0{i}:00Z" for i in range(5)]  # 5 ticks
+    rows = _ticks("E1", ts)
+    assert [r["ts_utc"] for r in ex.limit_first_last(rows, 2, 0)] == ts[:2]
+    assert [r["ts_utc"] for r in ex.limit_first_last(rows, 0, 2)] == ts[-2:]
+    # first 2 + last 2 = union, no dupes, original order
+    assert [r["ts_utc"] for r in ex.limit_first_last(rows, 2, 2)] == [ts[0], ts[1], ts[3], ts[4]]
+    assert [r["ts_utc"] for r in ex.limit_first_last(rows, 0, 0)] == ts  # no-op
+
+
+def test_limit_first_last_independent_per_event():
+    ts_a = [f"2026-05-22T18:0{i}:00Z" for i in range(4)]
+    ts_b = [f"2026-05-22T19:0{i}:00Z" for i in range(4)]
+    rows = _ticks("E1", ts_a) + _ticks("E2", ts_b)
+    out = ex.limit_first_last(rows, 1, 1)
+    # first+last per event, union; each event keeps its own first & last
+    assert [r["ts_utc"] for r in out if r["event_id"] == "E1"] == [ts_a[0], ts_a[-1]]
+    assert [r["ts_utc"] for r in out if r["event_id"] == "E2"] == [ts_b[0], ts_b[-1]]

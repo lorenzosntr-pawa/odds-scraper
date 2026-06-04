@@ -136,3 +136,23 @@ def collapse_onchange(
         last_fp[t["event_id"]] = fp
         kept.append(t)
     return kept
+
+
+def limit_first_last(ticks: list[dict], first_n: int, last_n: int) -> list[dict]:
+    """Per event, keep the first N and/or last N ticks (union, original order).
+    0/0 is a no-op. Assumes `ticks` already ordered by (event_id, ts_utc)."""
+    if not first_n and not last_n:
+        return ticks
+    by_event: dict[str, list[dict]] = {}
+    for t in ticks:
+        by_event.setdefault(t["event_id"], []).append(t)
+    keep_ids: set[int] = set()
+    for evs in by_event.values():
+        picked = []
+        if first_n:
+            picked += evs[:first_n]
+        if last_n:
+            picked += evs[-last_n:]
+        for t in picked:
+            keep_ids.add(id(t))
+    return [t for t in ticks if id(t) in keep_ids]
