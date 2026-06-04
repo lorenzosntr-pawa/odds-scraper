@@ -238,3 +238,49 @@ def test_sim_rows_2up_column_mapping():
     # 2up values must come from the *_2up_*_capped / *_p_*_2 columns, NOT 1up
     assert v3_home["odds"] == 5.5 and v3_home["probability"] == 0.11
     assert v4_away["odds"] == 6.0 and v4_away["probability"] == 0.10
+
+
+def test_to_wide_rows_stable_columns():
+    long_rows = [
+        {"event_id": "E1", "ts_utc": "T1", "country_name": "NG", "league_name": "L",
+         "home": "A", "away": "B", "kickoff_utc": "K", "snapshot_id": 1,
+         "status": "STARTED", "match_minute": 5, "score_home": 0, "score_away": 0,
+         "bookmaker": "betpawa", "market_id": "1x2_ft", "line": 0.0, "side": "home",
+         "odds": 1.80, "probability": 0.55, "is_simulated": 0, "engine": ""},
+        {"event_id": "E1", "ts_utc": "T1", "country_name": "NG", "league_name": "L",
+         "home": "A", "away": "B", "kickoff_utc": "K", "snapshot_id": 1,
+         "status": "STARTED", "match_minute": 5, "score_home": 0, "score_away": 0,
+         "bookmaker": "OUR", "market_id": "1x2_1up_ft", "line": 0.0, "side": "home",
+         "odds": 2.0, "probability": 0.52, "is_simulated": 1, "engine": "v4"},
+    ]
+    cols, wide = ex.to_wide_rows(long_rows)
+    assert len(wide) == 1
+    assert wide[0]["event_id"] == "E1" and wide[0]["ts_utc"] == "T1"
+    assert wide[0]["betpawa__1x2_ft__0.0__home__odds"] == 1.80
+    assert wide[0]["betpawa__1x2_ft__0.0__home__prob"] == 0.55
+    assert wide[0]["our_v4__1x2_1up_ft__0.0__home__odds"] == 2.0
+    assert wide[0]["our_v4__1x2_1up_ft__0.0__home__prob"] == 0.52
+    # metadata columns come first, value columns sorted after
+    meta_n = len(ex.WIDE_META)
+    assert cols[:meta_n] == list(ex.WIDE_META)
+    assert cols[meta_n:] == sorted(cols[meta_n:])   # value cols deterministically sorted
+    # all value columns present in the column list
+    assert "betpawa__1x2_ft__0.0__home__odds" in cols
+    assert "our_v4__1x2_1up_ft__0.0__home__odds" in cols
+
+
+def test_to_wide_rows_two_timestamps_two_rows():
+    base = {"country_name": "NG", "league_name": "L", "home": "A", "away": "B",
+            "kickoff_utc": "K", "snapshot_id": 1, "status": "STARTED",
+            "match_minute": 0, "score_home": 0, "score_away": 0,
+            "is_simulated": 0, "engine": ""}
+    long_rows = [
+        {**base, "event_id": "E1", "ts_utc": "T1", "bookmaker": "betpawa",
+         "market_id": "1x2_ft", "line": 0.0, "side": "home", "odds": 1.8, "probability": None},
+        {**base, "event_id": "E1", "ts_utc": "T2", "bookmaker": "betpawa",
+         "market_id": "1x2_ft", "line": 0.0, "side": "home", "odds": 1.9, "probability": None},
+    ]
+    cols, wide = ex.to_wide_rows(long_rows)
+    assert [w["ts_utc"] for w in wide] == ["T1", "T2"]
+    assert wide[0]["betpawa__1x2_ft__0.0__home__odds"] == 1.8
+    assert wide[1]["betpawa__1x2_ft__0.0__home__odds"] == 1.9

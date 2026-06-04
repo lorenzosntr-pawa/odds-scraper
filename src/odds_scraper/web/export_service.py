@@ -248,3 +248,33 @@ def iter_long_rows(
             }
         if sim_engines:
             yield from _sim_rows(conn, t, meta, markets, sim_engines)
+
+
+WIDE_META = (
+    "event_id", "country_name", "league_name", "home", "away", "kickoff_utc",
+    "snapshot_id", "ts_utc", "status", "match_minute", "score_home", "score_away",
+)
+
+
+def _wide_book(row: dict) -> str:
+    return f"our_{row['engine']}" if row["is_simulated"] else row["bookmaker"]
+
+
+def to_wide_rows(long_rows: Iterable[dict]) -> tuple[list[str], list[dict]]:
+    """Pivot LONG rows to one row per (event, ts). Value columns are
+    '{book}__{market}__{line}__{side}__{odds|prob}', sorted for a stable,
+    frozen header. Returns (columns, rows)."""
+    long_rows = list(long_rows)
+    value_cols: set[str] = set()
+    by_key: dict[tuple, dict] = {}
+    for r in long_rows:
+        key = (r["event_id"], r["ts_utc"])
+        bucket = by_key.setdefault(key, {m: r.get(m) for m in WIDE_META})
+        book = _wide_book(r)
+        stem = f"{book}__{r['market_id']}__{r['line']}__{r['side']}"
+        ocol, pcol = f"{stem}__odds", f"{stem}__prob"
+        bucket[ocol] = r["odds"]; bucket[pcol] = r["probability"]
+        value_cols.add(ocol); value_cols.add(pcol)
+    columns = list(WIDE_META) + sorted(value_cols)
+    rows = [by_key[k] for k in sorted(by_key)]
+    return columns, rows
