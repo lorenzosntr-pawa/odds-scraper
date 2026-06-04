@@ -16,6 +16,7 @@ from odds_scraper.pricer import (
 )
 
 from . import queries
+from .export_routes import register_export_routes
 from .pricer_routes import register_pricer_routes
 
 # Markets visible in the collapsed event-list card, in display order.
@@ -241,6 +242,7 @@ def create_app(db_path: Path) -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(pkg_dir / "static")), name="static")
 
     register_pricer_routes(app, templates, db_path=db_path, conn=conn)
+    register_export_routes(app, templates, db_path=db_path, conn=conn)
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request, status: str = Query("upcoming")):

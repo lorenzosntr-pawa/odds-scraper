@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="p-3 max-w-screen-2xl mx-auto" data-page-title="Export">
+  <div class="flex justify-between border-b border-gray-900 pb-3 mb-3">
+    <div class="text-white font-semibold tracking-wider" title="Export">EXPORT</div>
+    <div class="flex gap-1">
+      <a class="tab" href="/simulator">SIMULATOR</a>
+      <a class="tab" href="/" style="margin-left:12px">← back to events</a>
+    </div>
+  </div>
+
+  <form method="get" action="/export.csv" class="sim-form">
+    <div class="sim-section">
+      <div class="sim-section-h">1 · Event scope <span class="filter-lbl">(narrow which events feed the export — leave blank to include everything)</span></div>
+
+      <div class="filter-group" style="flex-wrap:wrap;row-gap:10px">
+        <span class="filter-lbl">Country</span>
+        <select id="exp-country" name="country" class="filter-select"
+                hx-get="/export/count" hx-include="closest form"
+                hx-target="#scope-count" hx-trigger="change">
+          <option value="">All</option>
+          {% for c in country_league_index %}
+            <option value="{{ c.country_id }}">{{ c.country_name }}</option>
+          {% endfor %}
+        </select>
+
+        <span class="filter-lbl">League</span>
+        <select id="exp-league" name="league" class="filter-select" disabled
+                hx-get="/export/count" hx-include="closest form"
+                hx-target="#scope-count" hx-trigger="change">
+          <option value="">All</option>
+        </select>
+
+        <span class="filter-lbl">Date</span>
+        <input type="date" class="custom-hours" name="date"
+               hx-get="/export/count" hx-include="closest form"
+               hx-target="#scope-count" hx-trigger="change">
+
+        <span class="filter-lbl">Search</span>
+        <input class="search-input" type="search" name="search" placeholder="team name"
+               hx-get="/export/count" hx-include="closest form"
+               hx-target="#scope-count" hx-trigger="input changed delay:300ms">
+      </div>
+
+      <div class="filter-group" style="margin-top:10px">
+        <span class="filter-lbl">Event ID</span>
+        <input class="search-input" type="text" name="event_id" placeholder="optional — one specific event"
+               hx-get="/export/count" hx-include="closest form"
+               hx-target="#scope-count" hx-trigger="input changed delay:300ms">
+      </div>
+
+      <script type="application/json" id="exp-country-league-index">
+        {
+          "items": [
+            {% for c in country_league_index %}
+              {
+                "country_id":   {{ c.country_id|tojson }},
+                "country_name": {{ c.country_name|tojson }},
+                "leagues": [
+                  {% for l in c.leagues %}
+                    {"league_id": {{ l.league_id|tojson }}, "league_name": {{ l.league_name|tojson }}}{% if not loop.last %},{% endif %}
+                  {% endfor %}
+                ]
+              }{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ]
+        }
+      </script>
+    </div>
+
+    <div class="sim-section">
+      <div class="sim-section-h">2 · Export dimensions <span class="filter-lbl">(pick one in each group)</span></div>
+      <div class="sim-run-grid">
+        <div>
+          <div class="filter-lbl" style="margin-bottom:4px"><b>Match state</b> — snapshot status filter</div>
+          <div class="filter-group" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label><input type="radio" name="regime" value="any" checked
+                   hx-get="/export/count" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>any</b> <span class="filter-lbl">— prematch + in-play + ended</span></label>
+            <label><input type="radio" name="regime" value="prematch"
+                   hx-get="/export/count" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>pre-match</b> <span class="filter-lbl">— UPCOMING ticks</span></label>
+            <label><input type="radio" name="regime" value="live"
+                   hx-get="/export/count" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>in-play</b> <span class="filter-lbl">— STARTED ticks</span></label>
+          </div>
+        </div>
+        <div>
+          <div class="filter-lbl" style="margin-bottom:4px"><b>Snapshots</b> — sampling per event</div>
+          <div class="filter-group" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label><input type="radio" name="density" value="all" checked
+                   hx-get="/export/count" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>all</b> <span class="filter-lbl">— every tick</span></label>
+            <label><input type="radio" name="density" value="onchange"
+                   hx-get="/export/count" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>only when odds changed</b> <span class="filter-lbl">— collapse repeats</span></label>
+            <label><input type="radio" name="density" value="latest"
+                   hx-get="/export/count" hx-include="closest form" hx-target="#scope-count" hx-trigger="change">
+              <b>latest per match</b> <span class="filter-lbl">— last tick only</span></label>
+          </div>
+        </div>
+        <div>
+          <div class="filter-lbl" style="margin-bottom:4px"><b>Layout</b> — CSV shape</div>
+          <div class="filter-group" style="flex-direction:column;align-items:flex-start;gap:4px">
+            <label><input type="radio" name="format" value="long" checked>
+              <b>long</b> <span class="filter-lbl">— one row per price</span></label>
+            <label><input type="radio" name="format" value="wide">
+              <b>wide</b> <span class="filter-lbl">— one row per tick, pivoted columns</span></label>
+          </div>
+          <div class="filter-lbl" style="margin-top:10px;margin-bottom:4px"><b>Limit per match</b></div>
+          <div class="filter-group" style="gap:8px">
+            <label>first <input type="number" name="first_n" value="0" min="0" class="filter-select" style="width:64px"></label>
+            <label>last <input type="number" name="last_n" value="0" min="0" class="filter-select" style="width:64px"></label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sim-section">
+      <div class="sim-section-h">3 · Simulated prices <span class="filter-lbl">(optional — append OUR engine prices for 1UP / 2UP)</span></div>
+      <div class="filter-group" style="gap:14px">
+        <label><input type="checkbox" name="sim" value="1"> <b>include simulated</b></label>
+        {% for en in sim_engines %}
+          <label><input type="checkbox" name="engine" value="{{ en }}"{% if en == 'v4' %} checked{% endif %}> {{ en|upper }}</label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="sim-section">
+      <div class="sim-section-h">4 · Markets <span class="filter-lbl">(which markets to include — refreshes with scope)</span></div>
+      <div id="market-list" class="filter-group" style="flex-wrap:wrap;row-gap:6px;column-gap:14px"
+           hx-get="/export/markets"
+           hx-include="#exp-country, #exp-league, [name=date], [name=event_id]"
+           hx-target="#market-list" hx-swap="innerHTML"
+           hx-trigger="change from:#exp-country,
+                       change from:#exp-league,
+                       change from:[name=date],
+                       input changed delay:300ms from:[name=event_id]">
+        {% for mid, line in markets %}
+          {% set val = mid ~ '|' ~ line %}
+          <label><input type="checkbox" name="market" value="{{ val }}" checked>
+            {% if line == 0.0 %}{{ mid }}{% else %}{{ mid }} @ {{ line }}{% endif %}</label>
+        {% else %}
+          <span class="filter-lbl">no markets in scope</span>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="sim-run-bar">
+      <div id="scope-count" hx-get="/export/count" hx-trigger="load" hx-include="closest form">
+        <span class="filter-lbl">computing scope…</span>
+      </div>
+      <button type="submit" class="chip on" style="padding:6px 16px;cursor:pointer">
+        Download CSV →
+      </button>
+    </div>
+  </form>
+</div>
+
+<style>
+  .sim-section { margin: 14px 0; padding: 10px 12px; background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 4px; }
+  .sim-section-h { color: #fbbf24; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  .sim-form label { color: #d1d5db; font-size: 11px; margin-right: 8px; }
+  .sim-run-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; margin-bottom: 12px; }
+  .sim-run-bar { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #1a1a1a; padding-top: 10px; margin-top: 6px; }
+  @media (max-width: 640px) {
+    .sim-run-grid { grid-template-columns: 1fr; }
+    .sim-run-bar { flex-direction: column; align-items: stretch; gap: 8px; }
+  }
+</style>
+
+<script>
+  // Country → League cascade for the export scope panel.
+  (function () {
+    const countrySel = document.getElementById('exp-country');
+    const leagueSel  = document.getElementById('exp-league');
+    const dataTag    = document.getElementById('exp-country-league-index');
+    if (!countrySel || !leagueSel || !dataTag) return;
+    let index = [];
+    try { index = JSON.parse(dataTag.textContent).items || []; }
+    catch { index = []; }
+
+    function populateLeagues(country_id) {
+      leagueSel.innerHTML = '<option value="">All</option>';
+      if (!country_id) { leagueSel.disabled = true; return; }
+      const country = index.find(c => c.country_id === country_id);
+      if (!country) { leagueSel.disabled = true; return; }
+      for (const lg of country.leagues) {
+        const opt = document.createElement('option');
+        opt.value = lg.league_id;
+        opt.textContent = lg.league_name;
+        leagueSel.appendChild(opt);
+      }
+      leagueSel.disabled = country.leagues.length === 0;
+    }
+
+    countrySel.addEventListener('change', () => {
+      populateLeagues(countrySel.value);
+      leagueSel.dispatchEvent(new Event('change', {bubbles: true}));
+    });
+  })();
+</script>
+{% endblock %}
