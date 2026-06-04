@@ -487,53 +487,36 @@ def test_get_events_ended_date_filter(tmp_path: Path):
     assert "MAY20" not in ids
 
 
-def test_our_history_returns_v2_as_primary(tmp_path: Path):
-    """get_our_history_for_event returns V2 fields as the primary
-    home_odds/away_odds keys, falling back to V1 for pre-V2 rows."""
+def test_our_history_returns_v3_keys(tmp_path: Path):
+    """get_our_history_for_event returns V3 keys for a 1UP row."""
     db_path = tmp_path / "odds.db"
     conn = sqlite3.connect(str(db_path), isolation_level=None)
     conn.row_factory = sqlite3.Row
     init_schema(conn)
-    # Row with both V1 and V2 — V2 should win
     conn.execute(
         "INSERT INTO pricer_live_results "
         "(event_id, ts_utc, basis_used, "
-        " our_1up_home_capped, our_1up_away_capped, our_p_home_1, our_p_away_1, "
-        " v2_1up_home_capped, v2_1up_away_capped, v2_p_home_1, v2_p_away_1) "
+        " v3_1up_home_capped, v3_1up_away_capped, v3_p_home_1, v3_p_away_1, "
+        " v4_1up_home_capped, v4_1up_away_capped, v4_p_home_1, v4_p_away_1) "
         "VALUES ('E1', '2026-05-21T10:00:00Z', 'bp', "
-        "        1.48, 4.10, 0.66, 0.12, "
-        "        1.55, 3.90, 0.63, 0.14)",
-    )
-    # Row with only V1 (pre-V2 historical) — V1 fallback
-    conn.execute(
-        "INSERT INTO pricer_live_results "
-        "(event_id, ts_utc, basis_used, "
-        " our_1up_home_capped, our_1up_away_capped, our_p_home_1, our_p_away_1) "
-        "VALUES ('E1', '2026-05-21T10:05:00Z', 'bp', "
-        "        1.48, 4.10, 0.66, 0.12)",
+        "        1.55, 3.90, 0.63, 0.14, "
+        "        1.60, 3.80, 0.61, 0.15)",
     )
     conn.close()
     conn = queries.open_ro_conn(db_path)
     result = queries.get_our_history_for_event(conn, "E1", "1x2_1up_ft")
     conn.close()
-    # Tick with V2 → V2 values used
     t1 = result["2026-05-21T10:00:00Z"]
-    assert t1["home_odds"] == 1.55
-    assert t1["away_odds"] == 3.90
-    assert t1["home_prob"] == 0.63
-    # Tick without V2 → V1 fallback
-    t2 = result["2026-05-21T10:05:00Z"]
-    assert t2["home_odds"] == 1.48
-    assert t2["away_odds"] == 4.10
-    assert t2["home_prob"] == 0.66
-    # No v2_* keys in the output — unified interface
+    assert t1["home_odds_v3"] == 1.55
+    assert t1["away_odds_v3"] == 3.90
+    assert t1["home_prob_v3"] == 0.63
+    # V2/V1 keys no longer present
+    assert "home_odds" not in t1
     assert "v2_home_odds" not in t1
-    assert "v2_home_odds" not in t2
 
 
-def test_our_history_returns_v3_beside_v2(tmp_path: Path):
-    """get_our_history_for_event also surfaces the V3 columns under *_v3
-    keys, beside the V2 primary keys."""
+def test_our_history_returns_v3_and_v4_for_2up(tmp_path: Path):
+    """get_our_history_for_event returns V3+V4 keys for a 2UP row."""
     db_path = tmp_path / "odds.db"
     conn = sqlite3.connect(str(db_path), isolation_level=None)
     conn.row_factory = sqlite3.Row
@@ -541,17 +524,41 @@ def test_our_history_returns_v3_beside_v2(tmp_path: Path):
     conn.execute(
         "INSERT INTO pricer_live_results "
         "(event_id, ts_utc, basis_used, "
-        " v2_2up_home_capped, v2_2up_away_capped, v2_p_home_2, v2_p_away_2, "
-        " v3_2up_home_capped, v3_2up_away_capped, v3_p_home_2, v3_p_away_2) "
-        "VALUES ('E1', 'T', 'bp', 2.0, 3.0, 0.5, 0.3, 2.2, 3.3, 0.45, 0.28)",
+        " v3_2up_home_capped, v3_2up_away_capped, v3_p_home_2, v3_p_away_2, "
+        " v4_2up_home_capped, v4_2up_away_capped, v4_p_home_2, v4_p_away_2) "
+        "VALUES ('E1', 'T', 'bp', 2.2, 3.3, 0.45, 0.28, 2.3, 3.4, 0.44, 0.27)",
     )
     conn.close()
     conn = queries.open_ro_conn(db_path)
     out = queries.get_our_history_for_event(conn, "E1", "1x2_2up_ft")
     conn.close()
     t = out["T"]
-    assert t["home_odds"] == 2.0       # V2 primary unchanged
-    assert t["home_odds_v3"] == 2.2    # V3 added
+    assert t["home_odds_v3"] == 2.2    # V3
     assert t["away_odds_v3"] == 3.3
     assert t["home_prob_v3"] == 0.45
     assert t["away_prob_v3"] == 0.28
+    assert t["home_odds_v4"] == 2.3    # V4
+    assert t["away_odds_v4"] == 3.4
+    # V2/V1 keys no longer present
+    assert "home_odds" not in t
+
+
+def test_get_our_history_returns_v3_and_v4(tmp_path):
+    import sqlite3
+    from odds_scraper.db_schema import init_schema
+    from odds_scraper.web import queries
+    conn = sqlite3.connect(str(tmp_path / "q.db"), isolation_level=None)
+    init_schema(conn); conn.row_factory = sqlite3.Row
+    conn.execute(
+        "INSERT INTO pricer_live_results (event_id, ts_utc, basis_used, "
+        "v3_1up_home_capped, v3_1up_away_capped, v3_p_home_1, v3_p_away_1, "
+        "v4_1up_home_capped, v4_1up_away_capped, v4_p_home_1, v4_p_away_1) "
+        "VALUES ('E1','2026-05-22T18:30:00Z','bp', 2.1,3.2,0.5,0.3, 2.0,3.0,0.52,0.31)")
+    out = queries.get_our_history_for_event(conn, "E1", "1x2_1up_ft")
+    row = out["2026-05-22T18:30:00Z"]
+    assert row["home_odds_v3"] == 2.1 and row["away_odds_v3"] == 3.2
+    assert row["home_prob_v3"] == 0.5
+    assert row["home_odds_v4"] == 2.0 and row["away_odds_v4"] == 3.0
+    assert row["home_prob_v4"] == 0.52
+    assert queries.get_our_history_for_event(conn, "E1", "next_goal_ft") == {}
+    conn.close()

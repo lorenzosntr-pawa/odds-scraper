@@ -287,52 +287,38 @@ def get_market_history_for_event(
 def get_our_history_for_event(
     conn: sqlite3.Connection, event_id: str, market_id: str,
 ) -> dict[str, dict[str, float | None]]:
-    """Return OUR engine output per tick for the requested 1UP or 2UP market.
+    """OUR engine output per tick for a 1UP/2UP market, V3 + V4.
 
-    Returned shape: {ts_utc: {
-        "home_odds": _, "away_odds": _, "home_prob": _, "away_prob": _,
-        "home_odds_v3": _, "away_odds_v3": _, "home_prob_v3": _, "away_prob_v3": _,
-    }}.
-    Empty dict if the market isn't a UP market or no rows exist.
-
-    V2 is the primary engine (schema v9+). For historical rows that predate V2
-    (where v2_* columns are NULL), the V1 values are used as a fallback. The V3
-    engine (schema v10+) is surfaced beside V2 under the *_v3 keys (NULL where
-    not yet backfilled).
+    Shape: {ts_utc: {
+        "home_odds_v3","away_odds_v3","home_prob_v3","away_prob_v3",
+        "home_odds_v4","away_odds_v4","home_prob_v4","away_prob_v4"}}.
+    Empty dict if not a UP market or no rows. (V1/V2 retired from the live
+    pipeline; their columns remain but are no longer read.)
     """
     if market_id == "1x2_1up_ft":
-        odds_h, odds_a = "our_1up_home_capped", "our_1up_away_capped"
-        prob_h, prob_a = "our_p_home_1", "our_p_away_1"
-        v2_odds_h, v2_odds_a = "v2_1up_home_capped", "v2_1up_away_capped"
-        v2_prob_h, v2_prob_a = "v2_p_home_1", "v2_p_away_1"
-        v3_odds_h, v3_odds_a = "v3_1up_home_capped", "v3_1up_away_capped"
-        v3_prob_h, v3_prob_a = "v3_p_home_1", "v3_p_away_1"
+        v3_oh, v3_oa, v3_ph, v3_pa = (
+            "v3_1up_home_capped", "v3_1up_away_capped", "v3_p_home_1", "v3_p_away_1")
+        v4_oh, v4_oa, v4_ph, v4_pa = (
+            "v4_1up_home_capped", "v4_1up_away_capped", "v4_p_home_1", "v4_p_away_1")
     elif market_id == "1x2_2up_ft":
-        odds_h, odds_a = "our_2up_home_capped", "our_2up_away_capped"
-        prob_h, prob_a = "our_p_home_2", "our_p_away_2"
-        v2_odds_h, v2_odds_a = "v2_2up_home_capped", "v2_2up_away_capped"
-        v2_prob_h, v2_prob_a = "v2_p_home_2", "v2_p_away_2"
-        v3_odds_h, v3_odds_a = "v3_2up_home_capped", "v3_2up_away_capped"
-        v3_prob_h, v3_prob_a = "v3_p_home_2", "v3_p_away_2"
+        v3_oh, v3_oa, v3_ph, v3_pa = (
+            "v3_2up_home_capped", "v3_2up_away_capped", "v3_p_home_2", "v3_p_away_2")
+        v4_oh, v4_oa, v4_ph, v4_pa = (
+            "v4_2up_home_capped", "v4_2up_away_capped", "v4_p_home_2", "v4_p_away_2")
     else:
         return {}
     rows = conn.execute(
-        f"SELECT ts_utc, {odds_h}, {odds_a}, {prob_h}, {prob_a}, "
-        f"       {v2_odds_h}, {v2_odds_a}, {v2_prob_h}, {v2_prob_a}, "
-        f"       {v3_odds_h}, {v3_odds_a}, {v3_prob_h}, {v3_prob_a} "
+        f"SELECT ts_utc, {v3_oh}, {v3_oa}, {v3_ph}, {v3_pa}, "
+        f"       {v4_oh}, {v4_oa}, {v4_ph}, {v4_pa} "
         f"FROM pricer_live_results WHERE event_id = ?",
         (event_id,),
     ).fetchall()
     return {
         r["ts_utc"]: {
-            "home_odds": r[v2_odds_h] if r[v2_odds_h] is not None else r[odds_h],
-            "away_odds": r[v2_odds_a] if r[v2_odds_a] is not None else r[odds_a],
-            "home_prob": r[v2_prob_h] if r[v2_prob_h] is not None else r[prob_h],
-            "away_prob": r[v2_prob_a] if r[v2_prob_a] is not None else r[prob_a],
-            "home_odds_v3": r[v3_odds_h],
-            "away_odds_v3": r[v3_odds_a],
-            "home_prob_v3": r[v3_prob_h],
-            "away_prob_v3": r[v3_prob_a],
+            "home_odds_v3": r[v3_oh], "away_odds_v3": r[v3_oa],
+            "home_prob_v3": r[v3_ph], "away_prob_v3": r[v3_pa],
+            "home_odds_v4": r[v4_oh], "away_odds_v4": r[v4_oa],
+            "home_prob_v4": r[v4_ph], "away_prob_v4": r[v4_pa],
         }
         for r in rows
     }
