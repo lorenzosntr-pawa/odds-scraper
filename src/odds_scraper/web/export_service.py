@@ -299,3 +299,59 @@ def available_markets(conn, scope: dict) -> list[tuple[str, float]]:
         " ORDER BY p.market_id, p.line"
     )
     return [(r[0], float(r[1])) for r in conn.execute(sql, params).fetchall()]
+
+
+def all_markets(conn) -> list[tuple[str, float]]:
+    """Every distinct (market_id, line) present in `prices`, unscoped.
+
+    Deliberately JOIN-free: scanning `prices` alone is the only query shape that
+    stays fast on a large table — a JOIN to `events` here is a planner trap (with
+    an index on prices(market_id,line) it degrades to a 100s+ nested loop, and
+    without one the unscoped JOIN scan still takes seconds). The market set is
+    small and stable, so the export page caches this once per process. Includes
+    the 0.0 sentinel line (a real selectable market)."""
+    return [
+        (r[0], float(r[1]))
+        for r in conn.execute(
+            "SELECT DISTINCT market_id, line FROM prices ORDER BY market_id, line"
+        ).fetchall()
+    ]
+
+
+def count_scope(conn, regime: str, scope: dict) -> tuple[int, int]:
+    """`(n_events, n_snapshots)` in scope for `regime` — a cheap, density-agnostic
+    scope-size estimate for the page's count badge.
+
+    Counts via SQL aggregation over the grouped (event_id, ts_utc) ticks; it does
+    NOT materialise per-tick dicts the way `select_ticks` does, so it stays cheap
+    even when the badge re-fires on every form change. Density (all/latest/
+    onchange) is applied at export time, not reflected here — this is the size of
+    the regime+scope selection before per-event sampling."""
+    status = _regime_status(regime)
+    where = ["e.home != '' AND e.away != ''"]
+    params: list = []
+    if status:
+        where.append("s.status = ?"); params.append(status)
+    if scope.get("country"):
+        where.append("e.country_id = ?"); params.append(scope["country"])
+    if scope.get("league"):
+        where.append("e.league_id = ?"); params.append(scope["league"])
+    if scope.get("event_id"):
+        where.append("s.event_id = ?"); params.append(scope["event_id"])
+    if scope.get("date"):
+        where.append("DATE(e.kickoff_utc) = ?"); params.append(scope["date"])
+    if scope.get("search"):
+        where.append("(LOWER(e.home) LIKE ? ESCAPE '\\' OR LOWER(e.away) LIKE ? ESCAPE '\\')")
+        esc = scope["search"].lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{esc}%"; params += [like, like]
+    where_sql = " AND ".join(where)
+    sql = f"""
+        SELECT COUNT(*) AS n_snap, COUNT(DISTINCT event_id) AS n_ev FROM (
+            SELECT s.event_id AS event_id, s.ts_utc AS ts_utc
+            FROM snapshots s JOIN events e ON e.id = s.event_id
+            WHERE {where_sql}
+            GROUP BY s.event_id, s.ts_utc
+        )
+    """
+    row = conn.execute(sql, params).fetchone()
+    return (row[1], row[0])

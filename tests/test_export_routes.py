@@ -162,3 +162,18 @@ def test_export_csv_book_filter(export_client):
     rows = list(csv.DictReader(io.StringIO(r.text)))
     real_books = {row["bookmaker"] for row in rows if row.get("is_simulated") == "0"}
     assert real_books <= {"betpawa"}, f"unexpected bookmakers after filter: {real_books - {'betpawa'}}"
+
+
+def test_export_page_defers_market_enumeration(export_client):
+    """Regression: the page must NOT enumerate markets inline (that was an 8M-row
+    DISTINCT scan in the request path that hung the page). It renders a placeholder
+    + HTMX trigger and pulls the market checkboxes from /export/markets after load."""
+    r = export_client.get("/export")
+    assert r.status_code == 200
+    body = r.text
+    assert 'hx-get="/export/markets"' in body          # deferred via HTMX
+    assert "loading markets" in body.lower()            # placeholder shown first
+    assert 'name="market"' not in body                  # NOT inlined in the page
+    # the checkboxes come from the dedicated endpoint instead
+    m = export_client.get("/export/markets")
+    assert m.status_code == 200 and 'name="market"' in m.text

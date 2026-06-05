@@ -309,3 +309,31 @@ def test_available_markets_scoped_by_country():
     ng = ex.available_markets(c, {"country": "ng"})
     assert ("1x2_ft", 0.0) in ng
     assert ("over_under_ft", 2.5) not in ng   # that market only exists for GH event
+
+
+def test_all_markets_join_free_distinct_sorted():
+    c = _conn(); _seed_event(c)
+    _seed_tick(c, "E1", "2026-05-22T18:00:00Z", "STARTED", prices=[
+        ("1x2_ft", 0.0, "home", 1.8, None),
+        ("over_under_ft", 2.5, "over", 1.9, None)])
+    _seed_tick(c, "E1", "2026-05-22T18:05:00Z", "STARTED", prices=[
+        ("over_under_ft", 2.5, "over", 1.95, None),   # repeat (market,line) at a later tick
+        ("over_under_ft", 3.5, "over", 2.7, None)])
+    m = ex.all_markets(c)
+    assert ("1x2_ft", 0.0) in m                        # 0.0 sentinel kept
+    assert ("over_under_ft", 2.5) in m and ("over_under_ft", 3.5) in m
+    assert m == sorted(m)                              # deterministic
+    assert len(m) == len(set(m))                       # distinct
+
+
+def test_count_scope_events_and_ticks():
+    c = _conn(); _seed_event(c, "E1"); _seed_event(c, "E2")
+    _seed_tick(c, "E1", "2026-05-22T18:00:00Z", "STARTED", prices=[("1x2_ft", 0.0, "home", 1.8, None)])
+    _seed_tick(c, "E1", "2026-05-22T18:05:00Z", "STARTED", prices=[("1x2_ft", 0.0, "home", 1.9, None)])
+    _seed_tick(c, "E2", "2026-05-22T17:00:00Z", "UPCOMING", prices=[("1x2_ft", 0.0, "home", 2.0, None)])
+    assert ex.count_scope(c, "any", {}) == (2, 3)        # 2 events, 3 ticks
+    assert ex.count_scope(c, "live", {}) == (1, 2)       # only E1's 2 STARTED ticks
+    assert ex.count_scope(c, "prematch", {}) == (1, 1)   # only E2's UPCOMING tick
+    assert ex.count_scope(c, "any", {"country": "ng"}) == (2, 3)  # both seeded ng
+    with pytest.raises(ValueError):
+        ex.count_scope(c, "bogus", {})
